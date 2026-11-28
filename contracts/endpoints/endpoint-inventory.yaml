@@ -930,3 +930,122 @@ endpoints:
     owner: media
     status: reserved
     contract_card: CT-05
+  - method: GET
+    path: /api/v1/content-packs
+    operationId: listContentPacks
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/content-packs/{packId}/versions
+    operationId: listContentPackVersions
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/content-packs/{packId}/versions/{version}
+    operationId: getContentPackVersion
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/content-packs/{packId}/versions/{version}/download
+    operationId: downloadContentPackArtifact
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: POST
+    path: /api/v1/content-pack-submissions
+    operationId: createContentPackSubmission
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/content-pack-submissions/{submissionId}
+    operationId: getContentPackSubmission
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/admin/content-pack-submissions
+    operationId: listContentPackSubmissionReviews
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: POST
+    path: /api/v1/admin/content-pack-submissions/{submissionId}/review
+    operationId: reviewContentPackSubmission
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: POST
+    path: /api/v1/admin/content-packs
+    operationId: publishContentPackVersion
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: POST
+    path: /api/v1/admin/content-packs/{packId}/versions/{version}/retire
+    operationId: retireContentPackVersion
+    auth: bearer
+    owner: content-catalog
+    status: planned
+    contract_card: CT-06
+  - method: GET
+    path: /api/v1/sync/devices
+    operationId: listSyncDevices
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: PUT
+    path: /api/v1/sync/devices/{deviceId}
+    operationId: registerSyncDevice
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: DELETE
+    path: /api/v1/sync/devices/{deviceId}
+    operationId: revokeSyncDevice
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: PUT
+    path: /api/v1/sync/blobs/{blobId}
+    operationId: putSyncBlob
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: GET
+    path: /api/v1/sync/blobs/{blobId}
+    operationId: downloadSyncBlob
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: DELETE
+    path: /api/v1/sync/blobs/{blobId}
+    operationId: deleteSyncBlob
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07
+  - method: GET
+    path: /api/v1/sync/changes
+    operationId: listSyncChanges
+    auth: bearer
+    owner: sync
+    status: active
+    contract_card: CT-07

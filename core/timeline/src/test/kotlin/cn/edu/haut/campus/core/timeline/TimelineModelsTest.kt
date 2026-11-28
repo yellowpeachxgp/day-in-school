@@ -78,6 +78,44 @@ class TimelineModelsTest {
     }
 
     @Test
+    fun `不确定时间点不是截止点但仍按锚点匹配窗口`() {
+        val uncertain = event(
+            id = "course:uncertain",
+            start = "2026-03-02T10:00:00Z",
+            end = null,
+            status = EventStatus.TENTATIVE,
+            busy = BusyLevel.FREE,
+            timeSemantics = TimelineTimeSemantics.UNCERTAIN
+        )
+        val containing = TimeWindow(Instant.parse("2026-03-02T09:00:00Z"), Instant.parse("2026-03-02T11:00:00Z"))
+
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, uncertain.timeSemantics)
+        assertFalse(uncertain.isDeadline)
+        assertTrue(uncertain.isTimeUncertain)
+        assertTrue(uncertain.overlaps(containing))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `TIMED 事件拒绝 null end`() {
+        event(id = "course:bad-timed", end = null, timeSemantics = TimelineTimeSemantics.TIMED)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `不确定时间不能声明忙闲占用`() {
+        event(
+            id = "course:bad-uncertain-busy",
+            end = null,
+            busy = BusyLevel.TENTATIVE,
+            timeSemantics = TimelineTimeSemantics.UNCERTAIN
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `取消事件必须明确 FREE`() {
+        event(id = "course:bad-cancelled", status = EventStatus.CANCELLED_TODAY)
+    }
+
+    @Test
     fun `跨日事件与查询窗口按半开区间相交`() {
         val event = event(id = "course:overnight", start = "2026-03-02T15:00:00Z", end = "2026-03-03T01:00:00Z")
         val nextDay = TimeWindow(Instant.parse("2026-03-03T00:00:00Z"), Instant.parse("2026-03-03T02:00:00Z"))
@@ -150,7 +188,14 @@ class TimelineModelsTest {
         assertTrue(TimelineFilter.ALL.matches(event))
     }
 
-    private fun event(id: String, start: String = "2026-03-02T09:00:00Z", end: String? = "2026-03-02T10:00:00Z"): TimelineEvent {
+    private fun event(
+        id: String,
+        start: String = "2026-03-02T09:00:00Z",
+        end: String? = "2026-03-02T10:00:00Z",
+        status: EventStatus = EventStatus.SCHEDULED,
+        busy: BusyLevel = BusyLevel.BUSY,
+        timeSemantics: TimelineTimeSemantics? = null
+    ): TimelineEvent {
         val entity = EntityRef(EntityType.COURSE, "course-1", scope)
         return TimelineEvent(
             id = TimelineEventId(id),
@@ -159,12 +204,13 @@ class TimelineModelsTest {
             title = "高等数学",
             start = Instant.parse(start),
             end = end?.let { Instant.parse(it) },
+            timeSemantics = timeSemantics ?: if (end == null) TimelineTimeSemantics.DEADLINE else TimelineTimeSemantics.TIMED,
             zone = zone,
             place = PlaceRef("haut/lianhuajie/room/5-111", SchoolId("haut"), CampusId("lianhuajie")),
             source = SourceRef(entity, provenance()),
             provenance = provenance(),
-            status = EventStatus.SCHEDULED,
-            busy = BusyLevel.BUSY,
+            status = status,
+            busy = busy,
             revision = 1,
             links = listOf(entity)
         )

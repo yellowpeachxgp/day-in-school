@@ -58,10 +58,29 @@ enum class EventStatus {
 }
 
 /**
+ * Timeline 事件的时间结构语义。
+ *
+ * end == null 本身不再足以判断业务含义：真实截止点与不完整/非法时间的排序锚点
+ * 都必须显式区分，避免把「时间待确认」伪装成 deadline 导出或展示。
+ */
+enum class TimelineTimeSemantics {
+    /** 有正时长 end 的半开区间；时间质量仍可经 status/busy 表达为 tentative。 */
+    TIMED,
+
+    /** end == null 且确实表示截止时间点（例如 TASK_DUE 到期时刻）。 */
+    DEADLINE,
+
+    /** 起止证据不完整或非法；start 仅是单调排序/展示锚点，绝不是截止点。 */
+    UNCERTAIN
+}
+
+/**
  * 统一时间流事件。
  *
  * [scope]、[source] 与 [provenance] 都没有默认值。[zone] 必须是事件所在校区使用的时区，
- * 而不是设备默认时区。[end] 为 null 表示截止时间点；有 end 时必须是正时长半开区间。
+ * 而不是设备默认时区。[timeSemantics] 决定 [end] 的结构语义：TIMED 必须有正时长 end；
+ * DEADLINE/UNCERTAIN 的 end 都为 null，但 UNCERTAIN 只保留锚点且不参与忙闲。
+ * 为兼容既有调用，未显式传 timeSemantics 时仍按旧契约从 end 推断（null=DEADLINE）。
  * RESCHEDULED 表示「生效的调入/改期事件」；被调出的原 occurrence 应以 CANCELLED_TODAY
  * 单独投影，因此 RESCHEDULED 默认仍参与忙闲，CANCELLED_TODAY 不参与。
  */
@@ -72,6 +91,11 @@ data class TimelineEvent(
     val title: String,
     val start: Instant,
     val end: Instant?,
+    val timeSemantics: TimelineTimeSemantics = if (end == null) {
+        TimelineTimeSemantics.DEADLINE
+    } else {
+        TimelineTimeSemantics.TIMED
+    },
     val zone: ZoneId,
     val place: PlaceRef?,
     val source: SourceRef,
@@ -87,6 +111,17 @@ data class TimelineEvent(
         if (end != null) {
             require(end.isAfter(start)) { "定时事件 end 必须晚于 start；截止时间点应使用 null end" }
         }
+        when (timeSemantics) {
+            TimelineTimeSemantics.TIMED -> require(end != null) { "TIMED 事件必须有正时长 end" }
+            TimelineTimeSemantics.DEADLINE -> require(end == null) { "DEADLINE 事件 end 必须为 null" }
+            TimelineTimeSemantics.UNCERTAIN -> require(end == null) { "UNCERTAIN 事件不能伪造 end" }
+        }
+        require(timeSemantics != TimelineTimeSemantics.UNCERTAIN || busy == BusyLevel.FREE) {
+            "不确定时间没有可信占用窗口，busy 必须为 FREE"
+        }
+        require(status != EventStatus.CANCELLED_TODAY || busy == BusyLevel.FREE) {
+            "取消事件不占忙，busy 必须为 FREE"
+        }
         require(revision >= 0) { "事件 revision 不能为负" }
         require(provenance.schoolId == scope.schoolId) { "事件证据的学校与 scope 不一致" }
         require(provenance.accountId == scope.accountId) { "事件证据的账号与 scope 不一致" }
@@ -97,7 +132,10 @@ data class TimelineEvent(
     }
 
     val isDeadline: Boolean
-        get() = end == null
+        get() = timeSemantics == TimelineTimeSemantics.DEADLINE
+
+    val isTimeUncertain: Boolean
+        get() = timeSemantics == TimelineTimeSemantics.UNCERTAIN
 
     val windowOrNull: TimeWindow?
         get() = end?.let { TimeWindow(start, it) }

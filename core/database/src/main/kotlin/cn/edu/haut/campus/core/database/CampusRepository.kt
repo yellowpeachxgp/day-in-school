@@ -66,8 +66,6 @@ import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.ZoneId
 
-
-
 @Deprecated(
     message = "W0-05 拆分过渡外观：新代码应使用具体领域 Repository；本类仅为兼容委托门面。"
 )
@@ -113,10 +111,11 @@ class CampusRepository internal constructor(
     private val bookingPlanStateMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val repositoryEnvironment = CampusRepositoryEnvironment(
+    internal val repositoryEnvironment = CampusRepositoryEnvironment(
         database = database,
         preferences = preferences,
         accountProfile = accountProfile,
+        academicEntityWritePort = AcademicEntityWritePortRegistry.create(database, accountProfile),
         scheduleOrPolicyChangedNotifier = { reason -> notifyScheduleOrPolicyChanged(reason) }
     )
     val examRepository = ExamRepository(repositoryEnvironment)

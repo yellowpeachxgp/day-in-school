@@ -98,6 +98,9 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCourse(item: CourseEntity)
 
+    @Query("SELECT * FROM courses WHERE id = :courseId LIMIT 1")
+    suspend fun getCourseById(courseId: String): CourseEntity?
+
     @Query("SELECT * FROM course_schedule_rules")
     fun observeRules(): Flow<List<CourseScheduleRuleEntity>>
 
@@ -162,6 +165,12 @@ interface CampusDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertGradeAttempts(items: List<GradeAttemptEntity>)
 
+    @Query("SELECT * FROM grade_attempts WHERE id = :id LIMIT 1")
+    suspend fun getGradeAttemptById(id: String): GradeAttemptEntity?
+
+    @Query("DELETE FROM grade_attempts WHERE id = :id")
+    suspend fun deleteGradeAttemptById(id: String): Int
+
     @Query("SELECT * FROM buildings ORDER BY id ASC")
     fun observeBuildings(): Flow<List<BuildingEntity>>
 
@@ -221,6 +230,9 @@ interface CampusDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertExamSchedules(items: List<ExamScheduleEntity>)
+
+    @Query("SELECT * FROM exam_schedules WHERE id = :id LIMIT 1")
+    suspend fun getExamScheduleById(id: String): ExamScheduleEntity?
 
     @Query("DELETE FROM exam_schedules")
     suspend fun clearExamSchedules()
@@ -313,9 +325,19 @@ interface CampusDao {
         LibraryBookingPlanEntity::class,
         ParcelItemEntity::class,
         ParcelSourceConnectionEntity::class,
-        InstalledExtensionPluginEntity::class
+        InstalledExtensionPluginEntity::class,
+        PersonalEventEntity::class,
+        EntityJournalEntity::class,
+        DomainOutboxEntity::class,
+        SearchDocEntity::class,
+        SearchFtsEntity::class,
+        BlobStoreEntity::class,
+        AutomationRuleEntity::class,
+        AutomationRunEntity::class,
+        AutomationDedupeEntity::class,
+        AutomationActionCheckpointEntity::class
     ],
-    version = 11,
+    version = 13,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
@@ -323,4 +345,6 @@ abstract class HautDatabase : RoomDatabase() {
     abstract fun reminderDao(): ReminderDao
     abstract fun utilityAndFocusDao(): UtilityAndFocusDao
     abstract fun cloudAndParcelDao(): CloudAndParcelDao
+    abstract fun vaultDao(): VaultDao
+    abstract fun automationDao(): AutomationDao
 }

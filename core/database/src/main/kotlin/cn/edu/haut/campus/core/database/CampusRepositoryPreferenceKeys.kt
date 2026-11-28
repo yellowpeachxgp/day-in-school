@@ -36,6 +36,8 @@ internal object CampusRepositoryPrefKeys {
     val SAVED_SYNC_XNM = stringPreferencesKey("saved_jw_sync_xnm")
     val SAVED_SYNC_XQM = stringPreferencesKey("saved_jw_sync_xqm")
     val LAST_AUTO_SYNC_MS = longPreferencesKey("last_auto_sync_epoch_millis")
+    val LAST_ACADEMIC_DATA_SYNC_MS = longPreferencesKey("last_academic_data_sync_epoch_millis_v1")
+    val LAST_ACADEMIC_DATA_SYNC_TERM_ID = stringPreferencesKey("last_academic_data_sync_term_id_v1")
     val CUSTOM_CHANNEL_URLS = stringPreferencesKey("custom_qq_channel_urls_v1")
     val CUSTOM_CLUB_GROUPS = stringPreferencesKey("custom_club_qq_groups_v1")
     val CLOUD_CAMPUS_CONTENT_JSON_LEGACY_V1 = stringPreferencesKey("cloud_campus_content_json_v1")
@@ -107,6 +109,7 @@ internal object CampusRepositoryPrefKeys {
     val CLOUD_IDENTITY_UNLINK_TOMBSTONE = stringPreferencesKey("cloud_identity_unlink_tombstone_v1")
     val SELECTED_CAMPUS_ID = stringPreferencesKey("selected_campus_id_v1")
     val CUSTOM_CAMPUS_ZONES_JSON = stringPreferencesKey("custom_campus_zones_json_v1")
+    val LEGACY_RESTORE_REVIEW_JOURNAL_JSON = stringPreferencesKey("legacy_restore_review_journal_v1")
     val WIDGET_DEFAULT_COMPACT = booleanPreferencesKey("widget_default_compact_v1")
     val WIDGET_DEFAULT_PRIVACY_MODE = booleanPreferencesKey("widget_default_privacy_mode_v1")
     /**

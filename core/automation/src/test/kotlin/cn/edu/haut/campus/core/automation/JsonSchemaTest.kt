@@ -55,6 +55,21 @@ class JsonSchemaTest {
     }
 
     @Test
+    fun decimalLengthBoundsAndUnicodeCodePointsAreValidated() {
+        val arraySchema = JsonSchema.parse("""{"type":"array","minItems":2.0,"maxItems":2e0}""")
+        assertTrue(arraySchema.validate(JsonValue.Arr(listOf(JsonValue.Str("a")))).any { it.rule == "minItems" })
+        assertTrue(
+            arraySchema.validate(JsonValue.Arr(listOf(JsonValue.Str("a"), JsonValue.Str("b"), JsonValue.Str("c"))))
+                .any { it.rule == "maxItems" }
+        )
+
+        val stringSchema = JsonSchema.parse("""{"type":"string","minLength":2.0,"maxLength":2e0}""")
+        assertEquals(emptyList<JsonSchemaViolation>(), stringSchema.validate(JsonValue.Str("😀😀")))
+        assertTrue(stringSchema.validate(JsonValue.Str("😀")).any { it.rule == "minLength" })
+        assertTrue(stringSchema.validate(JsonValue.Str("😀😀😀")).any { it.rule == "maxLength" })
+    }
+
+    @Test
     fun unsupportedEvaluationKeywordFailsBeforeRegistration() {
         assertThrows(IllegalArgumentException::class.java) {
             JsonSchema.parse("""{"type":"object","patternProperties":{"^x":{}}}""")

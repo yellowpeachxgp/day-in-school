@@ -37,6 +37,7 @@ fun SettingsHomeRouteSection(
     onNavigateToSchoolCenter: () -> Unit,
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
+    onNavigateToAutomation: () -> Unit,
     onFeedback: (String) -> Unit,
     onRefreshWidgets: () -> Unit,
     onShowImportHistory: () -> Unit,
@@ -102,6 +103,7 @@ fun SettingsHomeRouteSection(
         onNavigateToSchoolCenter = onNavigateToSchoolCenter,
         onNavigateToParcelHub = onNavigateToParcelHub,
         onNavigateToXpeachCloud = onNavigateToXpeachCloud,
+        onNavigateToAutomation = onNavigateToAutomation,
         onShowImportHistory = onShowImportHistory,
         settingsEntriesContent = settingsEntriesContent
     )

@@ -309,10 +309,11 @@ private fun validateStringInstance(
     path: String,
     violations: MutableList<JsonSchemaViolation>
 ) {
-    intBound(schema, "minLength", instance.value.length)?.let {
+    val codePointLength = instance.value.codePointCount(0, instance.value.length)
+    intBound(schema, "minLength", codePointLength)?.let {
         violations += JsonSchemaViolation(path, "minLength", "字符串长度小于下限 " + it)
     }
-    intBound(schema, "maxLength", instance.value.length)?.let {
+    intBound(schema, "maxLength", codePointLength)?.let {
         violations += JsonSchemaViolation(path, "maxLength", "字符串长度大于上限 " + it)
     }
     (schema.fields["pattern"] as? JsonValue.Str)?.let { pattern ->
@@ -395,11 +396,12 @@ private fun isIntegerLiteral(literal: String): Boolean {
     return value.stripTrailingZeros().scale() <= 0
 }
 
-private fun intBound(schema: JsonValue.Obj, keyword: String, actual: Int): Int? {
-    val bound = (schema.fields[keyword] as? JsonValue.Num)?.literal?.toIntOrNull() ?: return null
+private fun intBound(schema: JsonValue.Obj, keyword: String, actual: Int): BigDecimal? {
+    val bound = (schema.fields[keyword] as? JsonValue.Num)?.literal?.toBigDecimalOrNullStrict() ?: return null
+    val length = BigDecimal.valueOf(actual.toLong())
     return when (keyword) {
-        "minItems", "minLength" -> if (actual < bound) bound else null
-        "maxItems", "maxLength" -> if (actual > bound) bound else null
+        "minItems", "minLength" -> if (length < bound) bound else null
+        "maxItems", "maxLength" -> if (length > bound) bound else null
         else -> null
     }
 }

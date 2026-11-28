@@ -435,3 +435,163 @@ errors:
     retryable: false
     user_action: NONE
     description: Reserved feature endpoint (decision D2); the feature is contract-only with no implementation, clients must keep the entry hidden or disabled and must not retry or probe for availability.
+  - code: CONTENT_PACK_INVALID
+    http_status: 400
+    retryable: false
+    user_action: FIX_CONTENT_PACK_METADATA
+    description: Content pack identifier, format/kind combination, version, provenance, compatibility range, or immutable metadata failed validation.
+  - code: CONTENT_PACK_SIGNATURE_INVALID
+    http_status: 400
+    retryable: false
+    user_action: VERIFY_CONTENT_PACK_SIGNATURE
+    description: Detached Ed25519 signature, trust-root fingerprint, signed payload scheme, or artifact digest verification failed for a school package or data pack.
+  - code: CONTENT_PACK_NOT_FOUND
+    http_status: 404
+    retryable: false
+    user_action: CHECK_CONTENT_PACK_ID
+    description: Content pack does not exist or is not visible in the requested school catalog scope.
+  - code: CONTENT_PACK_VERSION_NOT_FOUND
+    http_status: 404
+    retryable: false
+    user_action: CHECK_CONTENT_PACK_VERSION
+    description: Content pack version does not exist or is not visible in the requested school catalog scope.
+  - code: CONTENT_PACK_VERSION_RETIRED
+    http_status: 410
+    retryable: false
+    user_action: USE_LATEST_PUBLISHED_CONTENT_PACK
+    description: Content pack version has been retired; new downloads and new installs are refused while metadata remains auditable.
+  - code: CONTENT_PACK_VERSION_CONFLICT
+    http_status: 409
+    retryable: false
+    user_action: CHOOSE_NEW_CONTENT_PACK_VERSION
+    description: The immutable pack_id/version already exists with different artifact bytes or metadata; publish a new version instead of rewriting history.
+  - code: CONTENT_PACK_SUBMISSION_INVALID
+    http_status: 400
+    retryable: false
+    user_action: FIX_CONTENT_PACK_SUBMISSION
+    description: Content pack submission artifact encoding, digest, contribution reference, note, or review metadata failed validation.
+  - code: CONTENT_PACK_SUBMISSION_NOT_FOUND
+    http_status: 404
+    retryable: false
+    user_action: CHECK_CONTENT_PACK_SUBMISSION
+    description: Content pack submission does not exist or is not visible to the authenticated caller or reviewer scope.
+  - code: CONTENT_PACK_SUBMITTER_CANNOT_REVIEW
+    http_status: 403
+    retryable: false
+    user_action: USE_DISTINCT_REVIEWER_PRINCIPAL
+    description: Authenticated reviewer principal is the immutable submitter principal; content pack self-review is forbidden even when the caller holds content_pack.review authorization.
+  - code: CONTENT_PACK_REVIEW_INVALID
+    http_status: 409
+    retryable: false
+    user_action: REFRESH_CONTENT_PACK_SUBMISSION
+    description: Content pack submission is already terminal or the requested review action is invalid for its current state.
+  - code: CONTENT_PACK_REVIEW_REQUIRED
+    http_status: 409
+    retryable: false
+    user_action: COMPLETE_CONTENT_PACK_REVIEW
+    description: Only an APPROVED and maintainer-signed submission can be published; pending, changed, rejected, or already-published submissions are not publishable.
+  - code: CONTENT_PACK_PERMISSION_DENIED
+    http_status: 403
+    retryable: false
+    user_action: CHECK_CONTENT_PACK_AUTHORIZATION
+    description: Caller lacks the required school-scoped content catalog read, download, submit, review, publish, or retirement authorization.
+  - code: CONTENT_PACK_RATE_LIMITED
+    http_status: 429
+    retryable: true
+    user_action: WAIT_FOR_RATE_LIMIT_WINDOW
+    description: Content pack submission or artifact download rate limit reached; automated mirror scraping and retry amplification are forbidden.
+  - code: CONTENT_PACK_ARTIFACT_TOO_LARGE
+    http_status: 413
+    retryable: false
+    user_action: REDUCE_CONTENT_PACK_ARTIFACT
+    description: Content package artifact exceeds the v1 16 MiB ceiling or the base64 review submission body limit.
+  - code: SYNC_CONSENT_REQUIRED
+    http_status: 403
+    retryable: false
+    user_action: REVIEW_E2EE_SYNC_CONSENT
+    description: E2EE cloud sync requires an active explicit E2EE_CLOUD_SYNC consent; missing, withdrawn, expired, or mismatched consent fails closed before ciphertext upload, download, deletion, or incremental pull.
+  - code: SYNC_DEVICE_INVALID
+    http_status: 400
+    retryable: false
+    user_action: FIX_SYNC_DEVICE_REGISTRATION
+    description: Sync device registration metadata, protocol version, platform, device id, or user-visible label failed validation; hardware identifiers, secrets, keys, and plaintext payload fields are forbidden.
+  - code: SYNC_DEVICE_NOT_FOUND
+    http_status: 404
+    retryable: false
+    user_action: REGISTER_SYNC_DEVICE
+    description: Sync device id is not registered for the authenticated cloud user or is not visible in the caller scope.
+  - code: SYNC_DEVICE_CONFLICT
+    http_status: 409
+    retryable: false
+    user_action: USE_NEW_SYNC_DEVICE_ID
+    description: Sync device id is already bound to a different session family or immutable registration metadata; create a fresh installation UUID instead of reusing or rewriting it.
+  - code: SYNC_DEVICE_REVOKED
+    http_status: 410
+    retryable: false
+    user_action: REGISTER_NEW_SYNC_DEVICE_ID
+    description: Sync device id was permanently revoked; it cannot be resurrected and cannot read, write, delete, or pull encrypted sync blocks.
+  - code: SYNC_PERMISSION_DENIED
+    http_status: 403
+    retryable: false
+    user_action: CHECK_SYNC_AUTHORIZATION
+    description: Caller lacks the required user-scoped encrypted synchronization device or blob permission.
+  - code: SYNC_ENVELOPE_INVALID
+    http_status: 400
+    retryable: false
+    user_action: FIX_SYNC_ENCRYPTION_METADATA
+    description: Encrypted sync envelope format, cipher suite, padding scheme, opaque key id, nonce encoding, ciphertext encoding, fixed-bucket decoded length, or ciphertext digest failed validation; plaintext fields and key material are forbidden.
+  - code: SYNC_BLOB_TOO_LARGE
+    http_status: 413
+    retryable: false
+    user_action: SPLIT_SYNC_PLAINTEXT_INTO_SMALLER_BLOCKS
+    description: Decoded encrypted sync block exceeds the 1,048,576-byte ceiling including the AEAD authentication tag; clients must chunk larger logical objects client-side before encryption.
+  - code: SYNC_QUOTA_EXCEEDED
+    http_status: 403
+    retryable: false
+    user_action: FREE_SYNC_QUOTA_OR_REVOKE_UNUSED_DEVICE
+    description: Per-user encrypted sync resource quota would be exceeded. v1 dimensions are 32 ACTIVE devices, 256 total device registration records, 4,096 live blobs, and 268,435,456 bytes of live padded ciphertext; the error detail must name the exceeded dimension and limit without exposing plaintext or other users' usage.
+  - code: SYNC_BANDWIDTH_QUOTA_EXCEEDED
+    http_status: 429
+    retryable: true
+    user_action: WAIT_FOR_SYNC_BANDWIDTH_QUOTA_WINDOW
+    description: Rolling 24-hour per-user sync-transfer bandwidth quota would be exceeded. v1 dimensions are 536,870,912 uncompressed ingress bytes in authenticated PUT bodies and 536,870,912 uncompressed egress bytes in successful download or changes response bodies; clients must back off rather than amplify retries.
+  - code: SYNC_VECTOR_INVALID
+    http_status: 400
+    retryable: false
+    user_action: FIX_SYNC_VERSION_VECTOR
+    description: Version vector entries, per-device counters, writer counter progression, uniqueness, or shape failed validation.
+  - code: SYNC_VECTOR_OVERFLOW
+    http_status: 409
+    retryable: false
+    user_action: MIGRATE_TO_FRESH_SYNC_BLOB_OR_DEVICE
+    description: Version-vector hard bound would be exceeded because a write would introduce a 513th distinct device entry for one blob or advance a per-device counter beyond 2,147,483,647. The server must not truncate, evict, wrap, reset, or reuse counters; migrate plaintext client-side to a fresh blob id within protocol limits.
+  - code: SYNC_VECTOR_CONFLICT
+    http_status: 409
+    retryable: false
+    user_action: MERGE_OR_CHOOSE_VERSION_THEN_FAST_FORWARD
+    description: Base version vector is stale, advanced, or concurrent with the current server vector; the server never silently overwrites or merges and the client must download, present both versions, resolve locally, and retry fast-forward.
+  - code: SYNC_BLOB_NOT_FOUND
+    http_status: 404
+    retryable: false
+    user_action: CHECK_SYNC_BLOB_ID
+    description: Encrypted sync blob does not exist and has no visible tombstone for the authenticated user.
+  - code: SYNC_BLOB_DELETED
+    http_status: 410
+    retryable: false
+    user_action: REMOVE_LOCAL_COPY_AFTER_TOMBSTONE
+    description: Encrypted sync blob was tombstoned and the blob id is permanently closed; ciphertext is unavailable, deletion propagation metadata may remain, and even compaction or consent-retention cleanup does not permit resurrection under the same blob id before account data deletion.
+  - code: SYNC_RATE_LIMITED
+    http_status: 429
+    retryable: true
+    user_action: WAIT_FOR_SYNC_RATE_LIMIT_WINDOW
+    description: Encrypted synchronization read or write rate limit reached; clients must back off rather than amplify retries.
+  - code: SYNC_CURSOR_INVALID
+    http_status: 400
+    retryable: false
+    user_action: RESET_SYNC_CURSOR
+    description: Incremental sync cursor is malformed, crosses the bound sync device, or does not belong to the authenticated user; discard only the cursor and resync without copying cursors between devices.
+  - code: SYNC_CURSOR_EXPIRED
+    http_status: 410
+    retryable: false
+    user_action: RESYNC_WITHOUT_CURSOR
+    description: Incremental sync cursor is below the per-user compaction_epoch or otherwise older than retained mutation metadata; perform a current-state resync without cursor and reconcile locally instead of deleting user data merely because the cursor expired.

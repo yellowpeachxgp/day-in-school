@@ -94,6 +94,12 @@ class AutomationDedupeCompletionException(dedupeKey: String) :
  */
 interface AutomationDedupeStore {
     suspend fun tryAcquire(record: AutomationDedupeRecord): DedupeAcquireResult
+
+    /**
+     * 按 executionOwner/run 身份条件续租，而不是按 leaseExpiresAt 值相等：续租本身会改变该字段。
+     * 返回 false 表示 ownership 已丢失或记录已进入终态；调用方不得再写副作用或 run。
+     */
+    suspend fun renewLease(expected: AutomationDedupeRecord, renewedAt: Instant, renewedUntil: Instant): Boolean
     suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean
     suspend fun find(dedupeKey: String): AutomationDedupeRecord?
     suspend fun count(): Int
@@ -105,6 +111,12 @@ internal fun AutomationDedupeRecord.hasSameRunIdentityAs(other: AutomationDedupe
         triggerInstanceKey == other.triggerInstanceKey &&
         runId == other.runId &&
         policyFingerprint == other.policyFingerprint
+
+/** ownership fencing 只比较执行权身份；leaseExpiresAt 是可续租的浮动元数据，不参与所有权判断。 */
+internal fun AutomationDedupeRecord.hasSameExecutionOwnershipAs(other: AutomationDedupeRecord): Boolean =
+    hasSameRunIdentityAs(other) &&
+        executionOwner == other.executionOwner &&
+        acquiredAt == other.acquiredAt
 
 class InMemoryAutomationDedupeStore : AutomationDedupeStore {
     private val mutex = Mutex()
@@ -132,15 +144,30 @@ class InMemoryAutomationDedupeStore : AutomationDedupeStore {
         }
     }
 
+    override suspend fun renewLease(expected: AutomationDedupeRecord, renewedAt: Instant, renewedUntil: Instant): Boolean = mutex.withLock {
+        val existing = records[expected.dedupeKey] ?: return@withLock false
+        if (existing.state != AutomationDedupeState.PENDING || !existing.hasSameExecutionOwnershipAs(expected) ||
+            !renewedAt.isBefore(existing.leaseExpiresAt) || !renewedUntil.isAfter(renewedAt)
+        ) {
+            return@withLock false
+        }
+        if (renewedUntil.isAfter(existing.leaseExpiresAt)) {
+            records[expected.dedupeKey] = existing.copy(leaseExpiresAt = renewedUntil)
+        }
+        true
+    }
+
     override suspend fun markRunRecorded(expected: AutomationDedupeRecord, completedAt: Instant): Boolean = mutex.withLock {
         val existing = records[expected.dedupeKey]
         val alreadyRecordedForSameRun = existing != null &&
             existing.state == AutomationDedupeState.RUN_RECORDED &&
             existing.hasSameRunIdentityAs(expected)
-        if (existing != expected || existing.state != AutomationDedupeState.PENDING) {
+        if (existing == null || existing.state != AutomationDedupeState.PENDING ||
+            !existing.hasSameExecutionOwnershipAs(expected)
+        ) {
             alreadyRecordedForSameRun
         } else {
-            records[expected.dedupeKey] = expected.copy(
+            records[expected.dedupeKey] = existing.copy(
                 state = AutomationDedupeState.RUN_RECORDED,
                 completedAt = completedAt
             )
@@ -156,4 +183,133 @@ class InMemoryAutomationDedupeStore : AutomationDedupeStore {
         ruleId == other.ruleId &&
             triggerInstanceKey == other.triggerInstanceKey &&
             policyFingerprint == other.policyFingerprint
+}
+
+sealed interface ActionCheckpointClaimResult {
+    /** 当前 executionOwner/attempt 获得执行权；checkpoint 已按原子写入口径保存。 */
+    data class Execute(val checkpoint: AutomationActionCheckpoint) : ActionCheckpointClaimResult
+
+    /** 动作 outcome 已 durable；重投/恢复只能对账重放，不得再次执行副作用或确认消费。 */
+    data class ReplayCompleted(val checkpoint: AutomationActionCheckpoint) : ActionCheckpointClaimResult
+}
+
+class AutomationActionCheckpointConflictException(checkpointKey: String) :
+    IllegalStateException("动作检查点身份冲突: " + checkpointKey)
+
+/**
+ * 动作级 checkpoint 端口。生产实现必须把 claim/markConfirmationConsumed/complete 做成原子条件写；
+ * complete 只能由同 executionOwner+attempt 的 STARTED 行完成，stale owner 不能覆盖恢复者。
+ */
+interface AutomationActionCheckpointStore {
+    suspend fun claim(checkpoint: AutomationActionCheckpoint): ActionCheckpointClaimResult
+    suspend fun markConfirmationConsumed(
+        expected: AutomationActionCheckpoint,
+        confirmation: ActionConfirmation,
+        updatedAt: Instant
+    ): Boolean
+    suspend fun complete(
+        expected: AutomationActionCheckpoint,
+        outcome: ActionOutcome,
+        completedAt: Instant
+    ): Boolean
+    suspend fun find(checkpointKey: String): AutomationActionCheckpoint?
+    suspend fun listForRun(runId: String): List<AutomationActionCheckpoint>
+    suspend fun count(): Int
+}
+
+private fun AutomationActionCheckpoint.hasSameActionIdentityAs(other: AutomationActionCheckpoint): Boolean =
+    checkpointKey == other.checkpointKey &&
+        dedupeKey == other.dedupeKey &&
+        runId == other.runId &&
+        ruleId == other.ruleId &&
+        triggerInstanceKey == other.triggerInstanceKey &&
+        actionIndex == other.actionIndex &&
+        actionType == other.actionType &&
+        configDigest == other.configDigest
+
+private fun AutomationActionCheckpoint.hasSameExecutionAs(other: AutomationActionCheckpoint): Boolean =
+    hasSameActionIdentityAs(other) &&
+        executionOwner == other.executionOwner &&
+        attempt == other.attempt
+
+class InMemoryAutomationActionCheckpointStore : AutomationActionCheckpointStore {
+    private val mutex = Mutex()
+    private val records = LinkedHashMap<String, AutomationActionCheckpoint>()
+
+    override suspend fun claim(checkpoint: AutomationActionCheckpoint): ActionCheckpointClaimResult = mutex.withLock {
+        val existing = records[checkpoint.checkpointKey]
+        if (existing != null && !existing.hasSameActionIdentityAs(checkpoint)) {
+            throw AutomationActionCheckpointConflictException(checkpoint.checkpointKey)
+        }
+        when {
+            existing == null -> {
+                records[checkpoint.checkpointKey] = checkpoint
+                ActionCheckpointClaimResult.Execute(checkpoint)
+            }
+            existing.state == AutomationActionCheckpointState.COMPLETED ->
+                ActionCheckpointClaimResult.ReplayCompleted(existing)
+            existing.hasSameExecutionAs(checkpoint) ->
+                ActionCheckpointClaimResult.Execute(existing)
+            else -> {
+                val takeover = checkpoint.copy(
+                    attempt = existing.attempt + 1,
+                    confirmation = existing.confirmation
+                )
+                records[checkpoint.checkpointKey] = takeover
+                ActionCheckpointClaimResult.Execute(takeover)
+            }
+        }
+    }
+
+    override suspend fun markConfirmationConsumed(
+        expected: AutomationActionCheckpoint,
+        confirmation: ActionConfirmation,
+        updatedAt: Instant
+    ): Boolean = mutex.withLock {
+        val existing = records[expected.checkpointKey] ?: return@withLock false
+        if (existing.state != AutomationActionCheckpointState.STARTED || !existing.hasSameExecutionAs(expected)) {
+            return@withLock false
+        }
+        val prior = existing.confirmation
+        if (prior != null && prior != confirmation) {
+            throw AutomationActionCheckpointConflictException(expected.checkpointKey)
+        }
+        if (prior == confirmation) return@withLock true
+        records[expected.checkpointKey] = existing.copy(
+            confirmation = confirmation,
+            updatedAt = updatedAt
+        )
+        true
+    }
+
+    override suspend fun complete(
+        expected: AutomationActionCheckpoint,
+        outcome: ActionOutcome,
+        completedAt: Instant
+    ): Boolean = mutex.withLock {
+        val existing = records[expected.checkpointKey] ?: return@withLock false
+        if (existing.state == AutomationActionCheckpointState.COMPLETED &&
+            existing.hasSameActionIdentityAs(expected) && existing.outcome == outcome
+        ) {
+            return@withLock true
+        }
+        if (existing.state != AutomationActionCheckpointState.STARTED || !existing.hasSameExecutionAs(expected)) {
+            return@withLock false
+        }
+        records[expected.checkpointKey] = existing.copy(
+            state = AutomationActionCheckpointState.COMPLETED,
+            outcome = outcome,
+            updatedAt = completedAt,
+            completedAt = completedAt
+        )
+        true
+    }
+
+    override suspend fun find(checkpointKey: String): AutomationActionCheckpoint? = mutex.withLock { records[checkpointKey] }
+
+    override suspend fun listForRun(runId: String): List<AutomationActionCheckpoint> = mutex.withLock {
+        records.values.filter { it.runId == runId }.sortedBy { it.actionIndex }
+    }
+
+    override suspend fun count(): Int = mutex.withLock { records.size }
 }

@@ -109,7 +109,7 @@ class SettingsLifecycleWiringGuardTest {
     @Test
     fun everyRouteUsesCompositionScopedOwnerAndNeverBareViewModel() {
         val routes = routeFiles()
-        assertEquals("W0-06c 当前 16 组 Route 都必须纳入扫描", 16, routes.size)
+        assertEquals("W0-06c+W1-04 当前 17 组 Route 都必须纳入扫描", 17, routes.size)
 
         for (file in routes) {
             val relative = file.relativeTo(repoRoot).invariantSeparatorsPath
@@ -146,7 +146,8 @@ class SettingsLifecycleWiringGuardTest {
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/academic/SettingsAcademicRouteSection.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/theme/SettingsThemeRouteSection.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/data/SettingsDataRouteSection.kt",
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/network/SettingsNetworkRouteSection.kt"
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/network/SettingsNetworkRouteSection.kt",
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/backup/BackupCenterRouteSection.kt"
         )
         for (relative in rootOwnerRoutes) {
             val source = read(relative)

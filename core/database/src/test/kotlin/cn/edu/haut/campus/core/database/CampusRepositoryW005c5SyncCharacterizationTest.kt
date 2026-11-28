@@ -8,7 +8,6 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -137,13 +136,6 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
         linkedAtEpochMillis = 3_000L
     )
 
-    private fun emptySyncPayload(cloudUserId: String, peach: Double = 9.0): String = """
-        {"ok":true,"data":{"auth_version":1,
-          "user":{"cloud_user_id":"$cloudUserId","display_name":"用户"},
-          "wallet":{"peach_balance":$peach},
-          "school_bindings":[],"reservation_jobs":[],"orders":[],"parcels":[]}}
-    """.trimIndent()
-
     private fun syncPayloadWithJobAndParcel(cloudUserId: String): String = """
         {"ok":true,"data":{"auth_version":1,
           "user":{"cloud_user_id":"$cloudUserId","display_name":"用户"},
@@ -160,6 +152,24 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
             "carrier_code":"CAINIAO","carrier_name":"校园快递","status":"READY_FOR_PICKUP",
             "pickup_code":"C5-01","station_name":"莲花街北苑菜鸟驿站","item_title":"同步特征件",
             "raw_notification_text":null}]}}
+    """.trimIndent()
+
+    /**
+     * 热身快照只携带一个终态 job、不携带包裹。
+     * 该 job 落库必然发生在同步提交屏障之后，因此它是「后台首次同步已经越过 hook 点」
+     * 的确定性信号；终态 job 不参与后续活动计划上推，避免热身数据改变被测同步形状。
+     */
+    private fun syncPayloadWithTerminalWarmupJobOnly(cloudUserId: String): String = """
+        {"ok":true,"data":{"auth_version":1,
+          "user":{"cloud_user_id":"$cloudUserId","display_name":"用户"},
+          "wallet":{"peach_balance":12.5},
+          "school_bindings":[{"id":"bind_c5","student_no":"20240001"}],
+          "reservation_jobs":[{"id":"job_c5_warmup","plan_id":"plan_srv_c5_warmup",
+            "area_code":"5F_MID","area_name":"五层中区","candidate_seats":["W101"],
+            "slot_window":"08:00-22:00","booking_local_date":"2099-01-04","target_local_time":"09:00:00",
+            "state":"FAILED","repeat_days":1,"remaining_days":0,
+            "student_no":"20240001","school_binding_id":"bind_c5"}],
+          "orders":[],"parcels":[]}}
     """.trimIndent()
 
     private fun cloudPlan(
@@ -215,7 +225,8 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
     fun cloud_snapshot_merge_freezes_booking_parcel_timing_and_followup_upload_shape() = runBlocking {
         val fixture = buildInMemoryTestRepo("snapshot_merge")
         val repo = fixture.repository
-        val jwt = testCloudJwt("cloud_user_c5")
+        val cloudUserId = "cloud_user_c5_snapshot"
+        val jwt = testCloudJwt(cloudUserId)
         val snapshotBodies = ConcurrentLinkedQueue<String>()
         val notifyReasons = ConcurrentLinkedQueue<String>()
         repo.onScheduleOrPolicyChangedListener = { reason -> notifyReasons += reason }
@@ -223,7 +234,7 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
             when {
                 method == "POST" && url.endsWith("/api/v1/sync/snapshot") -> {
                     body?.let(snapshotBodies::add)
-                    syncPayloadWithJobAndParcel("cloud_user_c5")
+                    syncPayloadWithJobAndParcel(cloudUserId)
                 }
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"consent_c5","auth_version":3}}"""
@@ -235,7 +246,7 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
             }
         }
         repo.saveAuthorizedSyncCredentials("20240001", "pw-c5", "2026", "3")
-        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_c5", jwt, displayName = "用户"))
+        repo.saveVerifiedXpeachCloudAccount(loginProfile(cloudUserId, jwt, displayName = "用户"))
 
         waitUntil("登录后首次云同步合并远端计划") {
             dao.getLibraryBookingPlanById("plan_job_c5_sync") != null
@@ -243,7 +254,9 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
         waitUntil("登录后首次云同步合并远端包裹") {
             dao.getParcelByTrackingNumber("trk_c5_sync") != null
         }
-        assertTrue("包裹变更必须触发原通知原因", notifyReasons.contains("PARCEL_CLOUD_SYNCED"))
+        waitUntil("包裹变更触发原通知原因") {
+            notifyReasons.contains("PARCEL_CLOUD_SYNCED")
+        }
 
         val mergedPlan = dao.getLibraryBookingPlanById("plan_job_c5_sync")!!
         val fireAt = LocalDate.parse("2099-01-02")
@@ -251,7 +264,7 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
             .atZone(ZoneId.of("Asia/Shanghai"))
             .toInstant()
             .toEpochMilli()
-        assertEquals("cloud_user_c5", mergedPlan.ownerCloudUserId)
+        assertEquals(cloudUserId, mergedPlan.ownerCloudUserId)
         assertEquals("20240001", mergedPlan.ownerStudentId)
         assertEquals("job_c5_sync", mergedPlan.cloudJobId)
         assertEquals("ARMED", mergedPlan.status)
@@ -301,13 +314,14 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
     fun reconfirm_restores_only_scoped_plans_then_triggers_full_sync_in_original_order() = runBlocking {
         val fixture = buildInMemoryTestRepo("reconfirm_order")
         val repo = fixture.repository
-        val jwt = testCloudJwt("cloud_user_c5")
+        val cloudUserId = "cloud_user_c5_reconfirm"
+        val jwt = testCloudJwt(cloudUserId)
         val calls = ConcurrentLinkedQueue<String>()
         repo.cloudHttpTransportForTest = { method, url, body, _, _ ->
             calls += method + " " + url
             when {
                 method == "POST" && url.endsWith("/api/v1/sync/snapshot") ->
-                    emptySyncPayload("cloud_user_c5")
+                    syncPayloadWithTerminalWarmupJobOnly(cloudUserId)
                 method == "POST" && url.endsWith("/api/v1/me/consents") ->
                     """{"ok":true,"data":{"id":"consent_c5","auth_version":3}}"""
                 method == "POST" && url.endsWith("/api/v1/school-bindings") ->
@@ -318,22 +332,22 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
             }
         }
         repo.saveAuthorizedSyncCredentials("20240001", "pw-c5", "2026", "3")
-        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_c5", jwt, displayName = "用户"))
-        waitUntil("登录后首次空快照同步完成") {
-            calls.any { it.endsWith("/api/v1/sync/snapshot") }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile(cloudUserId, jwt, displayName = "用户"))
+        waitUntil("登录后首次快照越过落库屏障") {
+            dao.getLibraryBookingPlanById("plan_job_c5_warmup") != null
         }
 
         dao.upsertLibraryBookingPlan(
             cloudPlan(
                 id = "plan_reconfirm_owned",
-                ownerCloudUserId = "cloud_user_c5",
+                ownerCloudUserId = cloudUserId,
                 ownerStudentId = "20240001"
             )
         )
         dao.upsertLibraryBookingPlan(
             cloudPlan(
                 id = "plan_reconfirm_other_student",
-                ownerCloudUserId = "cloud_user_c5",
+                ownerCloudUserId = cloudUserId,
                 ownerStudentId = "20249999"
             )
         )
@@ -353,7 +367,7 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
         val restored = dao.getLibraryBookingPlanById("plan_reconfirm_owned")!!
         assertEquals("ARMED", restored.status)
         assertEquals(8, restored.stateVersion)
-        assertEquals("cloud_user_c5", restored.ownerCloudUserId)
+        assertEquals(cloudUserId, restored.ownerCloudUserId)
         assertEquals("20240001", restored.ownerStudentId)
         assertEquals("job_plan_reconfirm_owned", restored.cloudJobId)
         assertEquals("已重新确认云端授权，正在同步恢复云端托管抢座", restored.lastDiagnosticMessage)
@@ -378,24 +392,27 @@ class CampusRepositoryW005c5SyncCharacterizationTest {
     fun sync_commit_barrier_hook_runs_after_recheck_and_before_first_parcel_write() = runBlocking {
         val fixture = buildInMemoryTestRepo("commit_hook_order")
         val repo = fixture.repository
-        val jwt = testCloudJwt("cloud_user_c5")
+        val cloudUserId = "cloud_user_c5_commit_hook"
+        val jwt = testCloudJwt(cloudUserId)
         val mode = AtomicReference("empty")
-        val snapshotCalls = AtomicInteger(0)
         repo.cloudHttpTransportForTest = { method, url, _, _, _ ->
             if (method == "POST" && url.endsWith("/api/v1/sync/snapshot")) {
-                snapshotCalls.incrementAndGet()
                 if (mode.get() == "parcel") {
-                    syncPayloadWithJobAndParcel("cloud_user_c5")
+                    syncPayloadWithJobAndParcel(cloudUserId)
                 } else {
-                    emptySyncPayload("cloud_user_c5")
+                    syncPayloadWithTerminalWarmupJobOnly(cloudUserId)
                 }
             } else {
                 """{"ok":true,"data":{}}"""
             }
         }
         repo.saveAuthorizedSyncCredentials("20240001", "pw-c5", "2026", "3")
-        repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_c5", jwt, displayName = "用户"))
-        waitUntil("登录后首次空快照同步完成") { snapshotCalls.get() >= 1 }
+        repo.saveVerifiedXpeachCloudAccount(loginProfile(cloudUserId, jwt, displayName = "用户"))
+        // 终态热身 job 的落库位于提交屏障 hook 点之后；等到它再安装 hook，
+        // 后台首次同步无论被调度得多慢都不会被计入下面的显式同步断言。
+        waitUntil("登录后热身快照越过同步提交屏障") {
+            dao.getLibraryBookingPlanById("plan_job_c5_warmup") != null
+        }
 
         var hookCalls = 0
         var hookSawParcel = true
