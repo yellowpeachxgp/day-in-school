@@ -463,8 +463,9 @@ class TeamTimeViewModel(
             null -> null
         }
         val shared = when {
-            summary != null -> summaryActive
+            summaryExpired -> false
             querySaysShared != null -> querySaysShared
+            summary != null -> summaryActive
             else -> self?.sharesBusyBlocks == true
         }
         val shareStatusLabel = when {
