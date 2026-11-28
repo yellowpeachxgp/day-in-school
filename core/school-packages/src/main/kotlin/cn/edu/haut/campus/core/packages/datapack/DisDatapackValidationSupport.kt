@@ -1,7 +1,6 @@
 package cn.edu.haut.campus.core.packages.datapack
 
 import cn.edu.haut.campus.core.model.json.JsonValue
-import java.net.URI
 
 internal fun schemaFail(path: String, message: String): Nothing =
     throw datapackInvalid("dis-datapack/v1 schema violation at " + path + ": " + message, RUNTIME_DATAPACK_SCHEMA_INVALID)
@@ -156,6 +155,52 @@ private fun validPortComponent(port: String): Boolean {
     return normalized.length <= 5 && (normalized.isEmpty() || normalized.toInt() <= 65535)
 }
 
+private fun validIpv4Address(value: String): Boolean {
+    val parts = value.split('.')
+    if (parts.size != 4) return false
+    return parts.all { part ->
+        part.length in 1..3 && part.all { it in '0'..'9' } &&
+            !(part.length > 1 && part.startsWith("0")) && part.toInt() <= 255
+    }
+}
+
+private fun ipv6PieceGroupCount(pieces: List<String>): Int {
+    var count = 0
+    pieces.forEachIndexed { index, piece ->
+        val isH16 = piece.length in 1..4 && piece.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }
+        if (isH16) {
+            count += 1
+        } else if (index == pieces.lastIndex && validIpv4Address(piece)) {
+            count += 2
+        } else {
+            return -1
+        }
+    }
+    return count
+}
+
+/** RFC 3986 IPv6address grammar；HTTPS datapack 链接保守拒绝 IPvFuture。 */
+private fun isValidIpv6Literal(value: String): Boolean {
+    if (value.isEmpty() || value.any { ch -> ch !in '0'..'9' && ch !in 'a'..'f' && ch !in 'A'..'F' && ch != ':' && ch != '.' }) return false
+    val compressed = value.split("::")
+    if (compressed.size > 2) return false
+    fun parseSide(side: String): List<String>? {
+        if (side.isEmpty()) return emptyList()
+        val pieces = side.split(':')
+        return if (pieces.any { it.isEmpty() }) null else pieces
+    }
+    if (compressed.size == 1) {
+        val pieces = parseSide(value) ?: return false
+        return ipv6PieceGroupCount(pieces) == 8
+    }
+    val left = parseSide(compressed[0]) ?: return false
+    val right = parseSide(compressed[1]) ?: return false
+    val leftGroups = ipv6PieceGroupCount(left)
+    val rightGroups = ipv6PieceGroupCount(right)
+    if (leftGroups < 0 || rightGroups < 0) return false
+    return leftGroups + rightGroups < 8
+}
+
 /**
  * RFC 3986 raw square brackets are only the delimiters of an IP-literal host.
  * They are not valid raw path/query/fragment characters; native array spellings
@@ -174,9 +219,10 @@ private fun validateHttpsAuthorityAndBracketPlacement(raw: String, path: String)
     val authority = raw.substring(authorityStart, authorityEnd)
     if (authority.isEmpty()) schemaFail(path, "must include a non-empty URI authority")
 
-    val hostStart = authority.lastIndexOf('@') + 1
+    val hostStart = if (authority.indexOf('@') >= 0) authority.indexOf('@') + 1 else 0
     val hostAndPort = authority.substring(hostStart)
     if (hostAndPort.isEmpty()) schemaFail(path, "must include a non-empty URI host")
+    if (hostAndPort.contains('@')) schemaFail(path, "must percent-encode additional @ characters in URI userinfo")
 
     val allowedOpenBracket = authorityStart + hostStart
     var allowedCloseBracket = -1
@@ -185,6 +231,7 @@ private fun validateHttpsAuthorityAndBracketPlacement(raw: String, path: String)
         if (close <= 1) schemaFail(path, "must contain a closed non-empty IP-literal host")
         val literal = hostAndPort.substring(1, close)
         if (literal.contains('[') || literal.contains(']')) schemaFail(path, "must not nest raw brackets in an IP-literal host")
+        if (!isValidIpv6Literal(literal)) schemaFail(path, "must use an RFC 3986 IPv6 literal host")
         val rest = hostAndPort.substring(close + 1)
         if (rest.isNotEmpty()) {
             if (!rest.startsWith(":")) schemaFail(path, "must not append non-port text to an IP-literal host")
@@ -217,13 +264,8 @@ private fun validateHttpsAuthorityAndBracketPlacement(raw: String, path: String)
 
 internal fun expectHttpsUriValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
-    val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw) && try {
-        validateHttpsAuthorityAndBracketPlacement(raw, path)
-        val uri = URI(raw)
-        uri.isAbsolute && uri.scheme == "https" && !uri.host.isNullOrBlank()
-    } catch (error: Exception) {
-        false
-    }
+    val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw)
+    if (valid) validateHttpsAuthorityAndBracketPlacement(raw, path)
     if (!valid) schemaFail(path, "must be an absolute HTTPS URI")
     return raw
 }
