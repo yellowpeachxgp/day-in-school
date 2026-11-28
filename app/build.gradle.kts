@@ -106,6 +106,7 @@ dependencies {
     implementation(project(":core:domain"))
     implementation(project(":core:database"))
     implementation(project(":core:vault"))
+    implementation(project(":core:automation-android"))
     implementation(project(":core:reminder"))
     implementation(project(":core:designsystem"))
     implementation(project(":core:academic"))
@@ -117,6 +118,7 @@ dependencies {
     implementation(project(":feature:map"))
     implementation(project(":feature:importer"))
     implementation(project(":feature:settings"))
+    implementation(project(":feature:automation"))
 
     implementation(project(":widget:common"))
     implementation(project(":widget:nextclass"))

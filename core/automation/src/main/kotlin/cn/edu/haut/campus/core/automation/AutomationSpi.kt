@@ -65,7 +65,9 @@ interface ActionExecutor {
 
 /**
  * NEEDS_USER_CONFIRM 动作的确认端口；UI/通知确认链路在后续卡实现，本核心只做绑定与有效期校验。
- * 实现必须原子消费确认凭证：同一 confirmationId 第二次调用必须返回 null，避免自动触发重复使用“一次性”确认。
+ * 实现必须原子消费确认凭证：同一 confirmationId 不得被另一个触发实例重复使用。
+ * 同时实现必须按 RunContext.actionExecutionKey 做崩溃恢复幂等：同一 run/action 的重试在
+ * consume 响应丢失后要能对账出原确认；无法对账时引擎必须记录 INDETERMINATE，而不是谎称动作被阻止。
  */
 interface ActionConfirmationPort {
     suspend fun consumeConfirmation(
@@ -75,7 +77,10 @@ interface ActionConfirmationPort {
     ): ActionConfirmation?
 }
 
-/** 执行上下文。triggerEvent 只携带 DomainEvent 小型事实，不携带原文 blob、凭据或大 payload。 */
+/**
+ * 执行上下文。triggerEvent 只携带 DomainEvent 小型事实，不携带原文 blob、凭据或大 payload。
+ * actionIndex/actionExecutionKey 只在动作执行与确认消费边界非空；动作实现必须用该稳定键做副作用幂等。
+ */
 data class RunContext(
     val scope: SchoolAccountScope,
     val rule: AutomationRule,
@@ -88,10 +93,17 @@ data class RunContext(
     val triggerEvent: DomainEvent? = null,
     val timelineService: TimelineService? = null,
     val domainEventBus: DomainEventBus? = null,
-    val confirmation: ActionConfirmation? = null
+    val confirmation: ActionConfirmation? = null,
+    val actionIndex: Int? = null,
+    val actionExecutionKey: String? = null
 ) {
     init {
         requireAutomationToken(runId, "runId")
         requireAutomationToken(dedupeKey, "dedupeKey", 1024)
+        require((actionIndex == null) == (actionExecutionKey == null)) {
+            "actionIndex 与 actionExecutionKey 必须同时存在或同时缺省"
+        }
+        actionIndex?.let { require(it >= 0) { "actionIndex 不能为负" } }
+        actionExecutionKey?.let { requireAutomationToken(it, "actionExecutionKey", 160) }
     }
 }

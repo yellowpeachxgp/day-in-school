@@ -119,6 +119,7 @@ import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
 import cn.edu.haut.campus.core.reminder.focus.FocusNotificationFactory
+import cn.edu.haut.campus.feature.automation.AutomationRoute
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
@@ -321,7 +322,8 @@ class MainActivity : ComponentActivity() {
                     "empty_classrooms",
                     "community",
                     "xpeach_cloud",
-                    "school_center"
+                    "school_center",
+                    "automation"
                 )
             ) {
                 deepLinkOverlayRoute = tab
@@ -626,6 +628,12 @@ fun HautCampusRootApp(
                     onBack = { overlayScreen = null }
                 )
             }
+            "automation" -> {
+                AutomationRoute(
+                    activeSession = activeSession,
+                    onBack = { overlayScreen = null }
+                )
+            }
             "xpeach_cloud" -> {
                 XPeachCloudAccountScreen(
                     repository = repository,
@@ -796,6 +804,7 @@ fun HautCampusRootApp(
                                 onNavigateToSchoolCenter = { overlayScreen = "school_center" },
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
+                                onNavigateToAutomation = { overlayScreen = "automation" },
                                 activeSchool = activeSession.school,
                                 activeProfileLabel = activeSession.label,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0

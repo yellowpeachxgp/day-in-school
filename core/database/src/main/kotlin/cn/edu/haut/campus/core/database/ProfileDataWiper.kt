@@ -37,6 +37,7 @@ class ProfileDataWiper internal constructor(
     private val syncOrchestrator: SyncOrchestrator
 ) {
     private val vaultDao = database.vaultDao()
+    private val automationDao = database.automationDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -231,6 +232,10 @@ class ProfileDataWiper internal constructor(
                 vaultDao.clearSearchDocs()
                 vaultDao.clearSearchFts()
                 vaultDao.clearBlobStore()
+                automationDao.clearCheckpoints()
+                automationDao.clearDedupe()
+                automationDao.clearRuns()
+                automationDao.clearRules()
             }
         }
         cloudTokenMutex.withLock {
@@ -245,6 +250,8 @@ class ProfileDataWiper internal constructor(
                 prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_ACADEMIC_DATA_SYNC_MS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_ACADEMIC_DATA_SYNC_TERM_ID)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
                 prefs.remove(CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS)

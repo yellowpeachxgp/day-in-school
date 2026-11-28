@@ -43,6 +43,42 @@ class ExtensionPackageSecurityTest {
     }
 
     @Test
+    fun installArchiveUsesStrictExtensionPackZipEvidenceChainEndToEnd() {
+        val root = Files.createTempDirectory("w601a-strict-archive-install")
+        try {
+            val installer = ExtensionPluginInstaller(ExtensionPluginFileStore(root), registry)
+            val artifact = "declarative data".toByteArray()
+            val manifest = signedManifest(artifacts = mapOf("dist/data.txt" to artifact))
+            val zip = zipOf(linkedMapOf(
+                "manifest.json" to manifest.toByteArray(),
+                "dist/data.txt" to artifact
+            ))
+
+            val installed = installer.installArchive(zip, "schoolx")
+            assertEquals("org.example.signed", installed.installation.pluginId)
+            assertEquals("1.0.0", installed.installation.activeVersion)
+
+            val corrupted = zip.copyOf()
+            val central = firstCentralHeaderOffset(corrupted)
+            // Keep the local header name intact but corrupt the central-directory name.
+            // ZipInputStream never compares the two; ExtensionPackZip must fail closed.
+            corrupted[central + 46] = 'X'.code.toByte()
+            val otherRoot = Files.createTempDirectory("w601a-strict-archive-negative")
+            try {
+                val negativeInstaller = ExtensionPluginInstaller(ExtensionPluginFileStore(otherRoot), registry)
+                assertPackageError(PackageError.ARCHIVE_CORRUPT) {
+                    negativeInstaller.installArchive(corrupted, "schoolx")
+                }
+                assertEquals(0, negativeInstaller.snapshot().size)
+            } finally {
+                otherRoot.toFile().deleteRecursively()
+            }
+        } finally {
+            root.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun cloudSignedReferencePluginVerifiesWithAndroidTrustRoot() {
         val manifestBytes = readResource("/reference-v2-plugin/manifest.json")
         val artifactBytes = readResource("/reference-v2-plugin/index.mjs")
@@ -398,6 +434,17 @@ class ExtensionPackageSecurityTest {
             "value_base64" to JsonValue.Str(java.util.Base64.getEncoder().encodeToString(signature))
         ))
         return Json.canonical(JsonValue.Obj(fields))
+    }
+
+    private fun firstCentralHeaderOffset(bytes: ByteArray): Int {
+        for (index in bytes.size - 22 downTo 0) {
+            if (bytes[index] == 0x50.toByte() && bytes[index + 1] == 0x4b.toByte() &&
+                bytes[index + 2] == 0x01.toByte() && bytes[index + 3] == 0x02.toByte()
+            ) {
+                return index
+            }
+        }
+        error("test zip central header not found")
     }
 
     private fun countRegularFiles(root: java.nio.file.Path): Long {
