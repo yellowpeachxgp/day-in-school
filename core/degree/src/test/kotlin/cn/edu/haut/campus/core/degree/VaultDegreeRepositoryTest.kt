@@ -333,7 +333,9 @@ class VaultDegreeRepositoryTest {
                 clock = { now },
                 pbkdf2Iterations = 600_000
             )
-            val passphrase = "backup-passphrase".toCharArray()
+            val passphrase = charArrayOf(
+                'b', 'a', 'c', 'k', 'u', 'p', '-', 'p', 'a', 's', 's', 'p', 'h', 'r', 'a', 's', 'e'
+            )
             val out = ByteArrayOutputStream()
             service.export(scope, BackupSelection.ALL, passphrase, out)
             val backup = out.toByteArray()
