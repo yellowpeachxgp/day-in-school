@@ -236,6 +236,11 @@ class DegreeViewModel(
     }
 
     override fun onCleared() {
+        closeForSessionEnd()
+    }
+
+    /** 会话结束（含测试）统一清理入口：取消协程并释放 vault outbox observer。 */
+    internal fun closeForSessionEnd() {
         scope.cancel()
         repository.close()
     }

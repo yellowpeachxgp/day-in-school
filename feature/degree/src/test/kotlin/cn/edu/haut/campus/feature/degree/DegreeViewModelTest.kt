@@ -131,7 +131,7 @@ class DegreeViewModelTest {
         val vm = createViewModel(fake)
         waitFor { vm.uiState.value.status == DegreeStatus.EMPTY }
         assertEquals(DegreeStatus.EMPTY, vm.uiState.value.status)
-        vm.onCleared()
+        vm.closeForSessionEnd()
         assertTrue(fake.closed)
     }
 
@@ -151,7 +151,7 @@ class DegreeViewModelTest {
         assertNotNull(vm.uiState.value.report)
         assertEquals(1, fake.imports.size)
         assertTrue(vm.uiState.value.notice.orEmpty().contains("已导入"))
-        vm.onCleared()
+        vm.closeForSessionEnd()
     }
 
     @Test
@@ -162,7 +162,7 @@ class DegreeViewModelTest {
         vm.onAction(DegreeUiAction.OpenImportDialog)
         vm.onAction(DegreeUiAction.SubmitImport)
         assertNotNull(vm.uiState.value.importError)
-        vm.onCleared()
+        vm.closeForSessionEnd()
     }
 
     @Test
@@ -189,7 +189,7 @@ class DegreeViewModelTest {
         waitFor { fake.overrides.size == 1 }
         assertNull(vm.uiState.value.overrideDraft)
         assertEquals("open", fake.overrides.first().mapToGroupId)
-        vm.onCleared()
+        vm.closeForSessionEnd()
     }
 
     @Test
@@ -210,6 +210,6 @@ class DegreeViewModelTest {
 
         vm.onAction(DegreeUiAction.OpenOverride("NOPE", "不存在"))
         assertTrue(vm.uiState.value.notice.orEmpty().contains("找不到"))
-        vm.onCleared()
+        vm.closeForSessionEnd()
     }
 }
