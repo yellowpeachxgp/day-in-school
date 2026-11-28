@@ -213,7 +213,8 @@ class BuiltinConditionEvaluators(
     dataFreshnessPort: DataFreshnessPort?,
     weatherProvider: WeatherProvider? = null,
     weatherLocationPort: WeatherLocationPort? = null,
-    utilityBalanceReadPort: UtilityBalanceReadPort? = null
+    utilityBalanceReadPort: UtilityBalanceReadPort? = null,
+    courseCancellationStatePort: CourseCancellationStatePort? = null
 ) {
     private val evaluators = listOf(
         HasClassTodayConditionEvaluator(zoneProvider),
@@ -224,7 +225,7 @@ class BuiltinConditionEvaluators(
         WeatherPrecipitationConditionEvaluator(weatherProvider, weatherLocationPort),
         DayOfWeekConditionEvaluator(zoneProvider),
         UtilityBalanceConditionEvaluator(utilityBalanceReadPort),
-        CourseCancellationConditionEvaluator()
+        CourseCancellationConditionEvaluator(courseCancellationStatePort)
     )
 
     fun all(): List<ConditionEvaluator> = evaluators

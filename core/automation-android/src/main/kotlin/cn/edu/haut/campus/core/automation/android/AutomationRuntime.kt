@@ -76,6 +76,7 @@ class AutomationRuntime private constructor(
     private val utilityBalanceHistoryProvider = RoomUtilityBalanceHistoryProvider(database, scope)
     private val utilityBalanceReadPort = RoomUtilityBalanceReadPort(database, scope)
     private val weatherLocationPort = RepositoryWeatherLocationPort(repository)
+    private val courseCancellationStatePort = RoomCourseCancellationStatePort(database, scope)
     private val weatherProvider = MetNorwayWeatherProvider(
         cacheStore = FileWeatherResponseCacheStore(appContext, scope)
     )
@@ -116,7 +117,8 @@ class AutomationRuntime private constructor(
             dataFreshnessPort = RepositoryDataFreshnessPort(repository),
             weatherProvider = weatherProvider,
             weatherLocationPort = weatherLocationPort,
-            utilityBalanceReadPort = utilityBalanceReadPort
+            utilityBalanceReadPort = utilityBalanceReadPort,
+            courseCancellationStatePort = courseCancellationStatePort
         ).all().forEach(registry::registerConditionEvaluator)
         BuiltinActionExecutors(
             notificationPort = AutomationNotificationPoster(appContext),

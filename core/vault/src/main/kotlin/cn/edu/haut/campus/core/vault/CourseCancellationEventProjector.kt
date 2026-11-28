@@ -29,23 +29,23 @@ internal object CourseCancellationEventProjector {
         for (id in ids) {
             val old = beforeOverrides[id]
             val new = afterOverrides[id]
-            val oldValue = old?.second?.obj("canceled") as? JsonValue.Bool
-            val newValue = new?.second?.obj("canceled") as? JsonValue.Bool
+            val oldValue = old?.obj("canceled") as? JsonValue.Bool
+            val newValue = new?.obj("canceled") as? JsonValue.Bool
             when {
                 old == null && new != null && newValue != null -> fieldChanges += FieldChange(
-                    path = cancellationPath(new.first),
+                    path = cancellationPath(id),
                     kind = FieldChangeKind.ADDED,
                     before = null,
                     after = newValue
                 )
                 old != null && new == null && oldValue != null -> fieldChanges += FieldChange(
-                    path = cancellationPath(old.first),
+                    path = cancellationPath(id),
                     kind = FieldChangeKind.REMOVED,
                     before = oldValue,
                     after = null
                 )
                 oldValue != null && newValue != null && oldValue.value != newValue.value -> fieldChanges += FieldChange(
-                    path = cancellationPath(new!!.first),
+                    path = cancellationPath(id),
                     kind = FieldChangeKind.MODIFIED,
                     before = oldValue,
                     after = newValue
@@ -66,16 +66,25 @@ internal object CourseCancellationEventProjector {
     private fun parseObjectOrNull(snapshot: CanonicalJson): JsonValue.Obj? =
         runCatching { Json.parse(snapshot.text) as? JsonValue.Obj }.getOrNull()
 
-    private fun overridesById(root: JsonValue.Obj?): Map<String, Pair<Int, JsonValue.Obj>> {
+    private fun overridesById(root: JsonValue.Obj?): Map<String, JsonValue.Obj> {
         val items = root?.arr("occurrenceOverrides") ?: return emptyMap()
-        val out = LinkedHashMap<String, Pair<Int, JsonValue.Obj>>()
-        items.forEachIndexed { index, value ->
+        val out = LinkedHashMap<String, JsonValue.Obj>()
+        items.forEach { value ->
             val obj = value as? JsonValue.Obj ?: return@forEachIndexed
             val id = obj.str("id")?.takeIf { it.isNotBlank() } ?: return@forEachIndexed
-            out[id] = index to obj
+            out[id] = obj
         }
         return out
     }
 
-    private fun cancellationPath(index: Int): String = "/occurrenceOverrides/" + index + "/canceled"
+    /**
+     * 逻辑稳定身份路径。occurrenceOverrides 在线格式中是数组；数组下标在“先删旧行、再插新行”
+     * 的真实停课路径中会复用，不能作为 diff 身份。byId 段是 projection 的稳定逻辑寻址，
+     * 不伪装成原始数组下标；其本身仍是合法 JSON Pointer 段序列。
+     */
+    private fun cancellationPath(overrideId: String): String =
+        "/occurrenceOverrides/byId/" + escapeJsonPointerSegment(overrideId) + "/canceled"
+
+    private fun escapeJsonPointerSegment(value: String): String =
+        value.replace("~", "~0").replace("/", "~1")
 }

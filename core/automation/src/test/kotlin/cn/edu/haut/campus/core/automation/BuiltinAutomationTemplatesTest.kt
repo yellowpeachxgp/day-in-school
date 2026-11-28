@@ -216,26 +216,68 @@ class BuiltinAutomationTemplatesTest {
     }
 
     @Test
-    fun mixedOrUnsupportedCancellationEvidenceIsUnknownRatherThanTriggering() = runTest {
+    fun finalActiveCancellationWinsWhenReplacementDeletesFalseAndAddsTrue() = runTest {
         val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
         val rule = template.instantiate(scope).copy(enabled = true)
-        val mixedEvent = courseEventWithChanges(
+        val replacementEvent = courseEventWithChanges(
             mondayMorning,
             listOf(
                 FieldChange(
-                    path = "/occurrenceOverride/canceled",
-                    kind = FieldChangeKind.MODIFIED,
+                    path = "/occurrenceOverrides/byId/ov_mod/canceled",
+                    kind = FieldChangeKind.REMOVED,
                     before = JsonValue.Bool(false),
-                    after = JsonValue.Bool(true)
+                    after = null
                 ),
                 FieldChange(
-                    path = "/occurrence/status",
-                    kind = FieldChangeKind.MODIFIED,
-                    before = JsonValue.Str("CANCELLED_TODAY"),
-                    after = JsonValue.Str("SCHEDULED")
+                    path = "/occurrenceOverrides/byId/ov_cancel/canceled",
+                    kind = FieldChangeKind.ADDED,
+                    before = null,
+                    after = JsonValue.Bool(true)
                 )
             )
         )
+        val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
+
+        val run = engine.dryRun(rule, mondayMorning, triggerEvent = replacementEvent)
+
+        assertEquals(RunStatus.WOULD_EXECUTE, run.status)
+        assertTrue(run.evaluations.single().effectivePassed)
+    }
+
+    @Test
+    fun finalRestoredStateDoesNotTriggerWhenReplacementDeletesTrueAndAddsFalse() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
+        val replacementEvent = courseEventWithChanges(
+            mondayMorning,
+            listOf(
+                FieldChange(
+                    path = "/occurrenceOverrides/byId/ov_cancel/canceled",
+                    kind = FieldChangeKind.REMOVED,
+                    before = JsonValue.Bool(true),
+                    after = null
+                ),
+                FieldChange(
+                    path = "/occurrenceOverrides/byId/ov_edit/canceled",
+                    kind = FieldChangeKind.ADDED,
+                    before = null,
+                    after = JsonValue.Bool(false)
+                )
+            )
+        )
+        val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
+
+        val run = engine.dryRun(rule, mondayMorning, triggerEvent = replacementEvent)
+
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        assertFalse(run.evaluations.single().effectivePassed)
+        assertTrue(run.outcomes.isEmpty())
+    }
+
+    @Test
+    fun unsupportedCancellationEvidenceIsUnknownRatherThanTriggering() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
         val unsupportedEvent = courseEventWithChanges(
             mondayMorning,
             listOf(
@@ -247,17 +289,37 @@ class BuiltinAutomationTemplatesTest {
                 )
             )
         )
-        listOf(mixedEvent, unsupportedEvent).forEach { event ->
-            val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
+        val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
 
-            val run = engine.dryRun(rule, mondayMorning, triggerEvent = event)
+        val run = engine.dryRun(rule, mondayMorning, triggerEvent = unsupportedEvent)
 
-            assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
-            val evaluation = run.evaluations.single()
-            assertEquals(Certainty.UNKNOWN, evaluation.certainty)
-            assertFalse(evaluation.effectivePassed)
-            assertTrue(run.outcomes.isEmpty())
-        }
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        val evaluation = run.evaluations.single()
+        assertEquals(Certainty.UNKNOWN, evaluation.certainty)
+        assertFalse(evaluation.effectivePassed)
+        assertTrue(run.outcomes.isEmpty())
+    }
+
+    @Test
+    fun queuedCancellationDoesNotExecuteAfterRestoreBeforeWake() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
+        val event = courseCancellationEvent(mondayMorning)
+        val ruleStore = InMemoryAutomationRuleStore()
+        ruleStore.upsert(rule)
+        val engine = engineAt(
+            at = mondayMorning,
+            timelineService = StaticTimelineService(emptyList()),
+            courseCancellationActive = false,
+            ruleStore = ruleStore
+        )
+
+        val result = engine.executeTrigger(DomainEventTriggerSupport.triggerInstance(rule.id, event))
+
+        val executed = result as TriggerExecutionResult.Executed
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, executed.run.status)
+        assertTrue("复课后的 queued cancellation 不得产生任何动作", executed.run.outcomes.isEmpty())
+        assertTrue(executed.run.evaluations.single().reason?.contains("当前已无有效停课") == true)
     }
 
     @Test
@@ -376,7 +438,9 @@ class BuiltinAutomationTemplatesTest {
         timelineService: TimelineService,
         weatherProvider: WeatherProvider? = null,
         commuteMinutes: Int? = null,
-        utilityReadings: List<UtilityBalanceReading> = emptyList()
+        utilityReadings: List<UtilityBalanceReading> = emptyList(),
+        courseCancellationActive: Boolean? = true,
+        ruleStore: InMemoryAutomationRuleStore = InMemoryAutomationRuleStore()
     ): DefaultAutomationEngine {
         val conditions = BuiltinConditionEvaluators(
             zoneProvider = { zone },
@@ -398,6 +462,13 @@ class BuiltinAutomationTemplatesTest {
             },
             utilityBalanceReadPort = object : UtilityBalanceReadPort {
                 override suspend fun latestSamples(scope: SchoolAccountScope): List<UtilityBalanceReading> = utilityReadings
+            },
+            courseCancellationStatePort = object : CourseCancellationStatePort {
+                override suspend fun hasActiveCancellation(
+                    scope: SchoolAccountScope,
+                    courseRef: EntityRef,
+                    overrideIds: Set<String>
+                ): Boolean? = courseCancellationActive
             }
         )
         val actions = BuiltinActionExecutors(
@@ -412,7 +483,7 @@ class BuiltinAutomationTemplatesTest {
             initialActionExecutors = actions.all()
         )
         return DefaultAutomationEngine(
-            ruleStore = InMemoryAutomationRuleStore(),
+            ruleStore = ruleStore,
             runStore = InMemoryAutomationRunStore(),
             dedupeStore = InMemoryAutomationDedupeStore(),
             registry = registry,
@@ -468,7 +539,7 @@ class BuiltinAutomationTemplatesTest {
             diff = FieldDiff(
                 listOf(
                     FieldChange(
-                        path = "/occurrenceOverride/canceled",
+                        path = "/occurrenceOverrides/byId/ov_cancel/canceled",
                         kind = FieldChangeKind.MODIFIED,
                         before = JsonValue.Bool(false),
                         after = JsonValue.Bool(true)

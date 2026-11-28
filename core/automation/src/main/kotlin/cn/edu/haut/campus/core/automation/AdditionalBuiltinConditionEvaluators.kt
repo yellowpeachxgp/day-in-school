@@ -265,10 +265,27 @@ class UtilityBalanceConditionEvaluator(
 }
 
 /**
- * 临时停课事实条件。只有 CourseChanged.diff 明确出现取消语义才通过；
- * 没有事件、事件类型不符或差异不含取消证据时绝不把普通调课/更新误报成停课。
+ * 当前课程停课状态读取端口。触发事件只是历史事实；执行动作前必须用该端口复核当前行状态。
  */
-class CourseCancellationConditionEvaluator : ConditionEvaluator {
+interface CourseCancellationStatePort {
+    /**
+     * overrideIds 非空时只核对触发 diff 归因到的行；为空表示事件只携带课程级 status，需按课程聚合
+     * 是否存在任何 active canceled 行判断。返回 null 表示当前状态证据不足，条件必须 UNKNOWN。
+     */
+    suspend fun hasActiveCancellation(
+        scope: SchoolAccountScope,
+        courseRef: cn.edu.haut.campus.core.model.EntityRef,
+        overrideIds: Set<String>
+    ): Boolean?
+}
+
+/**
+ * 临时停课事实条件。只有 CourseChanged.diff 的最终行状态明确为 canceled=true 才通过；
+ * 且执行前必须复核当前课程聚合，触发后已经复课/删除的 queued event 不得产生陈旧动作。
+ */
+class CourseCancellationConditionEvaluator(
+    private val currentStatePort: CourseCancellationStatePort? = null
+) : ConditionEvaluator {
     override val type: String = BuiltinAutomationTypes.CONDITION_COURSE_CANCELLATION
     override val configSchema: JsonSchema = JsonSchema.EMPTY_OBJECT
 
@@ -276,7 +293,7 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
         val event = ctx.triggerEvent as? DomainEvent.CourseChanged
             ?: return unknown(type, "触发上下文缺少 CourseChanged 事件，无法确认临时停课")
         val assessment = assessCourseCancellation(event)
-        val evidence = listOf(
+        val evidence = mutableListOf(
             Evidence(
                 source = "course-change-diff",
                 detail = "event=course.changed,positive=" + assessment.positiveSignals +
@@ -293,21 +310,34 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
                 evidence = evidence
             )
         }
-        if (assessment.positiveSignals > 0 && assessment.negativeSignals > 0) {
+        if (assessment.positiveSignals == 0) {
             return ConditionResult(
                 conditionType = type,
                 passed = false,
-                certainty = Certainty.UNKNOWN,
-                reason = "课程变更同时包含停课与复课/正常状态证据，无法确定最终状态",
+                certainty = Certainty.CERTAIN,
+                reason = "课程变更差异的最终状态中没有明确停课证据",
                 evidence = evidence
             )
         }
-        val passed = assessment.positiveSignals > 0
+
+        val port = currentStatePort
+            ?: return unknown(type, "缺少当前课程停课状态端口，不能执行历史停课事件")
+        val currentActive = try {
+            port.hasActiveCancellation(ctx.scope, event.courseRef, assessment.positiveOverrideIds)
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException || error is Error) throw error
+            return unknown(type, "当前课程停课状态读取失败")
+        } ?: return unknown(type, "当前课程停课状态证据不足")
+        evidence += Evidence(
+            source = "course-current-state",
+            detail = "activeCancellation=" + currentActive + ",attributedRows=" + assessment.positiveOverrideIds.size,
+            at = ctx.now
+        )
         return ConditionResult(
             conditionType = type,
-            passed = passed,
+            passed = currentActive,
             certainty = Certainty.CERTAIN,
-            reason = if (passed) null else "课程变更差异中没有明确停课证据",
+            reason = if (currentActive) null else "触发后当前已无有效停课，跳过陈旧 queued cancellation",
             evidence = evidence
         )
     }
@@ -315,29 +345,40 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
     private data class CancellationAssessment(
         val positiveSignals: Int,
         val negativeSignals: Int,
-        val unsupportedSignals: Int
+        val unsupportedSignals: Int,
+        val positiveOverrideIds: Set<String>
     )
 
     /**
-     * 结构化判定：只接受明确字段末段与精确枚举值。任何 substring 文本匹配都不会被视为证据，
-     * 因此 uncancelled/not_cancelled/未停课 不会命中 cancelled/停课；无法识别的状态值按 UNKNOWN。
+     * 结构化判定：字段末段与精确枚举决定每行最终状态。删除旧 false 行并新增 true 行不是“混合未知”，
+     * 而是最终存在 active cancellation；相反删除 true 行/写入 false 都不得触发。
      */
     private fun assessCourseCancellation(event: DomainEvent.CourseChanged): CancellationAssessment {
         var positive = 0
         var negative = 0
         var unsupported = 0
+        val positiveOverrideIds = linkedSetOf<String>()
         event.diff.changes.forEach { change ->
-            val leaf = jsonPointerSegments(change.path).lastOrNull()?.lowercase() ?: return@forEach
+            val segments = jsonPointerSegments(change.path)
+            val leaf = segments.lastOrNull()?.lowercase() ?: return@forEach
             val booleanCancellationField = leaf in BOOLEAN_CANCELLATION_FIELD_NAMES
             val statusField = leaf in STATUS_FIELD_NAMES
             if (!booleanCancellationField && !statusField) return@forEach
+            val overrideId = overrideIdFromStableProjectionSegments(segments)
 
             if (booleanCancellationField) {
                 when (val after = change.after) {
-                    is JsonValue.Bool -> if (after.value) positive++ else negative++
+                    is JsonValue.Bool -> {
+                        if (after.value) {
+                            positive++
+                            overrideId?.let(positiveOverrideIds::add)
+                        } else {
+                            negative++
+                        }
+                    }
                     null -> {
                         val beforeWasCancelled = change.before as? JsonValue.Bool
-                        if (change.kind == cn.edu.haut.campus.core.model.FieldChangeKind.REMOVED && beforeWasCancelled?.value == true) {
+                        if (change.kind == cn.edu.haut.campus.core.model.FieldChangeKind.REMOVED && beforeWasCancelled != null) {
                             negative++
                         } else {
                             unsupported++
@@ -350,14 +391,17 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
 
             when (val after = change.after) {
                 is JsonValue.Str -> when (normalizeCourseStatusToken(after.value)) {
-                    in POSITIVE_COURSE_STATUS_TOKENS -> positive++
+                    in POSITIVE_COURSE_STATUS_TOKENS -> {
+                        positive++
+                        overrideId?.let(positiveOverrideIds::add)
+                    }
                     in NEGATIVE_COURSE_STATUS_TOKENS -> negative++
                     else -> unsupported++
                 }
                 else -> unsupported++
             }
         }
-        return CancellationAssessment(positive, negative, unsupported)
+        return CancellationAssessment(positive, negative, unsupported, positiveOverrideIds)
     }
 
     private fun jsonPointerSegments(path: String): List<String> {
@@ -365,6 +409,13 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
         return path.substring(1).split('/').map { segment ->
             segment.replace("~1", "/").replace("~0", "~")
         }
+    }
+
+    private fun overrideIdFromStableProjectionSegments(segments: List<String>): String? {
+        if (segments.size != 4) return null
+        if (!segments[0].equals("occurrenceOverrides", ignoreCase = true)) return null
+        if (!segments[1].equals("byId", ignoreCase = true)) return null
+        return segments[2].takeIf { it.isNotBlank() }
     }
 
     private fun normalizeCourseStatusToken(value: String): String =

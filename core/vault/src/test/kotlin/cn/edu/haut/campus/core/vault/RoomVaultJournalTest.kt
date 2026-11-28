@@ -138,6 +138,44 @@ class RoomVaultJournalTest {
     }
 
     @Test
+    fun editThenCancelReplacementUsesStableOverrideIdsAndDoesNotRollback() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-edit").copy(id = "ov_mod", canceled = false, reason = "单次调课"))
+            )
+        }
+
+        // 与真实「先调课后停课」路径一致：同一写事务先删除 ov_mod，再插入 ov_cancel。
+        // 早期用数组下标生成 diff 时二者常同下标，FieldDiff 重复路径会让整个写入回滚。
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().deleteOccurrenceOverrideById("ov_mod")
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-cancel").copy(id = "ov_cancel", canceled = true, reason = "单次停课"))
+            )
+        }
+
+        val rows = database.campusDao().getOccurrenceOverridesSnapshot()
+        assertEquals(listOf("ov_cancel"), rows.map { it.id })
+        assertEquals(true, rows.single().canceled)
+        val replacementEvent = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+            .last()
+        val paths = replacementEvent.diff.changes.map { it.path }
+        assertEquals(2, paths.size)
+        assertEquals(paths.toSet().size, paths.size)
+        assertTrue(paths.any { it.contains("byId/ov_mod/canceled") })
+        assertTrue(paths.any { it.contains("byId/ov_cancel/canceled") })
+        val cancelChange = replacementEvent.diff.changes.single { it.path.contains("ov_cancel") }
+        assertEquals(JsonValue.Bool(true), cancelChange.after)
+    }
+
+    @Test
     fun failedBusinessWriteRollsBackEntityAndLeavesNoJournal() = runBlocking {
         val outbox = InMemoryEventOutbox()
         val journal = newJournal(outbox)
