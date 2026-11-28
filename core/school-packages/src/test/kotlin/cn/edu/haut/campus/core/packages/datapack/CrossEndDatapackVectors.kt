@@ -6,7 +6,7 @@ import cn.edu.haut.campus.core.model.json.JsonValue
 
 /** Byte-identical Android copy of the Cloud cross-end regression facts; the digest pins drift. */
 internal object CrossEndDatapackVectors {
-    const val SHA256 = "fd717d957fda21f532a73be28bb5e3aaed679b86d3eab286c7d5060248fa49a1"
+    const val SHA256 = "e9039bb104209ac5cd85eabffd191196679bd45b9e5ad397d3d7ec988f386824"
 
     fun bytes(): ByteArray =
         requireNotNull(javaClass.getResourceAsStream("/datapack-fixtures/cross-end-vectors.json")).use { it.readBytes() }
