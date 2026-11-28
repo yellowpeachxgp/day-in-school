@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.UtilityMeterDomain
 import cn.edu.haut.campus.core.model.UtilityOnlineRoomDomain
 import cn.edu.haut.campus.core.model.UtilityReadingDomain
+import cn.edu.haut.campus.core.timeline.TimelineEvent
 
 /** 统一状态矩阵。运行期沿袭旧首页默认 CONTENT；其余状态由 fixtures/截图矩阵显式固定。 */
 enum class TodayScreenStatus {
@@ -76,6 +77,8 @@ data class TodayUiState(
     val periodTimes: List<PeriodTime> = emptyList(),
     val calendarOverrides: List<CalendarOverride> = emptyList(),
     val occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
+    /** 课程/实践课/考试/personal_events 的统一 Timeline 投影；课程渲染只消费该读取路径。 */
+    val timelineEvents: List<TimelineEvent> = emptyList(),
     val buildings: List<Building> = emptyList(),
     val examSchedules: List<ExamScheduleItem> = emptyList(),
     val unscheduledCourses: List<UnscheduledAcademicCourseEntity> = emptyList(),

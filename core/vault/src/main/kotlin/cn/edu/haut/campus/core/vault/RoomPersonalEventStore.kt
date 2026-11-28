@@ -25,7 +25,6 @@ import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.map
 
 /** Room personal_events 实现；业务行、journal、outbox 与 search_docs 更新都复用 EntityWriter 的同一事务边界。 */
 class RoomPersonalEventStore(
@@ -121,15 +120,10 @@ class RoomPersonalEventStore(
         }
     }
 
-    override fun observe(scope: SchoolAccountScope, window: TimeWindow): Flow<List<PersonalEventRecord>> {
-        require(scope == this.scope) { "PersonalEventStore 只能观察本 profile scope" }
-        // window 是 core/timeline PersonalTimelineSource 的投影裁剪条件；这里只提供权威记录，
-        // 不复制 TimelineSource 投影逻辑，避免 source/provenance 语义在 vault 二次漂移。
-        return dao.observePersonalEvents().map { rows ->
-            rows.filter { it.inScope(scope) }
-                .map { it.toPersonalEventRecord() }
-        }
-    }
+    private val timelineInputProvider = RoomPersonalEventTimelineInputProvider(database, scope)
+
+    override fun observe(scope: SchoolAccountScope, window: TimeWindow): Flow<List<PersonalEventRecord>> =
+        timelineInputProvider.observe(scope, window)
 
     private fun PersonalEventEntity.sameUserContentAs(other: PersonalEventEntity): Boolean =
         id == other.id &&

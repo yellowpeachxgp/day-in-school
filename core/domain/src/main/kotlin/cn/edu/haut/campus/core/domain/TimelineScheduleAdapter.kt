@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.timeline.CourseTimelineProjection
 import cn.edu.haut.campus.core.timeline.EventStatus
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineEvent
+import cn.edu.haut.campus.core.timeline.TimelineKind
 import java.time.LocalDate
 
 /**
@@ -133,10 +134,13 @@ object TimelineScheduleAdapter {
             calendarOverrides = calendarOverrides,
             occurrenceOverrides = occurrenceOverrides
         )
-        val active = events
-            .filter { it.status != EventStatus.CANCELLED_TODAY }
-            .map { CourseOccurrenceTimelineMetadata.decode(it) }
-        return active.presentationPostProcessed(date, term, periodTimes, buildings)
+        return resolveOccurrencesForDateFromEvents(
+            date = date,
+            events = events,
+            term = term,
+            periodTimes = periodTimes,
+            buildings = buildings
+        )
     }
 
     /** 读取指定教学周（周一至周日）每天的生效课程事件，语义同 [resolveOccurrencesForDate]。 */
@@ -186,12 +190,63 @@ object TimelineScheduleAdapter {
             calendarOverrides = calendarOverrides,
             occurrenceOverrides = occurrenceOverrides
         )
+        return resolveCanceledOccurrencesForDateFromEvents(
+            date = date,
+            events = events,
+            buildings = buildings
+        )
+    }
+
+    private fun TimelineEvent.isCourseOccurrenceProjection(): Boolean =
+        kind == TimelineKind.COURSE || kind == TimelineKind.PRACTICE
+
+    /**
+     * 从已投影的 reactive Timeline 事件还原指定日期生效课程；只接受 COURSE/PRACTICE，
+     * 其他 kind（EXAM/PERSONAL 等）绝不进入课程后处理管道。
+     */
+    fun resolveOccurrencesForDateFromEvents(
+        date: LocalDate,
+        events: List<TimelineEvent>,
+        term: Term,
+        periodTimes: List<PeriodTime>,
+        buildings: List<Building> = emptyList()
+    ): List<ClassOccurrence> {
+        val active = events
+            .filter { it.isCourseOccurrenceProjection() && it.status != EventStatus.CANCELLED_TODAY }
+            .map { CourseOccurrenceTimelineMetadata.decode(it) }
+            .filter { it.date == date }
+        return active.presentationPostProcessed(date, term, periodTimes, buildings)
+    }
+
+    /** 从已投影的 reactive Timeline 事件还原指定日期停课课程，用于恢复入口。 */
+    fun resolveCanceledOccurrencesForDateFromEvents(
+        date: LocalDate,
+        events: List<TimelineEvent>,
+        buildings: List<Building> = emptyList()
+    ): List<ClassOccurrence> {
         val buildingMap = buildings.associateBy { it.id }
         return events
-            .filter { it.status == EventStatus.CANCELLED_TODAY }
+            .filter { it.isCourseOccurrenceProjection() && it.status == EventStatus.CANCELLED_TODAY }
             .map { CourseOccurrenceTimelineMetadata.decode(it) }
+            .filter { it.date == date }
             .map { occ -> occ.copy(buildingName = occ.buildingId?.let { buildingMap[it]?.name }) }
             .sortedBy { it.startPeriod }
+    }
+
+    /** 供 Today 使用 reactive Timeline 事件注入日快照与下一课前瞻，不在组合内重新展开规则。 */
+    fun occurrenceResolverFromEvents(
+        events: List<TimelineEvent>,
+        term: Term,
+        periodTimes: List<PeriodTime>,
+        buildings: List<Building> = emptyList()
+    ): (LocalDate) -> List<ClassOccurrence> = { date ->
+        resolveOccurrencesForDateFromEvents(
+            date = date,
+            events = events,
+            term = term,
+            periodTimes = periodTimes,
+            buildings = buildings
+        )
     }
 
     /**

@@ -66,6 +66,7 @@ import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TimelineScheduleAdapter
 import cn.edu.haut.campus.core.model.ClassStatus
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
+import cn.edu.haut.campus.core.timeline.TimelineKind
 import kotlinx.coroutines.delay
 import cn.edu.haut.campus.feature.today.state.TodayScreenStatus
 import cn.edu.haut.campus.feature.today.state.TodayUiAction
@@ -119,6 +120,7 @@ private fun TodayLegacyContent(
     val periodTimes = state.periodTimes
     val calendarOverrides = state.calendarOverrides
     val occurrenceOverrides = state.occurrenceOverrides
+    val timelineEvents = state.timelineEvents
     val buildings = state.buildings
     val examSchedules = state.examSchedules
     val unscheduledCourses = state.unscheduledCourses
@@ -152,6 +154,9 @@ private fun TodayLegacyContent(
     val onNavigateToGrades: () -> Unit = { onAction(TodayUiAction.OpenGrades) }
     val onNavigateToTimetable: () -> Unit = { onAction(TodayUiAction.OpenTimetable) }
 
+    val courseTimelineEvents = remember(timelineEvents) {
+        timelineEvents.filter { it.kind == TimelineKind.COURSE || it.kind == TimelineKind.PRACTICE }
+    }
     val tasksByEventKey = remember(activeReminderTasks) {
         activeReminderTasks.associateBy { it.eventKey }
     }
@@ -199,11 +204,9 @@ private fun TodayLegacyContent(
         selectedDate,
         currentNow,
         term,
-        courses,
-        rules,
+        courseTimelineEvents,
         periodTimes,
         calendarOverrides,
-        occurrenceOverrides,
         buildings,
         effectiveScale
     ) {
@@ -219,13 +222,10 @@ private fun TodayLegacyContent(
             buildings = buildings,
             pxPerMinute = effectiveScale,
             occurrenceResolver = term?.let { activeTerm ->
-                TimelineScheduleAdapter.occurrenceResolver(
+                TimelineScheduleAdapter.occurrenceResolverFromEvents(
+                    events = courseTimelineEvents,
                     term = activeTerm,
-                    courses = courses,
-                    rules = rules,
                     periodTimes = periodTimes,
-                    calendarOverrides = calendarOverrides,
-                    occurrenceOverrides = occurrenceOverrides,
                     buildings = buildings
                 )
             }
@@ -489,22 +489,12 @@ private fun TodayLegacyContent(
                     } else {
                         val todayCanceledCount = remember(
                             selectedDate,
-                            term,
-                            courses,
-                            rules,
-                            periodTimes,
-                            calendarOverrides,
-                            occurrenceOverrides,
+                            courseTimelineEvents,
                             buildings
                         ) {
-                            TimelineScheduleAdapter.resolveCanceledOccurrencesForDate(
+                            TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                                 date = selectedDate,
-                                term = term,
-                                courses = courses,
-                                rules = rules,
-                                periodTimes = periodTimes,
-                                calendarOverrides = calendarOverrides,
-                                occurrenceOverrides = occurrenceOverrides,
+                                events = courseTimelineEvents,
                                 buildings = buildings
                             ).size
                         }
@@ -603,11 +593,9 @@ private fun TodayLegacyContent(
                         dateForView,
                         currentNow,
                         term,
-                        courses,
-                        rules,
+                        courseTimelineEvents,
                         periodTimes,
                         calendarOverrides,
-                        occurrenceOverrides,
                         buildings,
                         effectiveScale
                     ) {
@@ -623,13 +611,10 @@ private fun TodayLegacyContent(
                             buildings = buildings,
                             pxPerMinute = effectiveScale,
                             occurrenceResolver = term?.let { activeTerm ->
-                                TimelineScheduleAdapter.occurrenceResolver(
+                                TimelineScheduleAdapter.occurrenceResolverFromEvents(
+                                    events = courseTimelineEvents,
                                     term = activeTerm,
-                                    courses = courses,
-                                    rules = rules,
                                     periodTimes = periodTimes,
-                                    calendarOverrides = calendarOverrides,
-                                    occurrenceOverrides = occurrenceOverrides,
                                     buildings = buildings
                                 )
                             }
@@ -637,22 +622,12 @@ private fun TodayLegacyContent(
                     }
                     val canceledOnDate = remember(
                         dateForView,
-                        term,
-                        courses,
-                        rules,
-                        periodTimes,
-                        calendarOverrides,
-                        occurrenceOverrides,
+                        courseTimelineEvents,
                         buildings
                     ) {
-                        TimelineScheduleAdapter.resolveCanceledOccurrencesForDate(
+                        TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                             date = dateForView,
-                            term = term,
-                            courses = courses,
-                            rules = rules,
-                            periodTimes = periodTimes,
-                            calendarOverrides = calendarOverrides,
-                            occurrenceOverrides = occurrenceOverrides,
+                            events = courseTimelineEvents,
                             buildings = buildings
                         )
                     }

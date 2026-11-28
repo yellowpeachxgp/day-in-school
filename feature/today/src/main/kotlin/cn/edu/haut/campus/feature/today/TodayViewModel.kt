@@ -41,7 +41,10 @@ internal fun todayClassEventKey(termId: String, occurrenceId: String): String =
 class TodayViewModel internal constructor(
     private val repository: CampusRepository,
     private val reminderCoordinator: ReminderCoordinator,
-    private val writeExecutor: TodayWriteExecutor
+    private val writeExecutor: TodayWriteExecutor,
+    timelineProjectionFactory: (CoroutineScope) -> TodayTimelineProjection = { projectionScope ->
+        repositoryTodayTimelineProjection(repository, projectionScope)
+    }
 ) : ViewModel() {
     private class SessionMismatchCancellationException :
         CancellationException("今日页 ViewModel 所属账号会话已不是当前会话")
@@ -58,6 +61,9 @@ class TodayViewModel internal constructor(
     val effects = _effects.asSharedFlow()
 
     init {
+        collect(timelineProjectionFactory(scope).observeEvents()) { value ->
+            _uiState.update { it.copy(timelineEvents = value) }
+        }
         collect(repository.termRepository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
         collect(repository.termRepository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }
         collect(repository.timetableRepository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
