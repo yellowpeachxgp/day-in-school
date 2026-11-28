@@ -68,8 +68,7 @@ internal object CourseCancellationEventProjector {
     private fun effectiveCancellationValue(row: JsonValue.Obj): JsonValue.Bool? {
         val canceled = row.obj("canceled") as? JsonValue.Bool ?: return null
         return if (
-            OccurrenceCancellationSemantics.isIndependentCancellation(
-                canceled = canceled.value,
+            OccurrenceCancellationSemantics.isIndependentCancellationRow(
                 moveId = row.str("moveId"),
                 moveRole = row.str("moveRole"),
                 reason = row.str("reason")

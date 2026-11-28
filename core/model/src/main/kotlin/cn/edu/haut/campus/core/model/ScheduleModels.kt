@@ -189,8 +189,14 @@ object OccurrenceCancellationSemantics {
         moveId: String?,
         moveRole: String?,
         reason: String?
-    ): Boolean = canceled &&
-        moveId.isNullOrBlank() &&
+    ): Boolean = canceled && isIndependentCancellationRow(moveId, moveRole, reason)
+
+    /** 行是否属于独立取消语义域（与 canceled 当前值无关）；false 值也必须能表达复课/删除恢复。 */
+    fun isIndependentCancellationRow(
+        moveId: String?,
+        moveRole: String?,
+        reason: String?
+    ): Boolean = moveId.isNullOrBlank() &&
         moveRole.isNullOrBlank() &&
         reason?.startsWith(MERGED_INTO_PREFIX) != true
 }
