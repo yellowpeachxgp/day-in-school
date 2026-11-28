@@ -202,7 +202,10 @@ class CampusGraphSnapshot private constructor(
                 1 -> {
                     val room = matched.single()
                     val building = byRef[room.buildingRef] as? BuildingNode
-                    val verified = room.provenance.verifiedAt != null
+                    // BuildingMatchStatus 描述的是楼宇落点是否可核验；房间对象只是更细证据。
+                    // 因而已核验楼宇内的房间解析不被自习室候选名录的 verifiedAt=null 降级，
+                    // 但 W111 这类挂在未核验楼宇上的房间仍不得冒充 EXACT_VERIFIED。
+                    val verified = building?.provenance?.verifiedAt != null
                     CampusGraphRoomResolution(
                         rawRoom = rawRoom,
                         status = if (verified) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
@@ -315,7 +318,8 @@ class CampusGraphSnapshot private constructor(
             val match = best.first()
             val building = match.building
             val room = roomNumberHint?.let { hint -> findRoomInBuilding(hint, building) }
-            val exact = !match.alias.pattern && match.alias.verified && match.alias.confidence >= 0.85f
+            val exact = !match.alias.pattern && match.alias.verified &&
+                building.provenance.verifiedAt != null && match.alias.confidence >= 0.85f
             return CampusGraphRoomResolution(
                 rawRoom = rawRoom,
                 status = if (exact) BuildingMatchStatus.EXACT_VERIFIED else BuildingMatchStatus.FUZZY_NEEDS_CONFIRMATION,
