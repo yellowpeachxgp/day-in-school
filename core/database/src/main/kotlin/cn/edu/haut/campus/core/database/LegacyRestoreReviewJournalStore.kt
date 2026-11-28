@@ -52,8 +52,7 @@ internal object LegacyRestoreReviewJournalCodec {
 
     fun encode(
         profileId: String,
-        targets: List<LegacyRestoreReviewTargetRef>,
-        updatedAtEpochMs: Long
+        targets: List<LegacyRestoreReviewTargetRef>
     ): String {
         val items = JSONArray()
         for (target in targets) {
@@ -67,7 +66,6 @@ internal object LegacyRestoreReviewJournalCodec {
         return JSONObject()
             .put("version", VERSION)
             .put("profileId", profileId)
-            .put("updatedAtEpochMs", updatedAtEpochMs)
             .put("targets", items)
             .toString()
     }
@@ -129,8 +127,7 @@ internal class LegacyRestoreReviewJournalStore(
             prefs[CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON] =
                 LegacyRestoreReviewJournalCodec.encode(
                     profileId = profileId,
-                    targets = merged.values.toList(),
-                    updatedAtEpochMs = System.currentTimeMillis()
+                    targets = merged.values.toList()
                 )
         }
     }
@@ -150,8 +147,7 @@ internal class LegacyRestoreReviewJournalStore(
                 prefs[CampusRepositoryPrefKeys.LEGACY_RESTORE_REVIEW_JOURNAL_JSON] =
                     LegacyRestoreReviewJournalCodec.encode(
                         profileId = profileId,
-                        targets = remaining,
-                        updatedAtEpochMs = System.currentTimeMillis()
+                        targets = remaining
                     )
             }
         }
