@@ -476,7 +476,7 @@ class E2eeSyncEngineTest {
             override suspend fun registerDevice(deviceId: String, consentId: String, deviceLabel: String?, idempotencyKey: String): SyncDevice =
                 SyncDevice(deviceId, "ACTIVE", deviceLabel, "ANDROID", 1, "2026-01-01T00:00:00Z", null, null, null)
 
-            override suspend fun revokeDevice(deviceId: String, reason: String): SyncDevice =
+            override suspend fun revokeDevice(deviceId: String, reason: String, idempotencyKey: String): SyncDevice =
                 SyncDevice(deviceId, "REVOKED", null, "ANDROID", 1, "2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", reason, null)
 
             override suspend fun putBlob(blobId: String, request: SyncBlobPutInput): SyncBlobMetadata =

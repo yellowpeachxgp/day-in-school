@@ -129,7 +129,7 @@ class E2eeSyncClient internal constructor(
         lifecycleMutex.withLock {
             val state = stateStore.load()
             val api = apiFactory { state.deviceId }
-            api.revokeDevice(deviceId, reason)
+            api.revokeDevice(deviceId, reason, "e2ee-revoke-" + uuid())
             if (state.deviceId == deviceId) {
                 val next = state.copy(
                     enabled = false,
@@ -159,7 +159,7 @@ class E2eeSyncClient internal constructor(
         }
         val deviceId = state.deviceId
         val deviceRevoked = if (api != null && !deviceId.isNullOrBlank()) {
-            runCatching { api.revokeDevice(deviceId, reason) }.isSuccess
+            runCatching { api.revokeDevice(deviceId, reason, "e2ee-revoke-" + uuid()) }.isSuccess
         } else {
             false
         }

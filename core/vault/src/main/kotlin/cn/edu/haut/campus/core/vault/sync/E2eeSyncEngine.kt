@@ -405,7 +405,7 @@ internal class E2eeSyncEngine(
         } finally {
             plaintext.fill(0)
         }
-        val key = idempotencyKey("put", deviceId, blobId, writerCounter, encrypted.ciphertextSha256)
+        val key = "e2ee-put-" + uuid()
         val pending = E2eeSyncPendingWrite(
             logicalKey = snapshot.logicalKey,
             kind = "UPSERT",
@@ -434,7 +434,7 @@ internal class E2eeSyncEngine(
         val deviceId = state.deviceId ?: throw E2eeSyncConsentException("本机尚未注册同步设备")
         val writerCounter = SyncVectors.nextWriterCounter(item.versionVector, deviceId)
         val logicalClock = item.logicalClock + 1L
-        val key = idempotencyKey("delete", deviceId, item.blobId, writerCounter, item.logicalKey)
+        val key = "e2ee-delete-" + uuid()
         val pending = E2eeSyncPendingWrite(
             logicalKey = item.logicalKey,
             kind = "DELETE",
@@ -605,7 +605,7 @@ internal class E2eeSyncEngine(
     ) {
         val deviceId = state.deviceId ?: throw E2eeSyncConsentException("本机尚未注册同步设备")
         val writerCounter = SyncVectors.nextWriterCounter(loserVector, deviceId)
-        val key = idempotencyKey("duplicate-cleanup", deviceId, loserBlobId, writerCounter, logicalKey)
+        val key = "e2ee-duplicate-cleanup-" + uuid()
         val pending = E2eeSyncPendingWrite(
             logicalKey = logicalKey,
             kind = "DELETE",
@@ -793,9 +793,6 @@ internal class E2eeSyncEngine(
         )
         return E2eeSyncPayloadCodec.encode(payload)
     }
-
-    private fun idempotencyKey(operation: String, deviceId: String, blobId: String, writerCounter: Int, fingerprint: String): String =
-        "e2ee-" + Digests.sha256Hex(operation, deviceId, blobId, writerCounter.toString(), fingerprint).take(72)
 
     companion object {
         private val runMutexes = ConcurrentHashMap<String, Mutex>()

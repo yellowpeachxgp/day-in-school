@@ -6,6 +6,7 @@ import android.security.keystore.KeyProperties
 import java.io.File
 import java.security.GeneralSecurityException
 import java.security.KeyStore
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Arrays
 import java.util.Base64
@@ -43,11 +44,16 @@ interface E2eeSyncKeyStore {
 }
 
 object E2eeSyncRecoveryKeys {
+    private const val CHECKSUM_BYTES = 6
+    private const val CHECKSUM_DOMAIN = "dis-sync-recovery-key/v1\n"
+
+    /** 格式：dssk1.<base64url(master||space)>.<base64url(sha256(domain||raw) 前 6 字节)>。校验位只防抄写错位，不是认证密钥。 */
     fun encode(masterKey: ByteArray, syncSpace: ByteArray): String {
         require(masterKey.size == E2eeSyncProtocol.MASTER_KEY_BYTES) { "sync master key 长度非法" }
         require(syncSpace.size == E2eeSyncProtocol.SYNC_SPACE_BYTES) { "sync space id 长度非法" }
-        return E2eeSyncProtocol.RECOVERY_KEY_PREFIX +
-            Base64.getUrlEncoder().withoutPadding().encodeToString(masterKey + syncSpace)
+        val raw = masterKey + syncSpace
+        val payload = Base64.getUrlEncoder().withoutPadding().encodeToString(raw)
+        return E2eeSyncProtocol.RECOVERY_KEY_PREFIX + payload + "." + checksum(raw)
     }
 
     fun decode(recoveryKey: String): Pair<ByteArray, ByteArray> {
@@ -55,16 +61,32 @@ object E2eeSyncRecoveryKeys {
         if (!clean.startsWith(E2eeSyncProtocol.RECOVERY_KEY_PREFIX)) {
             throw E2eeSyncCryptoException("同步恢复密钥格式不正确")
         }
+        val withoutPrefix = clean.removePrefix(E2eeSyncProtocol.RECOVERY_KEY_PREFIX)
+        val parts = withoutPrefix.split('.')
+        if (parts.size != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
+            throw E2eeSyncCryptoException("同步恢复密钥缺少校验位")
+        }
         val raw = try {
-            Base64.getUrlDecoder().decode(clean.removePrefix(E2eeSyncProtocol.RECOVERY_KEY_PREFIX))
+            Base64.getUrlDecoder().decode(parts[0])
         } catch (error: IllegalArgumentException) {
             throw E2eeSyncCryptoException("同步恢复密钥不是合法 base64url", error)
         }
         if (raw.size != E2eeSyncProtocol.MASTER_KEY_BYTES + E2eeSyncProtocol.SYNC_SPACE_BYTES) {
             throw E2eeSyncCryptoException("同步恢复密钥长度不正确")
         }
+        val expected = checksum(raw)
+        if (!MessageDigest.isEqual(expected.toByteArray(Charsets.US_ASCII), parts[1].toByteArray(Charsets.US_ASCII))) {
+            throw E2eeSyncCryptoException("同步恢复密钥校验位不匹配")
+        }
         return raw.copyOfRange(0, E2eeSyncProtocol.MASTER_KEY_BYTES) to
             raw.copyOfRange(E2eeSyncProtocol.MASTER_KEY_BYTES, raw.size)
+    }
+
+    private fun checksum(raw: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update(CHECKSUM_DOMAIN.toByteArray(Charsets.US_ASCII))
+        digest.update(raw)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest.digest().copyOfRange(0, CHECKSUM_BYTES))
     }
 
     fun syncSpaceId(syncSpace: ByteArray): String =

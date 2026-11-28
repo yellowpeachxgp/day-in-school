@@ -138,6 +138,15 @@ class E2eeSyncCryptoTest {
         val (decodedMaster, decodedSpace) = E2eeSyncRecoveryKeys.decode(encoded)
         assertArrayEquals(master, decodedMaster)
         assertArrayEquals(space, decodedSpace)
+        assertTrue(encoded.count { it == '.' } == 2)
+        val last = encoded.last()
+        val mutatedChecksum = encoded.dropLast(1) + if (last == 'A') 'B' else 'A'
+        try {
+            E2eeSyncRecoveryKeys.decode(mutatedChecksum)
+            fail("校验位不匹配的恢复密钥必须失败")
+        } catch (expected: E2eeSyncCryptoException) {
+            assertTrue(expected.message.orEmpty().contains("校验位"))
+        }
         try {
             E2eeSyncRecoveryKeys.decode(encoded.dropLast(1))
             fail("错误长度恢复密钥必须失败")

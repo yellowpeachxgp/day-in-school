@@ -209,7 +209,7 @@ interface E2eeSyncApi {
     suspend fun withdrawConsent(consentId: String)
     suspend fun listDevices(): List<SyncDevice>
     suspend fun registerDevice(deviceId: String, consentId: String, deviceLabel: String?, idempotencyKey: String): SyncDevice
-    suspend fun revokeDevice(deviceId: String, reason: String): SyncDevice
+    suspend fun revokeDevice(deviceId: String, reason: String, idempotencyKey: String): SyncDevice
     suspend fun putBlob(blobId: String, request: SyncBlobPutInput): SyncBlobMetadata
     suspend fun downloadBlob(blobId: String): Pair<SyncBlobMetadata, String>
     suspend fun deleteBlob(blobId: String, request: SyncBlobDeleteInput): SyncBlobMetadata

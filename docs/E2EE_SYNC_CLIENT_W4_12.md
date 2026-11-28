@@ -19,7 +19,7 @@
 
 ## 3. 密钥与明文边界
 
-- 首次启用生成 32 字节随机 sync master key 与 16 字节随机 sync space id，合并编码为一次性恢复密钥；其他设备只能由用户手动粘贴同一恢复密钥加入同一逻辑同步空间。恢复密钥绝不上传、不写入日志、不进入备份。
+- 首次启用生成 32 字节随机 sync master key 与 16 字节随机 sync space id，合并编码为带 6 字节 SHA-256 校验位的一次性恢复密钥；其他设备只能由用户手动粘贴同一恢复密钥加入同一逻辑同步空间，校验位用于防抄写错位。恢复密钥绝不上传、不写入日志、不进入备份。
 - 每台设备另生成 Android Keystore AES-GCM 非导出包装密钥，只用于密封本机缓存的 sync master key；设备硬件序列号、IMEI、SSAID、推送 token 不作为 device_id。
 - 块加密为 AES-256-GCM；AAD 精确绑定 `dis-sync-e2ee/v1\n<lowercase blob_id>\n<key_id>\n`。plaintext 先写入 4 字节大端原始长度，再零填充到 bucket-16；输出密文含 tag 必须恰为 1,024/4,096/16,384/65,536/262,144/1,048,576 之一。
 - 云端请求只包含注册元数据、密文、密文 SHA-256、version vector、cursor 与非秘密 encryption envelope；明文、明文 hash、master key、包装密钥、恢复密钥、口令或 KDF secret 不出设备。

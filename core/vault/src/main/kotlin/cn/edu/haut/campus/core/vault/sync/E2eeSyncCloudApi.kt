@@ -86,7 +86,6 @@ class HttpE2eeSyncApi(
             .put("purpose", E2eeSyncProtocol.CONSENT_PURPOSE)
             .put("document_version", E2eeSyncProtocol.CONSENT_DOCUMENT_VERSION)
             .put("document_sha256", E2eeSyncProtocol.CONSENT_DOCUMENT_SHA256)
-            .put("school_id", "user")
         val data = request("POST", "/api/v1/me/consents", body, syncHeader = false).getJSONObject("data")
         return SyncConsentRecord(
             id = data.getString("id"),
@@ -130,12 +129,14 @@ class HttpE2eeSyncApi(
         return parseDevice(data)
     }
 
-    override suspend fun revokeDevice(deviceId: String, reason: String): SyncDevice {
+    override suspend fun revokeDevice(deviceId: String, reason: String, idempotencyKey: String): SyncDevice {
+        require(idempotencyKey.length in 8..128) { "Idempotency-Key 必须 8..128 字符" }
         val data = request(
             "DELETE",
             "/api/v1/sync/devices/" + encodePath(deviceId),
             JSONObject().put("reason", reason),
-            syncHeader = false
+            syncHeader = false,
+            extraHeaders = mapOf("Idempotency-Key" to idempotencyKey)
         ).getJSONObject("data")
         return parseDevice(data)
     }

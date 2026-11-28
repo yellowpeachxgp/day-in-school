@@ -31,6 +31,7 @@ class HttpE2eeSyncApiTest {
         assertEquals(E2eeSyncProtocol.CONSENT_PURPOSE, grantBody.getString("purpose"))
         assertEquals(E2eeSyncProtocol.CONSENT_DOCUMENT_VERSION, grantBody.getString("document_version"))
         assertTrue(grantBody.getString("document_sha256").matches(Regex("[0-9a-f]{64}")))
+        assertFalse(grantBody.has("school_id"))
         assertFalse(grant.body.orEmpty().contains("master"))
         assertFalse(grant.body.orEmpty().contains("recovery"))
 
@@ -43,6 +44,12 @@ class HttpE2eeSyncApiTest {
         val registerBody = JSONObject(register.body.orEmpty())
         assertEquals("ANDROID", registerBody.getString("platform"))
         assertEquals(1, registerBody.getInt("sync_protocol_version"))
+
+        api.revokeDevice(deviceId, "USER_REMOVED", "idem-revoke-123")
+        val revoke = transport.requests.removeAt(0)
+        assertEquals("DELETE", revoke.method)
+        assertEquals("idem-revoke-123", revoke.headers["Idempotency-Key"])
+        assertEquals("USER_REMOVED", JSONObject(revoke.body.orEmpty()).getString("reason"))
 
         val input = SyncBlobPutInput(
             encryption = SyncEncryptionEnvelope(keyId = "key-id-1", nonceBase64 = "AAAAAAAAAAAAAAAA"),
