@@ -9,9 +9,15 @@ import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
@@ -188,6 +194,31 @@ class AndroidAiKeyStoreTest {
     }
 
     @Test
+    fun crossInstancePutAndWipeAreSerializedByProfileLock() = runBlocking {
+        val blockingKeys = BlockingAiAesKeyProvider()
+        val root = testRoot("cross-instance-wipe")
+        val writer = AndroidAiKeyStore(context, rootDir = root, keys = blockingKeys)
+        val wiper = AndroidAiKeyStore(context, rootDir = root, keys = blockingKeys)
+
+        val putJob = async(Dispatchers.IO) {
+            writer.put(scope, endpoint, keyCanary().toCharArray())
+        }
+        assertTrue("写入必须先进入受控 key provider", blockingKeys.enteredCreate.await(2, TimeUnit.SECONDS))
+        val wipeJob = async(Dispatchers.IO) {
+            wiper.wipeAll(scope)
+        }
+        delay(250)
+
+        assertFalse("另一个 store 实例的 wipe 必须等待进行中的 put", wipeJob.isCompleted)
+        blockingKeys.releaseCreate.countDown()
+        putJob.await()
+        wipeJob.await()
+
+        assertEquals(AiKeyStatus.NONE, writer.status(scope).first())
+        assertTrue("串行化后擦除结束不得再由 put 重写密文", root.listFiles()?.isEmpty() != false)
+    }
+
+    @Test
     fun wipeDeletesCiphertextEnabledFlagAndProfileKeyMaterial() = runTest {
         val store = AndroidAiKeyStore(context, rootDir = testRoot("clear"), keys = fakeKeys)
         store.put(scope, endpoint, keyCanary().toCharArray())
@@ -202,6 +233,26 @@ class AndroidAiKeyStoreTest {
     }
 
     private val fakeKeys = FakeAiAesKeyProvider()
+
+    private class BlockingAiAesKeyProvider : AiAesKeyProvider {
+        private val delegate = FakeAiAesKeyProvider()
+        val enteredCreate = CountDownLatch(1)
+        val releaseCreate = CountDownLatch(1)
+        private var shouldBlock = true
+
+        override fun existing(scope: SchoolAccountScope): SecretKey? = delegate.existing(scope)
+
+        override fun getOrCreate(scope: SchoolAccountScope): SecretKey {
+            if (shouldBlock) {
+                shouldBlock = false
+                enteredCreate.countDown()
+                check(releaseCreate.await(5, TimeUnit.SECONDS)) { "测试门闩超时" }
+            }
+            return delegate.getOrCreate(scope)
+        }
+
+        override fun delete(scope: SchoolAccountScope) = delegate.delete(scope)
+    }
 
     private class DeleteFailingAiAesKeyProvider : AiAesKeyProvider {
         private val delegate = FakeAiAesKeyProvider()

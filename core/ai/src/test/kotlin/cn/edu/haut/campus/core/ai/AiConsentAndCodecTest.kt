@@ -2,7 +2,6 @@ package cn.edu.haut.campus.core.ai
 
 import cn.edu.haut.campus.core.model.json.Json
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -80,15 +79,5 @@ class AiConsentAndCodecTest {
         assertEquals("stop", success.finishReason)
         assertEquals(7, success.usage?.promptTokens)
         assertEquals(10, success.usage?.totalTokens)
-    }
-
-    @Test
-    fun remoteErrorMessageNeverLeaksArbitraryProviderText() {
-        val canary = AiTestFixtures.keyCanary()
-        val body = """{"error":{"type":"invalid_api_key","message":"bad credential $canary"}}"""
-        val sanitized = OpenAiCompatibleCodec.sanitizedRemoteErrorType(body)
-
-        assertEquals("invalid_api_key", sanitized)
-        assertFalse(sanitized?.contains(canary) == true)
     }
 }

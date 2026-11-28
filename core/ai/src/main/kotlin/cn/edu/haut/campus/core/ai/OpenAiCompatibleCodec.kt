@@ -129,12 +129,4 @@ object OpenAiCompatibleCodec {
             usage = usage
         )
     }
-
-    /** 远端错误只提取有限字符集的 type/code，不回传可能含请求片段或账户信息的 message。 */
-    fun sanitizedRemoteErrorType(responseBody: String): String? {
-        val root = runCatching { Json.parse(responseBody) }.getOrNull() ?: return null
-        val error = root.obj("error")?.asObjOrNull ?: return null
-        val raw = error.str("type") ?: error.str("code") ?: return null
-        return raw.takeIf { it.length <= 80 && it.all { ch -> ch.isLetterOrDigit() || ch in "_-." } }
-    }
 }

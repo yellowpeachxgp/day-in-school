@@ -211,8 +211,6 @@ class OpenAiCompatibleProvider(
         AiTransportFailureKind.NETWORK -> AiResult.Failure(AiError.NETWORK_OFFLINE, retryable = true)
     }
 
-    private fun httpDetail(response: AiTransportResponse): String {
-        val remoteType = OpenAiCompatibleCodec.sanitizedRemoteErrorType(response.body)
-        return "HTTP " + response.statusCode + (remoteType?.let { " · " + it } ?: "")
-    }
+    private fun httpDetail(response: AiTransportResponse): String =
+        "HTTP " + response.statusCode
 }

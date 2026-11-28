@@ -90,7 +90,6 @@ class AndroidAiKeyStore internal constructor(
     private val keys: AiAesKeyProvider = AndroidAiAesKeyProvider()
 ) : AiKeyStore, AiSettingsStore, AiKeyMaterialAccess {
     private val appContext = context.applicationContext
-    private val mutex = Mutex()
     private val statusFlows = ConcurrentHashMap<String, MutableStateFlow<AiKeyStatus?>>()
     private val settingsFlows = ConcurrentHashMap<String, MutableStateFlow<AiSettings?>>()
 
@@ -98,7 +97,7 @@ class AndroidAiKeyStore internal constructor(
         require(key.isNotEmpty() && key.size <= 4096) { "AI Key 为空或过长" }
         require(key.none { it.isWhitespace() || it.isISOControl() }) { "AI Key 不能包含空白或控制字符" }
         withContext(Dispatchers.IO) {
-            mutex.withLock {
+            mutexFor(scope).withLock {
                 val keyCopy = key.copyOf()
                 var keyBytes: ByteArray? = null
                 var payload: ByteArray? = null
@@ -129,7 +128,7 @@ class AndroidAiKeyStore internal constructor(
     override suspend fun clear(scope: SchoolAccountScope) {
         withContext(Dispatchers.IO) {
             var failure: Throwable? = null
-            mutex.withLock {
+            mutexFor(scope).withLock {
                 runCatching { deleteAtomic(envelopeFile(scope)) }.onFailure { if (failure == null) failure = it }
                 runCatching { deleteAtomic(enabledFile(scope)) }.onFailure { if (failure == null) failure = it }
                 runCatching { keys.delete(scope) }.onFailure { if (failure == null) failure = it }
@@ -158,7 +157,7 @@ class AndroidAiKeyStore internal constructor(
 
     override suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean) {
         withContext(Dispatchers.IO) {
-            mutex.withLock {
+            mutexFor(scope).withLock {
                 if (enabled) {
                     val valid = when (val read = decryptEnvelopeLocked(scope)) {
                         is EnvelopeRead.Valid -> {
@@ -180,7 +179,7 @@ class AndroidAiKeyStore internal constructor(
         block: suspend (endpoint: AiEndpoint, key: CharArray) -> T
     ): T {
         val material = withContext(Dispatchers.IO) {
-            mutex.withLock {
+            mutexFor(scope).withLock {
                 when (val read = decryptEnvelopeLocked(scope)) {
                     is EnvelopeRead.Valid -> {
                         val chars = utf8ToChars(read.payload.keyBytes)
@@ -200,7 +199,7 @@ class AndroidAiKeyStore internal constructor(
     }
 
     private suspend fun readStatus(scope: SchoolAccountScope): AiKeyStatus = withContext(Dispatchers.IO) {
-        mutex.withLock {
+        mutexFor(scope).withLock {
             when (val read = decryptEnvelopeLocked(scope)) {
                 is EnvelopeRead.Valid -> {
                     read.payload.wipe()
@@ -213,7 +212,7 @@ class AndroidAiKeyStore internal constructor(
     }
 
     private suspend fun readSettings(scope: SchoolAccountScope): AiSettings = withContext(Dispatchers.IO) {
-        mutex.withLock {
+        mutexFor(scope).withLock {
             when (val read = decryptEnvelopeLocked(scope)) {
                 is EnvelopeRead.Valid -> {
                     val endpoint = read.payload.endpoint
@@ -340,6 +339,12 @@ class AndroidAiKeyStore internal constructor(
 
     companion object {
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
+
+        /** Profile 级进程锁：擦除 hook 会新建 store 实例，实例内 mutex 无法阻止 put/wipe 跨实例交错。 */
+        private val scopeMutexes = ConcurrentHashMap<String, Mutex>()
+
+        private fun mutexFor(scope: SchoolAccountScope): Mutex =
+            scopeMutexes.computeIfAbsent(AiByokStorageFormat.scopeStorageKey(scope)) { Mutex() }
 
         private fun charsToUtf8(chars: CharArray): ByteArray {
             val encoded = StandardCharsets.UTF_8.newEncoder().encode(CharBuffer.wrap(chars))

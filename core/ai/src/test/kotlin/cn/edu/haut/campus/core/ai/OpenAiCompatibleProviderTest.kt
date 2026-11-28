@@ -161,7 +161,7 @@ class OpenAiCompatibleProviderTest {
     fun remoteErrorDetailsDoNotEchoKeyMaterialEvenIfProviderDoes() = runTest {
         val canary = AiTestFixtures.keyCanary()
         val transport = RecordingTransport(
-            AiTransportResponse(401, """{"error":{"type":"invalid_api_key","message":"bad key $canary"}}""")
+            AiTransportResponse(401, """{"error":{"type":"$canary","message":"bad key $canary"}}""")
         )
         val harness = Harness(transport = transport)
         val req = AiTestFixtures.request()
@@ -171,8 +171,8 @@ class OpenAiCompatibleProviderTest {
         val result = harness.provider.send(AiTestFixtures.scope, req, token) as AiResult.Failure
 
         assertEquals(AiError.AUTH_REJECTED, result.error)
-        assertFalse(result.detail.orEmpty().contains(canary))
-        assertTrue(result.detail.orEmpty().contains("HTTP 401"))
+        assertFalse("远端 error.type/code/message 均不得反射进 detail", result.detail.orEmpty().contains(canary))
+        assertEquals("HTTP 401", result.detail)
     }
 
     @Test
