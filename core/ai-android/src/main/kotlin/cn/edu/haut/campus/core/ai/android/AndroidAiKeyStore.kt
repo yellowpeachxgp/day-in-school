@@ -82,7 +82,7 @@ private class AndroidAiAesKeyProvider : AiAesKeyProvider {
  * D3/C10 的 Android Key 仓：Keystore 非导出 AES-256-GCM、AAD 绑定完整 SchoolAccountScope、
  * 密文与 enabled 标记都只写入 context.noBackupFilesDir/ai_byok_v1。公开接口绝不返回 Key。
  */
-class AndroidAiKeyStore(
+class AndroidAiKeyStore internal constructor(
     context: Context,
     internal val rootDir: File = File(context.applicationContext.noBackupFilesDir, "ai_byok_v1"),
     private val keys: AiAesKeyProvider = AndroidAiAesKeyProvider()
@@ -111,7 +111,7 @@ class AndroidAiKeyStore(
                     check(roundTrip.contentEquals(keyBytes)) { "AI Key 安全保存校验失败" }
                     verified.payload.wipe()
                 } finally {
-                    keyCopy.fill(0)
+                    keyCopy.fill(0.toChar())
                     keyBytes?.fill(0)
                     payload?.fill(0)
                 }
@@ -310,7 +310,7 @@ class AndroidAiKeyStore(
 
     private class KeyMaterial(val endpoint: AiEndpoint, val keyChars: CharArray) {
         fun wipe() {
-            keyChars.fill(0)
+            keyChars.fill(0.toChar())
         }
     }
 

@@ -53,10 +53,12 @@ internal object AiByokStorageFormat {
             throw IllegalArgumentException("AI BYOK 载荷存在尾随字节")
         }
         try {
+            val visionFlag = vision.single().toInt()
+            require(visionFlag == 0 || visionFlag == 1) { "AI BYOK vision 标记非法" }
             val endpoint = AiEndpoint(
                 baseUrl = HttpsUrl(String(baseUrl, StandardCharsets.UTF_8)),
                 model = String(model, StandardCharsets.UTF_8),
-                supportsVision = vision.single().toInt() == 1
+                supportsVision = visionFlag == 1
             )
             return DecodedAiPayload(endpoint, key)
         } catch (error: Exception) {
