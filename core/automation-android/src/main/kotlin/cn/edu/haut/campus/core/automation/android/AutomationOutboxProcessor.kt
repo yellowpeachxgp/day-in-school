@@ -45,7 +45,7 @@ class AutomationOutboxProcessor(
                 val context = if (event is DomainEvent.UtilityBalanceSampled) {
                     ThresholdEvaluationContext(
                         previousSamples = utilitySamples,
-                        lastTriggeredAt = latestRunFiredAt(rule.id),
+                        lastTriggeredAt = latestRunStartedAt(rule.id),
                         evaluatedAt = clock()
                     )
                 } else {
@@ -74,6 +74,6 @@ class AutomationOutboxProcessor(
         return consumed
     }
 
-    private suspend fun latestRunFiredAt(ruleId: String): Instant? =
-        engine.runs(ruleId).first().firstOrNull { !it.dryRun }?.firedAt
+    private suspend fun latestRunStartedAt(ruleId: String): Instant? =
+        engine.runs(ruleId).first().firstOrNull { !it.dryRun }?.startedAt
 }
