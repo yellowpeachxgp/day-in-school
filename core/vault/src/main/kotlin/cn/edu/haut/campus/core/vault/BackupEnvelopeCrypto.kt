@@ -93,6 +93,14 @@ internal object BackupEnvelopeCrypto {
         } catch (error: Throwable) {
             throw BackupCorruptedException("外层头 JSON 无法解析", error)
         }
+        val allowedHeaderKeys = setOf(
+            "format", "formatVersion", "kdf", "iterations", "cipher", "salt", "nonce",
+            "keyCheck", "payloadFormat", "plaintextSha256"
+        )
+        val unknownHeaderKeys = header.fields.keys - allowedHeaderKeys
+        if (unknownHeaderKeys.isNotEmpty()) {
+            throw BackupCorruptedException("外层头包含 v1 未定义字段: " + unknownHeaderKeys.sorted().joinToString(","))
+        }
         try {
             if (header.requiredString("format") != BackupFormatConstants.ENVELOPE_FORMAT) {
                 throw BackupCorruptedException("外层格式不是 dis-backup-envelope/v1")

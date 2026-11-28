@@ -104,6 +104,7 @@ internal object BackupWireCodec {
         if (Json.canonical(rootValue) != dataText) throw BackupCorruptedException("data.json 不是 CanonicalJson 规范形")
         BackupSchemaSafety.validateJsonKeys(rootValue, "备份数据 schema")
         val root = rootValue.asObjOrNull ?: throw BackupCorruptedException("data.json 根必须是 object")
+        requireExactKeys(root, setOf("format", "scope", "tables", "blobEntries"), "data.json")
         if (root.requiredStringOrCorrupt("format") != BackupFormatConstants.DATA_FORMAT) {
             throw BackupCorruptedException("data.json format 不是 dis-backup-data/v1")
         }
@@ -112,8 +113,9 @@ internal object BackupWireCodec {
         } catch (error: Throwable) {
             throw BackupCorruptedException("data.json scope 无法解析", error)
         }
-        val blobEntries = root.optionalArray("blobEntries").map { value ->
+        val blobEntries = root.requiredArrayOrCorrupt("blobEntries").map { value ->
             val obj = value.asObjOrNull ?: throw BackupCorruptedException("blobEntries 项必须是 object")
+            requireExactKeys(obj, setOf("sha256", "byteCount", "path"), "blobEntries")
             val sha = obj.requiredStringOrCorrupt("sha256")
             val count = obj.requiredLongOrCorrupt("byteCount")
             val path = obj.requiredStringOrCorrupt("path")
@@ -126,10 +128,13 @@ internal object BackupWireCodec {
             throw BackupCorruptedException("blobEntries 摘要重复")
         }
 
+        val tableValues = root.requiredArrayOrCorrupt("tables")
+        if (tableValues.isEmpty()) throw BackupCorruptedException("data.json 不包含任何备份表")
         val tables = mutableListOf<BackupTableData>()
         val seenTables = mutableSetOf<String>()
-        for (tableValue in root.requiredArrayOrCorrupt("tables")) {
+        for (tableValue in tableValues) {
             val tableObj = tableValue.asObjOrNull ?: throw BackupCorruptedException("tables 项必须是 object")
+            requireExactKeys(tableObj, setOf("table", "columns", "rows"), "tables")
             val tableName = tableObj.requiredStringOrCorrupt("table")
             if (!seenTables.add(tableName)) throw BackupCorruptedException("备份表重复: " + tableName)
             val policy = BackupTableCatalog.policy(tableName)
@@ -201,6 +206,14 @@ internal object BackupWireCodec {
         if (Json.canonical(rootValue) != manifestText) throw BackupCorruptedException("manifest.json 不是 CanonicalJson 规范形")
         BackupSchemaSafety.validateJsonKeys(rootValue, "备份 manifest schema")
         val root = rootValue.asObjOrNull ?: throw BackupCorruptedException("manifest.json 根必须是 object")
+        requireExactKeys(
+            root,
+            setOf(
+                "format", "formatVersion", "createdAt", "appVersion", "schemaVersion",
+                "profileFingerprint", "entryCount", "payloadSha256", "tables"
+            ),
+            "manifest.json"
+        )
         try {
             return BackupManifest(
                 format = root.requiredString("format"),
@@ -213,6 +226,7 @@ internal object BackupWireCodec {
                 payloadSha256 = root.requiredString("payloadSha256"),
                 tables = root.requiredArray("tables").map { value ->
                     val obj = value.asObjOrNull ?: throw IllegalArgumentException("manifest table 必须是 object")
+                    requireExactKeys(obj, setOf("table", "rowCount", "sha256"), "manifest tables")
                     BackupTableManifest(
                         table = obj.requiredString("table"),
                         rowCount = obj.requiredInt("rowCount"),
@@ -254,15 +268,28 @@ internal fun encodeCell(cell: BackupCell): JsonValue.Obj = when (cell) {
 private fun decodeCell(value: JsonValue): BackupCell {
     val obj = value.asObjOrNull ?: throw BackupCorruptedException("备份单元格必须是 object")
     return when (obj.requiredStringOrCorrupt("type")) {
-        "null" -> BackupCell.NullValue
-        "integer" -> BackupCell.LongValue(
-            obj.requiredStringOrCorrupt("value").toLongOrNull() ?: throw BackupCorruptedException("integer 单元格非法")
-        )
-        "real" -> BackupCell.DoubleValue(
-            obj.requiredStringOrCorrupt("value").toDoubleOrNull() ?: throw BackupCorruptedException("real 单元格非法")
-        )
-        "text" -> BackupCell.TextValue(obj.requiredStringOrCorrupt("value"))
+        "null" -> {
+            requireExactKeys(obj, setOf("type"), "cell")
+            BackupCell.NullValue
+        }
+        "integer" -> {
+            requireExactKeys(obj, setOf("type", "value"), "cell")
+            BackupCell.LongValue(
+                obj.requiredStringOrCorrupt("value").toLongOrNull() ?: throw BackupCorruptedException("integer 单元格非法")
+            )
+        }
+        "real" -> {
+            requireExactKeys(obj, setOf("type", "value"), "cell")
+            BackupCell.DoubleValue(
+                obj.requiredStringOrCorrupt("value").toDoubleOrNull() ?: throw BackupCorruptedException("real 单元格非法")
+            )
+        }
+        "text" -> {
+            requireExactKeys(obj, setOf("type", "value"), "cell")
+            BackupCell.TextValue(obj.requiredStringOrCorrupt("value"))
+        }
         "blob" -> {
+            requireExactKeys(obj, setOf("type", "sha256", "byteCount", "path"), "cell")
             val sha = obj.requiredStringOrCorrupt("sha256")
             val count = obj.requiredLongOrCorrupt("byteCount")
             val path = obj.requiredStringOrCorrupt("path")
@@ -272,6 +299,13 @@ private fun decodeCell(value: JsonValue): BackupCell {
             BackupCell.BlobValue(sha, count, path)
         }
         else -> throw BackupCorruptedException("未知备份单元格类型")
+    }
+}
+
+private fun requireExactKeys(obj: JsonValue.Obj, allowed: Set<String>, context: String) {
+    val extra = obj.fields.keys - allowed
+    if (extra.isNotEmpty()) {
+        throw BackupCorruptedException(context + " 包含 v1 未定义字段: " + extra.sorted().joinToString(","))
     }
 }
 
