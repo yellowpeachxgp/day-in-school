@@ -9,6 +9,8 @@ import cn.edu.haut.campus.core.database.GradeAttemptEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.database.OccurrenceOverrideEntity
 import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.events.InMemoryEventOutbox
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
@@ -19,6 +21,7 @@ import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import cn.edu.haut.campus.core.model.json.JsonValue
 import java.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -95,6 +98,43 @@ class RoomVaultJournalTest {
         assertTrue(events.all { it.envelope.eventType == "vault.entity.changed" })
         assertTrue(events[0].envelope.payload.text.contains("changeId"))
         assertFalse(events[0].envelope.payload.text.contains("高等数学"))
+    }
+
+    @Test
+    fun cancellationAndRestoreWritesPublishTypedCourseChangedEvents() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(listOf(overrideRow("token-1")))
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(listOf(overrideRow("token-2").copy(canceled = false, reason = null)))
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().deleteOccurrenceOverrideById("ov-1")
+        }
+
+        val courseEvents = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+
+        assertEquals(3, courseEvents.size)
+        assertTrue(courseEvents.all { it.courseRef == courseRef })
+        val cancelChange = courseEvents[0].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.ADDED, cancelChange.kind)
+        assertEquals(JsonValue.Bool(true), cancelChange.after)
+        assertTrue(cancelChange.path.endsWith("/canceled"))
+        val restoreChange = courseEvents[1].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.MODIFIED, restoreChange.kind)
+        assertEquals(JsonValue.Bool(true), restoreChange.before)
+        assertEquals(JsonValue.Bool(false), restoreChange.after)
+        val removeChange = courseEvents[2].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.REMOVED, removeChange.kind)
+        assertEquals(JsonValue.Bool(false), removeChange.before)
+        assertNull(removeChange.after)
     }
 
     @Test
