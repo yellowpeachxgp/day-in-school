@@ -393,7 +393,99 @@ internal fun validateCampusGraphEntity(entity: CampusGraphEntity) {
     require(entity.provenance.provenance.schoolId == entity.ref.schoolId) {
         "图实体 DataProvenance 学校与稳定 ID 不一致"
     }
+    validateParentInvariant(entity)
+    validateReferenceInvariant(entity)
     validateAttributes(entity.attributes, "图实体属性")
+}
+
+private fun validateParentInvariant(entity: CampusGraphEntity) {
+    val parent = entity.parent
+    if (entity.type == CampusGraphEntityType.CAMPUS) {
+        require(parent == null) { "校区实体不能有父节点：" + entity.ref.id }
+        return
+    }
+    require(parent != null) { "非校区图实体必须有父节点：" + entity.ref.id }
+    require(parent.schoolId == entity.ref.schoolId && parent.campusId == entity.ref.campusId) {
+        "图实体父节点不能跨学校/校区：" + entity.ref.id
+    }
+    val parentType = CampusGraphIds.typeOf(parent)
+    val allowedParents = when (entity.type) {
+        CampusGraphEntityType.CAMPUS -> emptySet()
+        CampusGraphEntityType.BUILDING -> setOf(CampusGraphEntityType.CAMPUS)
+        CampusGraphEntityType.FLOOR -> setOf(CampusGraphEntityType.BUILDING)
+        CampusGraphEntityType.ROOM -> setOf(CampusGraphEntityType.BUILDING, CampusGraphEntityType.FLOOR)
+        CampusGraphEntityType.FACILITY -> setOf(
+            CampusGraphEntityType.CAMPUS,
+            CampusGraphEntityType.BUILDING,
+            CampusGraphEntityType.FLOOR,
+            CampusGraphEntityType.ROOM
+        )
+        CampusGraphEntityType.ENTRANCE -> setOf(CampusGraphEntityType.BUILDING)
+        CampusGraphEntityType.INDOOR_NODE -> setOf(
+            CampusGraphEntityType.BUILDING,
+            CampusGraphEntityType.FLOOR,
+            CampusGraphEntityType.ROOM,
+            CampusGraphEntityType.ENTRANCE
+        )
+        CampusGraphEntityType.SERVICE -> setOf(
+            CampusGraphEntityType.CAMPUS,
+            CampusGraphEntityType.BUILDING,
+            CampusGraphEntityType.FLOOR,
+            CampusGraphEntityType.ROOM,
+            CampusGraphEntityType.FACILITY
+        )
+        CampusGraphEntityType.PROCEDURE -> setOf(CampusGraphEntityType.CAMPUS, CampusGraphEntityType.SERVICE)
+    }
+    require(parentType in allowedParents) {
+        "图实体父节点类型不合法：" + entity.ref.id + " parentType=" + parentType.wireId
+    }
+}
+
+private fun validateReferenceInvariant(entity: CampusGraphEntity) {
+    fun requireRefType(ref: PlaceRef, expected: CampusGraphEntityType, label: String) {
+        require(CampusGraphIds.typeOf(ref) == expected) {
+            label + "必须是 " + expected.wireId + " 稳定 ID：" + ref.id
+        }
+        require(ref.schoolId == entity.ref.schoolId && ref.campusId == entity.ref.campusId) {
+            label + "不能跨学校/校区：" + ref.id
+        }
+    }
+
+    when (entity) {
+        is FloorNode -> {
+            requireRefType(entity.buildingRef, CampusGraphEntityType.BUILDING, "楼层所属楼宇")
+            require(entity.parent == entity.buildingRef) { "楼层 parent 必须等于所属楼宇：" + entity.ref.id }
+        }
+        is RoomNode -> {
+            requireRefType(entity.buildingRef, CampusGraphEntityType.BUILDING, "房间所属楼宇")
+            entity.floorRef?.let { requireRefType(it, CampusGraphEntityType.FLOOR, "房间所属楼层") }
+            require(entity.parent == (entity.floorRef ?: entity.buildingRef)) {
+                "房间 parent 必须等于所属楼层或楼宇：" + entity.ref.id
+            }
+        }
+        is EntranceNode -> {
+            requireRefType(entity.buildingRef, CampusGraphEntityType.BUILDING, "入口所属楼宇")
+            require(entity.parent == entity.buildingRef) { "入口 parent 必须等于所属楼宇：" + entity.ref.id }
+        }
+        is IndoorNode -> {
+            requireRefType(entity.buildingRef, CampusGraphEntityType.BUILDING, "室内节点所属楼宇")
+            entity.floorRef?.let { requireRefType(it, CampusGraphEntityType.FLOOR, "室内节点所属楼层") }
+            entity.roomRef?.let { requireRefType(it, CampusGraphEntityType.ROOM, "室内节点所属房间") }
+        }
+        is FacilityNode -> {
+            entity.buildingRef?.let { requireRefType(it, CampusGraphEntityType.BUILDING, "设施所属楼宇") }
+            entity.floorRef?.let { requireRefType(it, CampusGraphEntityType.FLOOR, "设施所属楼层") }
+            entity.roomRef?.let { requireRefType(it, CampusGraphEntityType.ROOM, "设施所属房间") }
+        }
+        is ServiceNode -> {
+            entity.buildingRef?.let { requireRefType(it, CampusGraphEntityType.BUILDING, "服务所属楼宇") }
+        }
+        is ProcedureNode -> {
+            entity.serviceRef?.let { requireRefType(it, CampusGraphEntityType.SERVICE, "流程所属服务") }
+            entity.dependsOn.forEach { requireRefType(it, CampusGraphEntityType.PROCEDURE, "流程依赖") }
+        }
+        is CampusNode -> Unit
+    }
 }
 
 internal fun validateAttributes(attributes: Map<String, String>, label: String) {

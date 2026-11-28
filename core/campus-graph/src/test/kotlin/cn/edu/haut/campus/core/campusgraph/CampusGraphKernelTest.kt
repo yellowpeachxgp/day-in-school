@@ -42,6 +42,13 @@ class CampusGraphKernelTest {
                 attributes = mapOf("bad key" to "value")
             )
         }
+        assertThrowsIllegalArgument {
+            building(
+                ref = CampusGraphIds.build(school, campus, CampusGraphEntityType.BUILDING, "b_t1"),
+                sourceLevel = CampusGraphSourceLevel.DATA_PACKAGE,
+                parent = CampusGraphIds.build(school, campus, CampusGraphEntityType.BUILDING, "other")
+            )
+        }
     }
 
     @Test
@@ -122,14 +129,15 @@ class CampusGraphKernelTest {
         ref: PlaceRef,
         sourceLevel: CampusGraphSourceLevel,
         name: String = "31号楼（电气信息楼）",
-        attributes: Map<String, String> = emptyMap()
+        attributes: Map<String, String> = emptyMap(),
+        parent: PlaceRef = campusRef
     ): BuildingNode = BuildingNode(
         ref = ref,
         name = name,
         shortName = "31号楼",
         legacyBuildingId = "b_t1",
         category = CampusCategory.TEACHING_BUILDING,
-        parent = campusRef,
+        parent = parent,
         aliases = listOf("31号楼"),
         provenance = provenance(sourceLevel),
         attributes = attributes
