@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.core.model.OccurrenceRule
 import cn.edu.haut.campus.core.model.Term
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -23,6 +24,7 @@ import org.robolectric.annotation.Config
 import java.math.BigDecimal
 import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.LocalTime
 
 /**
  * #7/#8/#15 功能验收回归：
@@ -272,5 +274,107 @@ class CourseManualAndPracticeAcceptanceTest {
         assertEquals("2025-2026-1", pending.single().termId)
         // 本学期实践课程与旧学期待定项各自独立
         assertTrue(dao.getCoursesSnapshot().all { it.externalId?.startsWith("sjk:${term.id}:") == true })
+    }
+
+    @Test
+    fun 实践课多日矩阵一次性落库并保留未变规则标识() = runBlocking {
+        val pending = unscheduled()
+        dao.upsertUnscheduledCourses(listOf(pending))
+        val monday = OccurrenceRule(DayOfWeek.MONDAY, 1, 4, setOf(14, 15), "工程中心A")
+        val wednesday = OccurrenceRule(
+            DayOfWeek.WEDNESDAY, 7, 8, setOf(14), "工程中心B",
+            customStartTime = LocalTime.of(13, 30), customEndTime = LocalTime.of(16, 30)
+        )
+        repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+            unscheduled = pending,
+            occurrences = listOf(monday, wednesday)
+        )
+        assertTrue(dao.getUnscheduledCoursesSnapshot().isEmpty())
+        assertEquals(1, dao.getCoursesSnapshot().size)
+        assertEquals(2, dao.getRulesSnapshot().size)
+        assertTrue(dao.getCoursesSnapshot().single().userModified)
+        assertTrue(dao.getRulesSnapshot().all { it.userModified })
+        val firstMonday = dao.getRulesSnapshot().single { it.weekdayIso == DayOfWeek.MONDAY.value }
+        assertEquals("14,15", firstMonday.weeksCsv)
+        assertEquals(1, firstMonday.startPeriod)
+        assertEquals(4, firstMonday.endPeriod)
+        val wednesdayRow = dao.getRulesSnapshot().single { it.weekdayIso == DayOfWeek.WEDNESDAY.value }
+        assertEquals("13:30", wednesdayRow.customStartTimeIso)
+        assertEquals("16:30", wednesdayRow.customEndTimeIso)
+
+        val friday = OccurrenceRule(DayOfWeek.FRIDAY, 9, 10, setOf(15, 16), "工程中心C")
+        repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+            unscheduled = pending,
+            occurrences = listOf(monday, friday)
+        )
+        val rows = dao.getRulesSnapshot()
+        assertEquals(2, rows.size)
+        assertEquals(firstMonday.id, rows.single { it.weekdayIso == DayOfWeek.MONDAY.value }.id)
+        assertTrue(rows.none { it.weekdayIso == DayOfWeek.WEDNESDAY.value })
+        assertEquals(1, rows.count { it.weekdayIso == DayOfWeek.FRIDAY.value })
+        assertTrue(dao.getUnscheduledCoursesSnapshot().isEmpty())
+    }
+
+    @Test
+    fun 实践课矩阵非法输入不写库且权威重同步不覆盖用户修改() = runBlocking {
+        val pending = unscheduled()
+        dao.upsertUnscheduledCourses(listOf(pending))
+        val valid = OccurrenceRule(DayOfWeek.MONDAY, 1, 4, setOf(14), "工程中心A")
+        val invalid = OccurrenceRule(DayOfWeek.TUESDAY, 3, 2, emptySet(), " ")
+        assertTrue(
+            runCatching {
+                repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+                    unscheduled = pending,
+                    occurrences = listOf(valid, invalid)
+                )
+            }.isFailure
+        )
+        assertTrue(dao.getCoursesSnapshot().isEmpty())
+        assertTrue(dao.getRulesSnapshot().isEmpty())
+        assertEquals(1, dao.getUnscheduledCoursesSnapshot().size)
+
+        // 第二审负例回归：双方都有完整 custom 起止时按真实时钟判重叠，
+        // 即使节次锚点 1-2 与 3-4 本身不相交也必须拒绝，且不得发生部分写入。
+        val customOverlapFailure = runCatching {
+            repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+                unscheduled = pending,
+                occurrences = listOf(
+                    OccurrenceRule(
+                        DayOfWeek.MONDAY, 1, 2, setOf(14), "工程中心A",
+                        customStartTime = LocalTime.of(8, 0), customEndTime = LocalTime.of(12, 0)
+                    ),
+                    OccurrenceRule(
+                        DayOfWeek.MONDAY, 3, 4, setOf(14), "工程中心B",
+                        customStartTime = LocalTime.of(10, 0), customEndTime = LocalTime.of(11, 0)
+                    )
+                )
+            )
+        }
+        assertTrue(customOverlapFailure.isFailure)
+        assertTrue(customOverlapFailure.exceptionOrNull()?.message?.contains("时间段重叠") == true)
+        assertTrue(dao.getCoursesSnapshot().isEmpty())
+        assertTrue(dao.getRulesSnapshot().isEmpty())
+        assertEquals(1, dao.getUnscheduledCoursesSnapshot().size)
+
+        repo.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+            unscheduled = pending,
+            occurrences = listOf(valid, OccurrenceRule(DayOfWeek.THURSDAY, 5, 8, setOf(15), "工程中心B"))
+        )
+        val ruleCount = dao.getRulesSnapshot().size
+        repo.applyLiveSyncData(
+            HautLiveSyncResult(
+                termId = term.id,
+                studentProfile = null,
+                timetableCandidates = emptyList(),
+                gradeAttempts = emptyList(),
+                unscheduledCourses = listOf(unscheduled().toDomain()),
+                semesterStart = term.startDate,
+                totalWeeks = term.weekCount
+            )
+        )
+        assertTrue(dao.getUnscheduledCoursesSnapshot().isEmpty())
+        assertEquals(ruleCount, dao.getRulesSnapshot().size)
+        assertTrue(dao.getCoursesSnapshot().single().userModified)
+        assertTrue(dao.getRulesSnapshot().all { it.userModified })
     }
 }

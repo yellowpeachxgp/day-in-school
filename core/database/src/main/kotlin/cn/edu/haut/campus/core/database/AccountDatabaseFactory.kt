@@ -59,7 +59,8 @@ internal class AccountDatabaseFactory(private val context: Context) {
                     MIGRATION_6_7,
                     MIGRATION_7_8,
                     MIGRATION_8_9,
-                    MIGRATION_9_10
+                    MIGRATION_9_10,
+                    MIGRATION_10_11
                 )
                 .build()
             val preferences = PreferenceDataStoreFactory.create(
