@@ -578,7 +578,7 @@ private fun AutomationTextField(
         onValueChange = onValueChange,
         label = { Text(label) },
         singleLine = true,
-        modifier = modifier.fillMaxWidth()
+        modifier = if (modifier == Modifier) Modifier.fillMaxWidth() else modifier
     )
 }
 
