@@ -17,7 +17,9 @@ import cn.edu.haut.campus.core.vault.BackupService
 import cn.edu.haut.campus.core.vault.RestoreMode
 import cn.edu.haut.campus.core.vault.RestorePreview
 import cn.edu.haut.campus.core.vault.VaultBackupServiceRegistry
+import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
+import cn.edu.haut.campus.widget.common.WidgetRefreshCoordinator
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -30,7 +32,8 @@ import kotlinx.coroutines.withContext
 /** 备份中心 ViewModel：只保存预览摘要；口令、输入流和 PreparedRestore 明文不进入 UiState。 */
 class BackupCenterViewModel(
     private val appContext: Context,
-    private val backupService: BackupService?
+    private val backupService: BackupService?,
+    private val postRestoreHooks: suspend () -> Unit = {}
 ) : ViewModel(), BackupCenterUiAction {
     private val mutableUiState = MutableStateFlow(
         if (backupService == null) {
@@ -193,6 +196,9 @@ class BackupCenterViewModel(
                     service.restore(preview, wizard.mode, wizard.resolutions)
                 }
                 discardPreparedPreview()
+                withContext(Dispatchers.IO) {
+                    runCatching { postRestoreHooks() }
+                }
                 mutableUiState.update {
                     it.copy(
                         matrix = SettingsUiMatrix.Content,
@@ -264,7 +270,17 @@ class BackupCenterViewModel(
             initializer {
                 BackupCenterViewModel(
                     appContext = context.applicationContext,
-                    backupService = VaultBackupServiceRegistry.forProfile(repository.profileId)
+                    backupService = VaultBackupServiceRegistry.forProfile(repository.profileId),
+                    postRestoreHooks = {
+                        runCatching { repository.rescheduleActiveLocalBookingPlans() }
+                        runCatching {
+                            ReminderCoordinator.getInstance(context).reconcileNow(
+                                reason = "BACKUP_RESTORE",
+                                forceRescheduleAlarms = true
+                            )
+                        }
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(context)
+                    }
                 )
             }
         }
