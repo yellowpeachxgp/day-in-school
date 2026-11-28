@@ -116,21 +116,14 @@ class CommunityTeamTimeRepository(
         return client.replaceMyGroupAvailability(
             groupId = groupId,
             request = ReplaceGroupAvailabilityRequest(blocks = inputs, ttlSeconds = ttlSeconds),
-            idempotencyKey = stableIdempotencyKey(
-                "share-availability",
-                groupId,
-                formatTeamTimeInstant(window.start),
-                formatTeamTimeInstant(window.end),
-                ttlSeconds.toString(),
-                inputs.joinToString(";") { it.startAt + "/" + it.endAt },
-            ),
+            idempotencyKey = newIdempotencyKey("tt-share-"),
         ).mapEnvelopeData(TeamTimeJson::parseShare)
     }
 
     override suspend fun withdrawMyBusyBlocks(groupId: String): CommunityResult<Unit> =
         client.deleteMyGroupAvailability(
             groupId = groupId,
-            idempotencyKey = stableIdempotencyKey("withdraw-availability", groupId),
+            idempotencyKey = newIdempotencyKey("tt-withdraw-"),
         ).mapEnvelopeData { }
 
     override suspend fun queryAvailability(
@@ -147,14 +140,7 @@ class CommunityTeamTimeRepository(
                 durationMinutes = durationMinutes,
                 minAttendees = minAttendees,
             ),
-            idempotencyKey = stableIdempotencyKey(
-                "query-availability",
-                groupId,
-                formatTeamTimeInstant(window.start),
-                formatTeamTimeInstant(window.end),
-                durationMinutes.toString(),
-                minAttendees.toString(),
-            ),
+            idempotencyKey = newIdempotencyKey("tt-query-"),
         ).mapEnvelopeData(TeamTimeJson::parseAvailabilityQuery)
 
     override suspend fun createPoll(
@@ -185,7 +171,7 @@ class CommunityTeamTimeRepository(
             request = UpsertGroupPollVoteRequest(optionId),
             // 投票是单选 upsert，重复提交同一最终选项天然幂等；每次 deliberate change 必须换新键，
             // 避免 A→B→A 时命中旧 A 键而返回陈旧 replay。
-            idempotencyKey = "tt-vote-" + UUID.randomUUID().toString(),
+            idempotencyKey = newIdempotencyKey("tt-vote-"),
         ).mapEnvelopeData(TeamTimeJson::parseVoteResult)
 
     override suspend fun confirm(pollId: String, optionId: String): CommunityResult<TeamTimeConfirmation> {
@@ -220,6 +206,8 @@ class CommunityTeamTimeRepository(
             CommunityResult.AuthenticationRequired -> CommunityResult.AuthenticationRequired
         }
     }
+
+    private fun newIdempotencyKey(prefix: String): String = prefix + UUID.randomUUID().toString()
 
     private fun stableIdempotencyKey(kind: String, vararg parts: String): String {
         val fingerprint = listOf(
