@@ -88,6 +88,17 @@ class DisDatapackCampusGraphDecoderTest {
     }
 
     @Test
+    fun whitespaceOnlyOpeningHoursProjectAsUnspecified() {
+        val bytes = String(facilityPackBytes(), Charsets.UTF_8)
+            .replace("\"openingHours\":\"工作日 09:00-17:00\"", "\"openingHours\":\"\\n\"")
+            .toByteArray(Charsets.UTF_8)
+
+        val facility = decoder.decode(DisDatapackLoader.decode(bytes).pack).single() as FacilityNode
+
+        assertEquals(null, facility.openingHours)
+    }
+
+    @Test
     fun datapackItemSeparatorsUseCollisionSafeNamespaceInStandaloneAndEmbeddedPaths() {
         val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid-forms", "aid.forms", "aid_forms"))
         val decoded = DisDatapackLoader.decode(bytes)
@@ -108,11 +119,22 @@ class DisDatapackCampusGraphDecoderTest {
     }
 
     @Test
-    fun decodeVerifiedRejectsDuplicateItemIdsAcrossCampusesFailClosed() {
+    fun decodeVerifiedKeepsRepeatedItemIdsDistinctAcrossCampuses() {
         val bytes = procedurePackWithItemPlacements(listOf(
             "aid/forms" to "haut/lianhuajie/campus/lianhuajie",
             "aid/forms" to "haut/songshanlu/campus/songshanlu"
         ))
+        val decoded = DisDatapackLoader.decode(bytes)
+
+        val entities = decoder.decodeVerified(fakeVerified(decoded))
+
+        assertEquals(2, entities.size)
+        assertEquals(2, entities.map { it.ref.id }.distinct().size)
+    }
+
+    @Test
+    fun decodeVerifiedRejectsDuplicateProjectedStableIdsInSameCampus() {
+        val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid/forms"))
         val decoded = DisDatapackLoader.decode(bytes)
 
         assertThrowsIllegalArgument {
