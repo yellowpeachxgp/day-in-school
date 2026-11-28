@@ -141,11 +141,35 @@ class VaultBlobStoreTest {
 
         assertEquals("并发同 blobId 不同元数据必须恰一方失败", 1, results.count { it.isSuccess })
         assertEquals(1, results.count { it.isFailure })
+        val failure = results.single { it.isFailure }.exceptionOrNull()
+        assertTrue("负者必须是元数据冲突而不是调度超时: " + failure, failure is IllegalArgumentException)
+        assertTrue(failure?.message?.contains("mimeType") == true)
         assertEquals(1, blobs.count())
         val winner = results.mapNotNull { it.getOrNull() }.single()
         val stored = blobs.get(winner.blobId, scope)
         assertEquals(winner.mimeType, stored?.ref?.mimeType)
         assertEquals(null, stored?.ref?.owner)
+    }
+
+    @Test
+    fun concurrentConflictingOwnerExactlyOneWriterFailsAndWinnerIsNotOverwritten() = runBlocking {
+        val bytes = byteArrayOf(10, 10, 10)
+        val owner = EntityRef(EntityType.INBOX_ITEM, "inbox-concurrent", scope)
+        installTwoWriterBarrier()
+
+        val withoutOwner = async { runCatching { blobs.put(bytes, "text/plain", scope) } }
+        val withOwner = async { runCatching { blobs.put(bytes, "text/plain", scope, owner = owner) } }
+        val results = listOf(withoutOwner.await(), withOwner.await())
+
+        assertEquals("并发同 blobId 不同 owner 必须恰一方失败", 1, results.count { it.isSuccess })
+        assertEquals(1, results.count { it.isFailure })
+        val failure = results.single { it.isFailure }.exceptionOrNull()
+        assertTrue("负者必须是 owner 冲突而不是调度超时: " + failure, failure is IllegalArgumentException)
+        assertTrue(failure?.message?.contains("owner") == true)
+        assertEquals(1, blobs.count())
+        val winner = results.mapNotNull { it.getOrNull() }.single()
+        val stored = blobs.get(winner.blobId, scope)
+        assertEquals(winner.owner, stored?.ref?.owner)
     }
 
     @Test

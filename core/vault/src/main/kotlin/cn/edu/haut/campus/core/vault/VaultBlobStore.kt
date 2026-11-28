@@ -81,22 +81,25 @@ class VaultBlobStore(
             ownerEntityId = owner?.id,
             createdAtEpochMs = clock().toEpochMilli()
         )
-        return database.withTransaction {
-            val existingBeforeInsert = dao.getBlob(blobId)
-            if (existingBeforeInsert != null) {
-                requireCompatibleBlob(existingBeforeInsert, sha256, mimeType, content.size.toLong(), owner)
-                return@withTransaction ref
-            }
+        // 测试探针只保证两个 put 调用在存储前重叠；existing check 与原子 insert 仍全部在同一事务内。
+        beforeBlobWriteHook()
+        return try {
+            database.withTransaction {
+                val existingBeforeInsert = dao.getBlob(blobId)
+                if (existingBeforeInsert != null) {
+                    requireCompatibleBlob(existingBeforeInsert, sha256, mimeType, content.size.toLong(), owner)
+                    return@withTransaction ref
+                }
 
-            beforeBlobWriteHook()
-            try {
                 dao.insertBlobOrAbort(entity)
-            } catch (constraint: SQLiteConstraintException) {
-                // INSERT OR ABORT 是原子冲突检测：并发胜者提交后，负者绝不能 REPLACE 覆盖其
-                // mimeType/owner。负者在同一事务内复检胜者行；完全相同则保持幂等，不同元数据则 fail-closed。
-                val winner = dao.getBlob(blobId) ?: throw constraint
-                requireCompatibleBlob(winner, sha256, mimeType, content.size.toLong(), owner)
+                ref
             }
+        } catch (constraint: SQLiteConstraintException) {
+            // INSERT OR ABORT 是原子冲突检测：并发胜者提交后，负者绝不能 REPLACE 覆盖其
+            // mimeType/owner。约束异常先让本事务整体回滚，再在事务外按已提交可见性复检胜者行；
+            // 完全相同则保持幂等，不同元数据则 fail-closed。
+            val winner = dao.getBlob(blobId) ?: throw constraint
+            requireCompatibleBlob(winner, sha256, mimeType, content.size.toLong(), owner)
             ref
         }
     }
