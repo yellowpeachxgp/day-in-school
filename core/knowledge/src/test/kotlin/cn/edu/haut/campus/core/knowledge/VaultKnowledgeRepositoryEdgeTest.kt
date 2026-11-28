@@ -186,6 +186,7 @@ class VaultKnowledgeRepositoryEdgeTest {
         )
         val hits = repository.searchMaterials(scope, "题名命中词")
         assertEquals(1, hits.size)
+        assertNull(hits[0].pageIndex)
         assertNull(hits[0].lineIndex)
         assertNull(hits[0].bounds)
         assertNull(hits[0].coordinateSpace)

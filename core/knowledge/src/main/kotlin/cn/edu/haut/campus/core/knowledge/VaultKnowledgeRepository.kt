@@ -204,7 +204,11 @@ class VaultKnowledgeRepository internal constructor(
                 title = material.title,
                 course = material.course,
                 kind = material.kind,
-                pageIndex = located?.pageIndex ?: pageIndex,
+                pageIndex = when {
+                    located != null -> located.pageIndex
+                    hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK -> pageIndex
+                    else -> null
+                },
                 lineIndex = located?.lineIndex,
                 snippet = snippet,
                 bounds = located?.bounds,
