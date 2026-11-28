@@ -436,8 +436,10 @@ object TimetableInterchangeAdapter {
             meta.put("semesterStart", term.startDate.toString())
         }
 
+        // univ-timetable/v1 只有一份默认节次表；W0-04 的日期方案属于本地用户排版层，
+        // 不能折叠进旧契约造成同节次重复导出。v1 导出明确只取 schemeId=null 的默认参考作息。
         val periodsJson = JSONArray(
-            periodTimes.sortedBy { it.periodNo }.map { pt ->
+            periodTimes.filter { it.schemeId == null }.sortedBy { it.periodNo }.map { pt ->
                 JSONObject()
                     .put("index", pt.periodNo)
                     .put("start", pt.startLocalTime.toString().take(5))

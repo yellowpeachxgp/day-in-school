@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.database
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
@@ -21,6 +22,7 @@ import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ImportAudit
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.StudentProfile
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
@@ -67,14 +69,26 @@ data class TermEntity(
     )
 }
 
-@Entity(tableName = "period_times")
+@Entity(
+    tableName = "period_times",
+    indices = [
+        Index(value = ["schemeId"], unique = false),
+        Index(value = ["termId"], unique = false)
+    ]
+)
 data class PeriodTimeEntity(
     @PrimaryKey val id: String,
     val timeTableId: String,
     val periodNo: Int,
     val startLocalTimeIso: String,
     val endLocalTimeIso: String,
-    val sectionLabel: String
+    val sectionLabel: String,
+    val schemeId: String?,
+    val termId: String?,
+    val validStartDateIso: String?,
+    val validEndDateIso: String?,
+    @ColumnInfo(defaultValue = "0") val userModified: Boolean,
+    @ColumnInfo(defaultValue = "0") val updatedAtEpochMillis: Long
 ) {
     fun toDomain() = PeriodTime(
         id = id,
@@ -82,7 +96,44 @@ data class PeriodTimeEntity(
         periodNo = periodNo,
         startLocalTime = LocalTime.parse(startLocalTimeIso),
         endLocalTime = LocalTime.parse(endLocalTimeIso),
-        sectionLabel = sectionLabel
+        sectionLabel = sectionLabel,
+        schemeId = schemeId,
+        termId = termId,
+        validStartDate = validStartDateIso?.let(LocalDate::parse),
+        validEndDate = validEndDateIso?.let(LocalDate::parse),
+        userModified = userModified,
+        updatedAtEpochMillis = updatedAtEpochMillis
+    )
+}
+
+@Entity(
+    tableName = "period_time_schemes",
+    indices = [
+        Index(value = ["termId"], unique = false),
+        Index(value = ["timeTableId"], unique = false)
+    ]
+)
+data class PeriodTimeSchemeEntity(
+    @PrimaryKey val id: String,
+    val termId: String,
+    val timeTableId: String,
+    val name: String,
+    val startDateIso: String,
+    val endDateIso: String,
+    val userModified: Boolean,
+    val createdAtEpochMilli: Long,
+    val updatedAtEpochMilli: Long
+) {
+    fun toDomain() = PeriodTimeScheme(
+        id = id,
+        termId = termId,
+        timeTableId = timeTableId,
+        name = name,
+        startDate = LocalDate.parse(startDateIso),
+        endDate = LocalDate.parse(endDateIso),
+        userModified = userModified,
+        createdAtEpochMillis = createdAtEpochMilli,
+        updatedAtEpochMillis = updatedAtEpochMilli
     )
 }
 
@@ -436,7 +487,25 @@ fun PeriodTime.toEntity() = PeriodTimeEntity(
     periodNo = periodNo,
     startLocalTimeIso = startLocalTime.toString(),
     endLocalTimeIso = endLocalTime.toString(),
-    sectionLabel = sectionLabel
+    sectionLabel = sectionLabel,
+    schemeId = schemeId,
+    termId = termId,
+    validStartDateIso = validStartDate?.toString(),
+    validEndDateIso = validEndDate?.toString(),
+    userModified = userModified,
+    updatedAtEpochMillis = updatedAtEpochMillis
+)
+
+fun PeriodTimeScheme.toEntity() = PeriodTimeSchemeEntity(
+    id = id,
+    termId = termId,
+    timeTableId = timeTableId,
+    name = name,
+    startDateIso = startDate.toString(),
+    endDateIso = endDate.toString(),
+    userModified = userModified,
+    createdAtEpochMilli = createdAtEpochMillis,
+    updatedAtEpochMilli = updatedAtEpochMillis
 )
 
 fun CalendarOverride.toEntity() = CalendarOverrideEntity(

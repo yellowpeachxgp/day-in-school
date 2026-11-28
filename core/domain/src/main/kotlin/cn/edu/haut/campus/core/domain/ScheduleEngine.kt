@@ -25,6 +25,58 @@ import java.time.ZonedDateTime
 object ScheduleEngine {
 
     /**
+     * 按真实日期选择生效节次表：默认参考作息（schemeId=null）始终可用；
+     * 若当天落在某个同学期用户作息方案的闭区间内，则整套切换到该方案，
+     * 不与默认表混排（这样删除节次在方案内也有明确语义）。重叠方案属非法输入；
+     * 对历史/手工损坏数据按生效开始日期、schemeId 确定性选择，绝不随机。
+     */
+    fun periodMapForDate(
+        date: LocalDate,
+        term: Term,
+        periodTimes: List<PeriodTime>
+    ): Map<Int, PeriodTime> {
+        val rowsForTable = periodTimes.filter { it.timeTableId == term.timeTableId }
+        val baseRows = rowsForTable.filter { it.schemeId == null }
+        val activeSchemeRows = rowsForTable.filter { row ->
+            val start = row.validStartDate
+            val end = row.validEndDate
+            row.schemeId != null && row.termId == term.id &&
+                start != null && end != null &&
+                !date.isBefore(start) && !date.isAfter(end)
+        }
+        if (activeSchemeRows.isEmpty()) {
+            return baseRows.associateBy { it.periodNo }
+        }
+        val selectedSchemeId = activeSchemeRows
+            .groupBy { it.schemeId!! }
+            .entries
+            .maxWithOrNull(
+                compareBy<Map.Entry<String, List<PeriodTime>>> { entry ->
+                    entry.value.mapNotNull { it.validStartDate }.maxOrNull()?.toEpochDay() ?: Long.MIN_VALUE
+                }.thenBy { it.key }
+            )
+            ?.key
+        return activeSchemeRows
+            .filter { it.schemeId == selectedSchemeId }
+            .associateBy { it.periodNo }
+    }
+
+    /**
+     * 无单一日期上下文（如「本学期课表依据完整性」）使用的合并视图：
+     * 默认表与全部方案行按节次合并，方案行优先；仅用于存在性/完整性判断，绝不用于某日展开。
+     */
+    fun periodMapAcrossSchemes(
+        term: Term,
+        periodTimes: List<PeriodTime>
+    ): Map<Int, PeriodTime> {
+        val rowsForTable = periodTimes.filter { it.timeTableId == term.timeTableId }
+        val merged = linkedMapOf<Int, PeriodTime>()
+        rowsForTable.filter { it.schemeId == null }.sortedBy { it.periodNo }.forEach { merged[it.periodNo] = it }
+        rowsForTable.filter { it.schemeId != null && it.termId == term.id }.sortedBy { it.periodNo }.forEach { merged[it.periodNo] = it }
+        return merged
+    }
+
+    /**
      * 排课输入「可展开」统一校验（课表展开器与「课表依据」判定共用同一函数，绝不两套口径）：
      * 规则须属于该学期、有课周次与学期有效周范围(1..[termWeekCount])相交、节次区间有效且
      * 课程可解析——跨学期残留、零周次空壳、周次全部越出学期范围、倒序节次或缺课孤儿规则
@@ -134,9 +186,7 @@ object ScheduleEngine {
     ): List<ClassOccurrence> {
         val courseMap = courses.associateBy { it.id }
         val rulesById = rules.associateBy { it.id }
-        val periodMap = periodTimes
-            .filter { it.timeTableId == term.timeTableId }
-            .associateBy { it.periodNo }
+        val periodMap = periodMapForDate(date, term, periodTimes)
         val buildingMap = buildings.associateBy { it.id }
 
         val effectiveDate = TeachingWeekCalculator.resolveDate(date, term, calendarOverrides)
@@ -311,9 +361,7 @@ object ScheduleEngine {
     ): List<ClassOccurrence> {
         val activeTerm = term ?: return emptyList()
         val courseMap = courses.associateBy { it.id }
-        val periodMap = periodTimes
-            .filter { it.timeTableId == activeTerm.timeTableId }
-            .associateBy { it.periodNo }
+        val periodMap = periodMapForDate(date, activeTerm, periodTimes)
         val buildingMap = buildings.associateBy { it.id }
 
         val effectiveDate = TeachingWeekCalculator.resolveDate(date, activeTerm, calendarOverrides)
@@ -771,9 +819,7 @@ object ScheduleEngine {
             null
         }
 
-        val periodMap = periodTimes
-            .filter { it.timeTableId == term.timeTableId }
-            .associateBy { it.periodNo }
+        val periodMap = periodMapForDate(date, term, periodTimes)
 
         val timelineItems = occurrences.map { occ ->
             val topPx = mapTimeToY(occ.startTime, timelineStart, pxPerMinute)
