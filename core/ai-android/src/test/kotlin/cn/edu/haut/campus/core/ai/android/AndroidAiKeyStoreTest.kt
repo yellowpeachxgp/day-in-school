@@ -110,6 +110,29 @@ class AndroidAiKeyStoreTest {
     }
 
     @Test
+    fun ciphertextCopiedIntoAnotherProfileCannotBeReplayed() = runTest {
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("copy-isolation"), keys = fakeKeys)
+        store.put(scope, endpoint, keyCanary().toCharArray())
+        store.put(otherProfileScope, endpoint.copy(model = "chat-other"), "android-test-key-canary-other".toCharArray())
+        val sourceVault = File(store.rootDir, AiByokStorageFormat.scopeStorageKey(scope) + ".vault")
+        val targetVault = File(store.rootDir, AiByokStorageFormat.scopeStorageKey(otherProfileScope) + ".vault")
+        assertTrue(sourceVault.isFile)
+        assertTrue(targetVault.isFile)
+
+        targetVault.writeBytes(sourceVault.readBytes())
+
+        assertEquals("跨 Profile 重放密文必须失败关闭", AiKeyStatus.INVALID, store.status(otherProfileScope).first())
+        assertThrows(AiKeyAccessException::class.java) {
+            kotlinx.coroutines.runBlocking {
+                store.withKeyMaterial(otherProfileScope) { _, _ -> Unit }
+            }
+        }
+        assertEquals("原 Profile 不受重放影响", AiKeyStatus.CONFIGURED, store.status(scope).first())
+        store.wipeAll(scope)
+        store.wipeAll(otherProfileScope)
+    }
+
+    @Test
     fun keyMaterialExistsOnlyInsideCallbackAndArrayIsWipedAfterwards() = runTest {
         val store = AndroidAiKeyStore(context, rootDir = testRoot("wipe"), keys = fakeKeys)
         val canary = keyCanary()
