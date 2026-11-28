@@ -1010,11 +1010,13 @@ class TimetableRepository internal constructor(
         newStartPeriod: Int,
         newEndPeriod: Int,
         newRoom: String,
-        reason: String = "单次调课"
+        reason: String = "单次调课",
+        actor: Actor = Actor.USER,
+        actorDetail: String = "occurrence-single-day-edit"
     ) = writeCourseAggregates(
         courseIdsProvider = { setOf(occ.courseId) },
-        actor = Actor.USER,
-        actorDetail = "occurrence-single-day-edit"
+        actor = actor,
+        actorDetail = actorDetail
     ) {
         occurrenceStore.saveSingleDayOccurrenceEdit(
             occ = occ,
@@ -1037,11 +1039,13 @@ class TimetableRepository internal constructor(
     suspend fun cancelClassOccurrenceOnDate(
         occ: cn.edu.haut.campus.core.model.ClassOccurrence,
         termId: String,
-        reason: String = "单次停课"
+        reason: String = "单次停课",
+        actor: Actor = Actor.USER,
+        actorDetail: String = "occurrence-cancel"
     ) = writeCourseAggregates(
         courseIdsProvider = { setOf(occ.courseId) },
-        actor = Actor.USER,
-        actorDetail = "occurrence-cancel"
+        actor = actor,
+        actorDetail = actorDetail
     ) {
         occurrenceStore.cancelClassOccurrenceOnDate(
             occ = occ,
@@ -1057,11 +1061,13 @@ class TimetableRepository internal constructor(
         newStartPeriod: Int,
         newEndPeriod: Int,
         newRoom: String,
-        reason: String? = null
+        reason: String? = null,
+        actor: Actor = Actor.USER,
+        actorDetail: String = "occurrence-cross-date-reschedule"
     ) = writeCourseAggregates(
         courseIdsProvider = { setOf(occ.courseId) },
-        actor = Actor.USER,
-        actorDetail = "occurrence-cross-date-reschedule"
+        actor = actor,
+        actorDetail = actorDetail
     ) {
         occurrenceStore.rescheduleSingleOccurrenceCrossDate(
             occ = occ,

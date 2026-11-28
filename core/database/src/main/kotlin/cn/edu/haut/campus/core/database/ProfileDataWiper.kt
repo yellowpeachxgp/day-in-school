@@ -38,6 +38,7 @@ class ProfileDataWiper internal constructor(
 ) {
     private val vaultDao = database.vaultDao()
     private val automationDao = database.automationDao()
+    private val inboxDao = database.inboxDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -236,6 +237,8 @@ class ProfileDataWiper internal constructor(
                 automationDao.clearDedupe()
                 automationDao.clearRuns()
                 automationDao.clearRules()
+                inboxDao.clearProposals()
+                inboxDao.clearItems()
             }
         }
         cloudTokenMutex.withLock {
