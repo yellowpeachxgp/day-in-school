@@ -86,8 +86,15 @@ object Json {
     const val MAX_DEPTH: Int = 64
     private const val MAX_NUMBER_LENGTH: Int = 64
 
-    fun parse(text: String): JsonValue {
-        require(text.length <= MAX_INPUT_BYTES) { "JSON 超出允许长度" }
+    fun parse(text: String): JsonValue = parse(text, MAX_INPUT_BYTES)
+
+    /**
+     * 带显式上限的解析入口。默认仍使用 8 MiB 安全上限；备份等专用容器可以在自身
+     * 已限制密文/明文总量的前提下提高上限，调用方不得把它当成无限制解析。
+     */
+    fun parse(text: String, maxInputBytes: Int): JsonValue {
+        require(maxInputBytes > 0) { "JSON 输入上限必须为正" }
+        require(text.length <= maxInputBytes) { "JSON 超出允许长度" }
         return Parser(text).parseDocument()
     }
 
