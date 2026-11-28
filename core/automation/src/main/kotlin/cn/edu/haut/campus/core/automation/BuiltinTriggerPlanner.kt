@@ -89,7 +89,8 @@ object BuiltinTriggerPlanner {
                 PlannedTriggerInstance(
                     ruleId = rule.id,
                     triggerInstanceKey = "before-event/v1/" + rule.id + "/" +
-                        AutomationKeys.sha256Hex(event.id.value).substring(0, 32) + "/" + spec.offset.seconds,
+                        AutomationKeys.sha256Hex(event.id.value).substring(0, 32) + "/" + spec.offset.seconds +
+                        "/" + event.start.epochSecond,
                     fireAt = fireAt,
                     source = SOURCE_BEFORE_EVENT
                 )

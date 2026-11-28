@@ -72,6 +72,7 @@ class BuiltinAutomationRuntimeTest {
         assertEquals(1, planned.size)
         assertEquals(Instant.parse("2026-03-02T05:40:00Z"), planned.single().fireAt)
         assertTrue(planned.single().triggerInstanceKey.startsWith("before-event/v1/" + rule.id + "/"))
+        assertTrue(planned.single().triggerInstanceKey.endsWith("/1200/" + event.start.epochSecond))
         assertFalse(planned.single().triggerInstanceKey.contains(event.id.value))
     }
 
