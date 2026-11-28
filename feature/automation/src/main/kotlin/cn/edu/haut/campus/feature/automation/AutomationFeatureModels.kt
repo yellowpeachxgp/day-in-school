@@ -38,6 +38,8 @@ data class AutomationEditorDraft(
     val eventTypeText: String = "data.stale",
     val thresholdValueText: String = "15",
     val thresholdWater: Boolean = false,
+    val thresholdHysteresisText: String = "1",
+    val thresholdCooldownMinutesText: String = "360",
     val campusIdText: String = "haut-lianhuajie",
     val geofenceEnter: Boolean = true,
     val hasClassToday: Boolean = true,
@@ -67,8 +69,14 @@ data class AutomationEditorDraft(
             return "课前提前分钟必须是 1..720"
         }
         if (triggerChoice == AutomationTriggerChoice.ON_EVENT && eventTypeText.isBlank()) return "请填写事件类型"
-        if (triggerChoice == AutomationTriggerChoice.THRESHOLD && thresholdValueText.toBigDecimalOrNull() == null) {
-            return "水电阈值必须是数字"
+        if (triggerChoice == AutomationTriggerChoice.THRESHOLD) {
+            if (thresholdValueText.toBigDecimalOrNull() == null) return "水电阈值必须是数字"
+            val hysteresis = thresholdHysteresisText.toBigDecimalOrNull()
+            if (hysteresis == null || hysteresis < BigDecimal.ZERO || hysteresis > BigDecimal("100")) {
+                return "滞后带必须是 0..100 表计单位"
+            }
+            val cooldown = thresholdCooldownMinutesText.toIntOrNull()
+            if (cooldown == null || cooldown !in 0..10080) return "冷却期必须是 0..10080 分钟"
         }
         if (campusIdText.isBlank() && (triggerChoice == AutomationTriggerChoice.GEOFENCE || onCampus)) return "请填写校区 ID"
         val commuteMaxMinutes = commuteMaxMinutesText.toIntOrNull()
@@ -114,7 +122,9 @@ data class AutomationEditorDraft(
                 }
             ),
             op = CompareOp.LESS_THAN,
-            value = BigDecimal(thresholdValueText).movePointRight(2)
+            value = BigDecimal(thresholdValueText).movePointRight(2),
+            hysteresis = BigDecimal(thresholdHysteresisText).movePointRight(2),
+            cooldown = Duration.ofMinutes(thresholdCooldownMinutesText.toLong())
         )
         AutomationTriggerChoice.GEOFENCE -> TriggerSpec.Geofence(
             campusId = CampusId(campusIdText.trim()),

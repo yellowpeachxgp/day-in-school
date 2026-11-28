@@ -10,6 +10,9 @@ import cn.edu.haut.campus.core.automation.AutomationExtensionRegistry
 import cn.edu.haut.campus.core.automation.AutomationRule
 import cn.edu.haut.campus.core.automation.AutomationRun
 import cn.edu.haut.campus.core.automation.AutomationRunStore
+import cn.edu.haut.campus.core.automation.AutomationDedupeRecord
+import cn.edu.haut.campus.core.automation.AutomationKeys
+import cn.edu.haut.campus.core.automation.DomainEventTriggerSupport
 import cn.edu.haut.campus.core.automation.BuiltinAutomationTypes
 import cn.edu.haut.campus.core.automation.BuiltinTriggerPlanner
 import cn.edu.haut.campus.core.automation.CompareOp
@@ -137,6 +140,127 @@ class AutomationOutboxProcessorTest {
     }
 
     @Test
+    fun pendingLeaseWithoutRunIsNotAckedAndRecoversAfterExpiry() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val action = RecordingAction()
+        val ruleStore = RoomAutomationRuleStore(database, scope)
+        val rule = AutomationRule(
+            id = "pending-lease-rule",
+            scope = scope,
+            name = "lease 恢复",
+            enabled = true,
+            trigger = TriggerSpec.Threshold(
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS),
+                op = CompareOp.LESS_THAN,
+                value = BigDecimal("2000"),
+                cooldown = Duration.ZERO
+            ),
+            conditions = emptyList(),
+            actions = listOf(ActionSpec("test.action"))
+        )
+        ruleStore.upsert(rule)
+        val registry = AutomationExtensionRegistry()
+        builtinTriggerProviders().forEach(registry::registerTriggerProvider)
+        registry.registerActionExecutor(action)
+        val clock = MutableClock(now)
+        val dedupeStore = RoomAutomationDedupeStore(database)
+        val engine = DefaultAutomationEngine(
+            ruleStore = ruleStore,
+            runStore = RoomAutomationRunStore(database),
+            dedupeStore = dedupeStore,
+            registry = registry,
+            clock = clock,
+            checkpointStore = RoomAutomationActionCheckpointStore(database),
+            pendingLease = Duration.ofSeconds(30),
+            leaseRenewalInterval = Duration.ofSeconds(5)
+        )
+        val event = utilityEvent()
+        outbox.append(DomainEventCodecRegistry.DEFAULT.encode(event))
+        val triggerKey = DomainEventTriggerSupport.triggerInstanceKey(event)
+        dedupeStore.tryAcquire(
+            AutomationDedupeRecord(
+                dedupeKey = AutomationKeys.dedupeKey(rule.id, triggerKey, rule.dedupe, event.occurredAt),
+                ruleId = rule.id,
+                triggerInstanceKey = triggerKey,
+                runId = AutomationKeys.runId(rule.id, triggerKey),
+                executionOwner = "crashed-owner",
+                acquiredAt = now,
+                policyFingerprint = AutomationKeys.policyFingerprint(rule.dedupe),
+                leaseExpiresAt = now.plusSeconds(30)
+            )
+        )
+        val processor = AutomationOutboxProcessor(
+            outbox,
+            ruleStore,
+            engine,
+            utilitySamplesProvider = { RoomUtilityBalanceHistoryProvider(database, scope).samples() },
+            clock = clock::instant
+        )
+
+        val first = runCatching { processor.consumeOnce() }
+
+        assertTrue(first.isFailure)
+        assertEquals("未过期 PENDING 无 run 只能等待恢复，不得执行也不得 ack", 0, action.calls.size)
+        assertEquals(1, outbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
+
+        clock.advance(Duration.ofSeconds(31))
+        val consumed = processor.consumeOnce()
+
+        assertEquals(1, consumed)
+        assertEquals(1, action.calls.size)
+        assertEquals(0, outbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
+    }
+
+    @Test
+    fun consecutiveBelowThresholdSamplesDoNotRetriggerWhenHistoryIsAvailable() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val action = RecordingAction()
+        val ruleStore = RoomAutomationRuleStore(database, scope)
+        val rule = AutomationRule(
+            id = "threshold-edge-rule",
+            scope = scope,
+            name = "阈值进入边沿",
+            enabled = true,
+            trigger = TriggerSpec.Threshold(
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS),
+                op = CompareOp.LESS_THAN,
+                value = BigDecimal("2000"),
+                hysteresis = BigDecimal("100"),
+                cooldown = Duration.ZERO
+            ),
+            conditions = emptyList(),
+            actions = listOf(ActionSpec("test.action"))
+        )
+        ruleStore.upsert(rule)
+        val registry = AutomationExtensionRegistry()
+        builtinTriggerProviders().forEach(registry::registerTriggerProvider)
+        registry.registerActionExecutor(action)
+        val engine = DefaultAutomationEngine(
+            ruleStore = ruleStore,
+            runStore = RoomAutomationRunStore(database),
+            dedupeStore = RoomAutomationDedupeStore(database),
+            registry = registry,
+            checkpointStore = RoomAutomationActionCheckpointStore(database)
+        )
+        val processor = AutomationOutboxProcessor(
+            outbox,
+            ruleStore,
+            engine,
+            utilitySamplesProvider = { RoomUtilityBalanceHistoryProvider(database, scope).samples() }
+        )
+
+        outbox.append(DomainEventCodecRegistry.DEFAULT.encode(utilityEvent("low-1", 1999, now)))
+        assertEquals(1, processor.consumeOnce())
+        assertEquals(1, action.calls.size)
+
+        outbox.append(DomainEventCodecRegistry.DEFAULT.encode(utilityEvent("low-2", 1998, now.plusSeconds(60))))
+        assertEquals(1, processor.consumeOnce())
+
+        assertEquals("持续低于阈值只允许进入边沿触发一次", 1, action.calls.size)
+        assertEquals(0, outbox.unackedCount(AutomationRuntime.CONSUMER_GROUP))
+    }
+
+    @Test
     fun automationGeneratedVaultEventIsAckedWithoutTriggeringFeedbackLoop() = runBlocking {
         val outbox = RoomEventOutbox(database)
         val action = RecordingAction()
@@ -230,12 +354,16 @@ class AutomationOutboxProcessorTest {
         assertEquals(1, database.automationDao().countRuns())
     }
 
-    private fun utilityEvent(): DomainEvent.UtilityBalanceSampled = DomainEvent.UtilityBalanceSampled(
-        eventId = "utility-low-event",
+    private fun utilityEvent(
+        eventId: String = "utility-low-event",
+        balanceCents: Long = 1999L,
+        occurredAt: Instant = now
+    ): DomainEvent.UtilityBalanceSampled = DomainEvent.UtilityBalanceSampled(
+        eventId = eventId,
         scope = scope,
-        occurredAt = now,
+        occurredAt = occurredAt,
         meterRef = EntityRef(EntityType.UTILITY_METER, "online/electricity/meter-1", scope),
-        balanceCents = 1999L,
+        balanceCents = balanceCents,
         estimatedDaysLeft = 1.5,
         provenance = DataProvenance(
             providerId = "test.utility",
@@ -243,7 +371,7 @@ class AutomationOutboxProcessorTest {
             accountId = scope.accountId,
             sourceSystem = "test-fixture",
             sourceRecordId = "meter-1",
-            fetchedAt = now,
+            fetchedAt = occurredAt,
             completeness = SnapshotCompleteness.COMPLETE,
             trust = VerificationLevel.MOCK_TESTED
         )

@@ -19,6 +19,19 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.vault.RoomEventOutbox
 import java.time.Instant
 
+object CoarseGeofencePolicy {
+    private val MAX_SAMPLE_AGE: java.time.Duration = java.time.Duration.ofHours(2)
+    private const val MAX_ACCURACY_METERS = 1000f
+
+    /** 发射回执与条件求值共用同一新鲜度/精度门禁；无精度或超龄位置一律不可用。 */
+    fun isUsable(locationTimeEpochMs: Long, accuracyMeters: Float?, now: Instant): Boolean {
+        val accuracy = accuracyMeters ?: return false
+        if (!accuracy.isFinite() || accuracy < 0f || accuracy > MAX_ACCURACY_METERS) return false
+        val sampledAt = Instant.ofEpochMilli(locationTimeEpochMs)
+        return java.time.Duration.between(sampledAt, now).abs() <= MAX_SAMPLE_AGE
+    }
+}
+
 /**
  * 低频率粗定位围栏采样器。只在使用 WorkManager/闹钟批量唤醒时读取 lastKnownLocation，
  * 不注册常驻定位监听；跨边界事实写入 domain_outbox，进程死亡后由 outbox 消费补处理。
@@ -34,8 +47,8 @@ class CoarseGeofenceMonitor(
 
     suspend fun sampleAndPublish(): Int {
         val location = bestCoarseLocation() ?: return 0
-        if (location.hasAccuracy() && location.accuracy > MAX_EMIT_ACCURACY_METERS) return 0
         val now = clock()
+        if (!CoarseGeofencePolicy.isUsable(location.time, location.takeIf { it.hasAccuracy() }?.accuracy, now)) return 0
         val transitions = existingGeofenceTransitions()
         var published = 0
         for ((campusId, polygon) in CAMPUS_POLYGONS) {
@@ -63,9 +76,8 @@ class CoarseGeofenceMonitor(
     override suspend fun currentPresence(scope: SchoolAccountScope, now: Instant): CampusPresence? {
         require(scope == this.scope) { "粗定位在校状态 scope 不一致" }
         val location = bestCoarseLocation() ?: return null
-        if (!location.hasAccuracy() || location.accuracy > MAX_QUERY_ACCURACY_METERS) return null
         val sampledAt = Instant.ofEpochMilli(location.time)
-        if (java.time.Duration.between(sampledAt, now).abs() > MAX_SAMPLE_AGE) return null
+        if (!CoarseGeofencePolicy.isUsable(location.time, location.accuracy, now)) return null
         val insideCampus = CAMPUS_POLYGONS.entries.firstOrNull { (_, polygon) ->
             pointInPolygon(location.latitude, location.longitude, polygon)
         }?.key
@@ -119,10 +131,6 @@ class CoarseGeofenceMonitor(
     }
 
     companion object {
-        private val MAX_SAMPLE_AGE: java.time.Duration = java.time.Duration.ofHours(2)
-        private const val MAX_QUERY_ACCURACY_METERS = 1000f
-        private const val MAX_EMIT_ACCURACY_METERS = 1500f
-
         /** W2-02 首期内置粗围栏；地点精度只到校区级，绝不请求或保存精确轨迹。 */
         val CAMPUS_POLYGONS: Map<CampusId, List<GeoPoint>> = linkedMapOf(
             CampusId("haut-lianhuajie") to ClassroomBuildingResolver.HAUT_LIANHUAJIE_POLYGON,

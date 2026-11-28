@@ -60,6 +60,21 @@ class BuiltinAutomationRuntimeTest {
     }
 
     @Test
+    fun missedAtTimeWithinLookbehindIsPlannedForRecovery() {
+        val rule = AutomationTestFixtures.rule(
+            trigger = TriggerSpec.AtTime(
+                local = LocalTime.of(7, 30),
+                days = setOf(DayOfWeek.MONDAY)
+            )
+        )
+
+        val planned = BuiltinTriggerPlanner.planAtTime(rule, now, zone, Duration.ofHours(6), Duration.ofHours(1))
+
+        assertTrue("闹钟/重启后的短窗口补处理必须把 fireAt<=now 的实例纳入 due", planned.isNotEmpty())
+        assertEquals(Instant.parse("2026-03-01T23:30:00Z"), planned.first().fireAt)
+    }
+
+    @Test
     fun beforeEventPlannerUsesTimelineStartMinusOffsetAndStableDigestKey() = runTest {
         val event = timelineEvent(start = Instant.parse("2026-03-02T06:00:00Z"))
         val service = StaticTimelineService(listOf(event))
@@ -74,6 +89,60 @@ class BuiltinAutomationRuntimeTest {
         assertTrue(planned.single().triggerInstanceKey.startsWith("before-event/v1/" + rule.id + "/"))
         assertTrue(planned.single().triggerInstanceKey.endsWith("/1200/" + event.start.epochSecond))
         assertFalse(planned.single().triggerInstanceKey.contains(event.id.value))
+    }
+
+    @Test
+    fun missedBeforeEventWithinLookbehindIsPlannedForRecovery() = runTest {
+        val recoveryNow = Instant.parse("2026-03-02T01:00:00Z")
+        val event = timelineEvent(start = Instant.parse("2026-03-02T00:40:00Z"))
+        val service = StaticTimelineService(listOf(event))
+        val rule = AutomationTestFixtures.rule(
+            trigger = TriggerSpec.BeforeEvent(setOf(TimelineKind.COURSE), Duration.ofMinutes(20))
+        )
+
+        val planned = BuiltinTriggerPlanner.planBeforeEvent(rule, service, recoveryNow, Duration.ofHours(6), Duration.ofHours(1))
+
+        assertEquals(1, planned.size)
+        assertEquals(Instant.parse("2026-03-02T00:20:00Z"), planned.single().fireAt)
+    }
+
+    @Test
+    fun thresholdUsesEnteringEdgeHysteresisAndCooldown() {
+        val spec = TriggerSpec.Threshold(
+            metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS),
+            op = CompareOp.LESS_THAN,
+            value = BigDecimal("2000"),
+            hysteresis = BigDecimal("100"),
+            cooldown = Duration.ofHours(6)
+        )
+        val rule = AutomationTestFixtures.rule(trigger = spec)
+        val meter = "online/electricity/meter-1"
+        fun sample(id: String, balance: Long, at: Instant) = DomainEvent.UtilityBalanceSampled(
+            eventId = id,
+            scope = scope,
+            occurredAt = at,
+            meterRef = EntityRef(EntityType.UTILITY_METER, meter, scope),
+            balanceCents = balance,
+            estimatedDaysLeft = null,
+            provenance = provenance()
+        )
+        val current = sample("current", 1900, now)
+        val outside = sample("outside", 2100, now.minusSeconds(60))
+        val insideBand = sample("inside-band", 2050, now.minusSeconds(60))
+        val stillBelow = sample("still-below", 1950, now.minusSeconds(60))
+
+        fun evaluate(samples: List<DomainEvent.UtilityBalanceSampled>, last: Instant? = null) =
+            BuiltinTriggerPlanner.instanceForDomainEvent(
+                rule,
+                current,
+                ThresholdEvaluationContext(samples, lastTriggeredAt = last, evaluatedAt = now)
+            )
+
+        assertNotNull(evaluate(listOf(outside)))
+        assertNull("滞后带内不能形成新的进入边沿", evaluate(listOf(insideBand)))
+        assertNull("持续低于阈值不能重复触发", evaluate(listOf(stillBelow)))
+        assertNull("冷却期内不能重新进入", evaluate(listOf(outside), now.minusSeconds(3600)))
+        assertNotNull(evaluate(listOf(outside), now.minusSeconds(7 * 3600)))
     }
 
     @Test

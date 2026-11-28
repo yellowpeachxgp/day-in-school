@@ -365,6 +365,12 @@ private fun TriggerEditorFields(
             ToggleRow("按水表统计（关闭则电表）", draft.thresholdWater) { value ->
                 onDraftChange { it.copy(thresholdWater = value) }
             }
+            AutomationTextField(draft.thresholdHysteresisText, "重新进入滞后带（表计单位）") { value ->
+                onDraftChange { it.copy(thresholdHysteresisText = value.filter { ch -> ch.isDigit() || ch == '.' }.take(6)) }
+            }
+            AutomationTextField(draft.thresholdCooldownMinutesText, "冷却期（分钟）") { value ->
+                onDraftChange { it.copy(thresholdCooldownMinutesText = value.filter(Char::isDigit).take(5)) }
+            }
         }
         AutomationTriggerChoice.GEOFENCE -> ToggleRow("进入校区时触发（关闭则离开时）", draft.geofenceEnter) { value ->
             onDraftChange { it.copy(geofenceEnter = value) }

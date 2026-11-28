@@ -72,6 +72,7 @@ class AutomationRuntime private constructor(
     private val outbox = RoomEventOutbox(database)
     private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope)
     private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope)
+    private val utilityBalanceHistoryProvider = RoomUtilityBalanceHistoryProvider(database, scope)
     private val wakeRunner = ExclusiveWakeRunner()
 
     private val personalEventStore: RoomPersonalEventStore? =
@@ -203,18 +204,20 @@ class AutomationRuntime private constructor(
         outbox = outbox,
         ruleStore = ruleStore,
         engine = engine,
-        consumerGroup = CONSUMER_GROUP
+        consumerGroup = CONSUMER_GROUP,
+        utilitySamplesProvider = { utilityBalanceHistoryProvider.samples() }
     ).consumeOnce()
 
     private suspend fun planEnabledRules(now: Instant): List<Pair<AutomationRule, PlannedTriggerInstance>> {
         val horizon = Duration.ofHours(36)
+        val lookbehind = Duration.ofHours(2)
         return ruleStore.list()
             .filter { it.enabled }
             .flatMap { rule ->
                 when (rule.trigger) {
-                    is TriggerSpec.AtTime -> BuiltinTriggerPlanner.planAtTime(rule, now, repository.timeZone, horizon)
+                    is TriggerSpec.AtTime -> BuiltinTriggerPlanner.planAtTime(rule, now, repository.timeZone, horizon, lookbehind)
                         .map { rule to it }
-                    is TriggerSpec.BeforeEvent -> BuiltinTriggerPlanner.planBeforeEvent(rule, timelineService, now, horizon)
+                    is TriggerSpec.BeforeEvent -> BuiltinTriggerPlanner.planBeforeEvent(rule, timelineService, now, horizon, lookbehind)
                         .map { rule to it }
                     else -> emptyList()
                 }

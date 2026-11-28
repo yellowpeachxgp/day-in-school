@@ -13,6 +13,13 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.flow.first
 
+/** 阈值进入边沿判定上下文。previousSamples 可包含当前事件，实现会按 eventId/meter 排除。 */
+data class ThresholdEvaluationContext(
+    val previousSamples: List<DomainEvent.UtilityBalanceSampled> = emptyList(),
+    val lastTriggeredAt: Instant? = null,
+    val evaluatedAt: Instant
+)
+
 /** 一次由内置时间类触发器规划出的未来唤醒实例。key 不含随机量，重启/补唤醒天然幂等。 */
 data class PlannedTriggerInstance(
     val ruleId: String,
@@ -42,19 +49,23 @@ object BuiltinTriggerPlanner {
         rule: AutomationRule,
         now: Instant,
         zone: ZoneId,
-        horizon: Duration
+        horizon: Duration,
+        lookbehind: Duration = Duration.ZERO
     ): List<PlannedTriggerInstance> {
         val spec = rule.trigger as? TriggerSpec.AtTime ?: return emptyList()
         require(!horizon.isZero && !horizon.isNegative) { "规划 horizon 必须为正时长" }
+        require(!lookbehind.isNegative) { "补处理 lookbehind 不能为负" }
         val end = now.plus(horizon)
-        val startDate = now.atZone(zone).toLocalDate()
-        val days = horizon.toDays().coerceAtLeast(1L) + 2L
+        val startDate = now.minus(lookbehind).atZone(zone).toLocalDate()
+        val days = horizon.toDays().coerceAtLeast(1L) + lookbehind.toDays().coerceAtLeast(0L) + 3L
         val out = ArrayList<PlannedTriggerInstance>()
         for (offset in 0..days) {
             val date = startDate.plusDays(offset)
             if (date.dayOfWeek !in spec.days) continue
             val fireAt = date.atTime(spec.local).atZone(zone).toInstant()
-            if (!fireAt.isAfter(now) || !fireAt.isBefore(end)) continue
+            val inFutureWindow = fireAt.isAfter(now) && fireAt.isBefore(end)
+            val inMissedWindow = !lookbehind.isZero && !fireAt.isAfter(now) && !fireAt.isBefore(now.minus(lookbehind))
+            if (!inFutureWindow && !inMissedWindow) continue
             val localKey = date.atTime(spec.local).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
             out += PlannedTriggerInstance(
                 ruleId = rule.id,
@@ -71,12 +82,14 @@ object BuiltinTriggerPlanner {
         rule: AutomationRule,
         timelineService: TimelineService?,
         now: Instant,
-        horizon: Duration
+        horizon: Duration,
+        lookbehind: Duration = Duration.ZERO
     ): List<PlannedTriggerInstance> {
         val spec = rule.trigger as? TriggerSpec.BeforeEvent ?: return emptyList()
         val service = timelineService ?: return emptyList()
         require(!horizon.isZero && !horizon.isNegative) { "规划 horizon 必须为正时长" }
-        val window = TimeWindow(now, now.plus(horizon).plus(spec.offset))
+        require(!lookbehind.isNegative) { "补处理 lookbehind 不能为负" }
+        val window = TimeWindow(now.minus(lookbehind), now.plus(horizon).plus(spec.offset))
         val events = runCatching {
             service.observe(rule.scope, window, TimelineFilter(kinds = spec.kinds)).first()
         }.getOrElse { return emptyList() }
@@ -85,7 +98,9 @@ object BuiltinTriggerPlanner {
             .filter { it.timeSemantics != TimelineTimeSemantics.UNCERTAIN }
             .mapNotNull { event ->
                 val fireAt = event.start.minus(spec.offset)
-                if (!fireAt.isAfter(now) || !fireAt.isBefore(now.plus(horizon))) return@mapNotNull null
+                val inFutureWindow = fireAt.isAfter(now) && fireAt.isBefore(now.plus(horizon))
+                val inMissedWindow = !lookbehind.isZero && !fireAt.isAfter(now) && !fireAt.isBefore(now.minus(lookbehind))
+                if (!inFutureWindow && !inMissedWindow) return@mapNotNull null
                 PlannedTriggerInstance(
                     ruleId = rule.id,
                     triggerInstanceKey = "before-event/v1/" + rule.id + "/" +
@@ -102,11 +117,15 @@ object BuiltinTriggerPlanner {
     }
 
     /** 把 outbox 事件映射成规则触发实例；不匹配返回 null。scope 不符也返回 null，由消费者按账号库隔离。 */
-    fun instanceForDomainEvent(rule: AutomationRule, event: DomainEvent): TriggerInstance? {
+    fun instanceForDomainEvent(
+        rule: AutomationRule,
+        event: DomainEvent,
+        thresholdContext: ThresholdEvaluationContext? = null
+    ): TriggerInstance? {
         if (event.scope != rule.scope) return null
         val matches = when (val trigger = rule.trigger) {
             is TriggerSpec.OnEvent -> DomainEventTriggerSupport.matches(trigger, event)
-            is TriggerSpec.Threshold -> thresholdMatches(trigger, event)
+            is TriggerSpec.Threshold -> thresholdMatches(trigger, event, thresholdContext)
             is TriggerSpec.Geofence -> geofenceMatches(trigger, event)
             else -> false
         }
@@ -114,7 +133,11 @@ object BuiltinTriggerPlanner {
         return DomainEventTriggerSupport.triggerInstance(rule.id, event)
     }
 
-    private fun thresholdMatches(spec: TriggerSpec.Threshold, event: DomainEvent): Boolean {
+    private fun thresholdMatches(
+        spec: TriggerSpec.Threshold,
+        event: DomainEvent,
+        evaluationContext: ThresholdEvaluationContext?
+    ): Boolean {
         val sampled = event as? DomainEvent.UtilityBalanceSampled ?: return false
         val requiredMeterPrefix = when (spec.metric.value) {
             BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS -> "online/electricity/"
@@ -122,7 +145,28 @@ object BuiltinTriggerPlanner {
             else -> return false
         }
         if (!sampled.meterRef.id.startsWith(requiredMeterPrefix)) return false
-        return compare(BigDecimal.valueOf(sampled.balanceCents), spec.op, spec.value)
+        val context = evaluationContext ?: ThresholdEvaluationContext(evaluatedAt = sampled.occurredAt)
+        if (!spec.cooldown.isZero) {
+            val lastTriggeredAt = context.lastTriggeredAt
+            if (lastTriggeredAt != null && context.evaluatedAt.isBefore(lastTriggeredAt.plus(spec.cooldown))) {
+                return false
+            }
+        }
+        val current = BigDecimal.valueOf(sampled.balanceCents)
+        if (!compare(current, spec.op, spec.value)) return false
+        val previous = context.previousSamples
+            .filter { it.meterRef.id == sampled.meterRef.id && it.eventId != sampled.eventId && !it.occurredAt.isAfter(sampled.occurredAt) }
+            .maxByOrNull { it.occurredAt }
+            ?: return true
+        val previousValue = BigDecimal.valueOf(previous.balanceCents)
+        return when (spec.op) {
+            CompareOp.LESS_THAN -> previousValue >= spec.value.add(spec.hysteresis)
+            CompareOp.LESS_OR_EQUAL -> previousValue > spec.value.add(spec.hysteresis)
+            CompareOp.GREATER_THAN -> previousValue <= spec.value.subtract(spec.hysteresis)
+            CompareOp.GREATER_OR_EQUAL -> previousValue < spec.value.subtract(spec.hysteresis)
+            CompareOp.EQUAL,
+            CompareOp.NOT_EQUAL -> !compare(previousValue, spec.op, spec.value)
+        }
     }
 
     private fun geofenceMatches(spec: TriggerSpec.Geofence, event: DomainEvent): Boolean {

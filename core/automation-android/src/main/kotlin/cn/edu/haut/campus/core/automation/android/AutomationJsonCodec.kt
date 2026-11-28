@@ -151,7 +151,9 @@ object AutomationJsonCodec {
             "type" to str(trigger.type),
             "metric" to str(trigger.metric.value),
             "op" to str(trigger.op.name),
-            "value" to str(trigger.value.toPlainString())
+            "value" to str(trigger.value.toPlainString()),
+            "hysteresis" to str(trigger.hysteresis.toPlainString()),
+            "cooldownSeconds" to num(trigger.cooldown.seconds.toString())
         )
         is TriggerSpec.Geofence -> obj(
             "type" to str(trigger.type),
@@ -188,7 +190,10 @@ object AutomationJsonCodec {
         TriggerSpec.Threshold.TYPE -> TriggerSpec.Threshold(
             metric = MetricRef(node.reqString("metric")),
             op = CompareOp.valueOf(node.reqString("op")),
-            value = BigDecimal(node.reqString("value"))
+            value = BigDecimal(node.reqString("value")),
+            hysteresis = node.optString("hysteresis")?.let(::BigDecimal)
+                ?: TriggerSpec.Threshold.DEFAULT_THRESHOLD_HYSTERESIS_CENTIUNITS,
+            cooldown = Duration.ofSeconds(node.optLong("cooldownSeconds") ?: TriggerSpec.Threshold.DEFAULT_THRESHOLD_COOLDOWN.seconds)
         )
         TriggerSpec.Geofence.TYPE -> TriggerSpec.Geofence(
             campusId = CampusId(node.reqString("campusId")),
@@ -345,6 +350,7 @@ object AutomationJsonCodec {
         ?: throw IllegalArgumentException("automation JSON 字段必须是 array: " + key)
     private fun JsonValue.Obj.reqLong(key: String): Long = (req(key) as? JsonValue.Num)?.literal?.toLong()
         ?: throw IllegalArgumentException("automation JSON 字段必须是 number: " + key)
+    private fun JsonValue.Obj.optLong(key: String): Long? = (fields[key] as? JsonValue.Num)?.literal?.toLong()
     private fun JsonValue.asString(): String = stringOrNull()
         ?: throw IllegalArgumentException("automation JSON 值必须是 string")
 }

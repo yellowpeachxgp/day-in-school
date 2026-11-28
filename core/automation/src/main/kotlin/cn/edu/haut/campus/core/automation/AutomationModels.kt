@@ -96,11 +96,26 @@ sealed interface TriggerSpec {
     data class Threshold(
         val metric: MetricRef,
         val op: CompareOp,
-        val value: BigDecimal
+        val value: BigDecimal,
+        val hysteresis: BigDecimal = DEFAULT_THRESHOLD_HYSTERESIS_CENTIUNITS,
+        val cooldown: Duration = DEFAULT_THRESHOLD_COOLDOWN
     ) : TriggerSpec {
         override val type: String get() = TYPE
 
-        companion object { const val TYPE: String = "core.threshold" }
+        init {
+            require(hysteresis >= BigDecimal.ZERO) { "Threshold.hysteresis 不能为负" }
+            require(!cooldown.isNegative) { "Threshold.cooldown 不能为负" }
+        }
+
+        companion object {
+            const val TYPE: String = "core.threshold"
+
+            /** 默认 1 个原生单位（存储为百分之一单位）滞后带，避免阈值附近抖动反复进入。 */
+            val DEFAULT_THRESHOLD_HYSTERESIS_CENTIUNITS: BigDecimal = BigDecimal("100")
+
+            /** 默认 6 小时冷却期；调用方可显式缩短或置零。 */
+            val DEFAULT_THRESHOLD_COOLDOWN: Duration = Duration.ofHours(6)
+        }
     }
 
     data class Geofence(

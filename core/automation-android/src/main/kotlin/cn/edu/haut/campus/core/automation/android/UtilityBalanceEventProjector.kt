@@ -24,6 +24,26 @@ import java.time.Instant
  * 绝不按未知电价/水价伪造成货币金额。手工表计单位未纳入统一 metric，绝不猜测。
  * 同一表计余额未变化时不重复发事件，变化事件由 outbox at-least-once 驱动阈值规则。
  */
+/** 从 domain_outbox 还原同一账号的水电采样历史，供阈值进入边沿判断。 */
+class RoomUtilityBalanceHistoryProvider(
+    private val database: HautDatabase,
+    private val scope: SchoolAccountScope
+) {
+    private val codecRegistry = DomainEventCodecRegistry.DEFAULT
+
+    suspend fun samples(): List<DomainEvent.UtilityBalanceSampled> =
+        database.vaultDao().getOutboxSnapshot().mapNotNull { row ->
+            if (row.eventType != "utility.balance.sampled") return@mapNotNull null
+            runCatching {
+                codecRegistry.decode(
+                    cn.edu.haut.campus.core.events.CanonicalEventEnvelopeCodec.decode(
+                        cn.edu.haut.campus.core.events.CanonicalJson.of(row.envelopeJson)
+                    )
+                ) as? DomainEvent.UtilityBalanceSampled
+            }.getOrNull()?.takeIf { it.scope == scope }
+        }
+}
+
 class UtilityBalanceEventProjector(
     private val database: HautDatabase,
     private val scope: SchoolAccountScope,
