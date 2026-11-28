@@ -240,35 +240,79 @@ object DegreeAuditor {
             }
         }
 
+        /**
+         * 链式端点是否可能指向同一课程。名称必须一致；两侧都有显式 code 时，
+         * 不同 code 是硬冲突。只有一侧缺 code 时，另一侧可为其提供更精确身份。
+         */
         fun refsChainMatch(source: PlanCourseRef, target: PlanCourseRef): Boolean {
+            if (normalize(source.name) != normalize(target.name)) return false
             val sourceCode = normalizedNonBlank(source.code)
             val targetCode = normalizedNonBlank(target.code)
-            return if (sourceCode != null) {
-                targetCode != null && sourceCode == targetCode
-            } else {
-                normalize(source.name) == normalize(target.name)
+            if (sourceCode != null && targetCode != null) return sourceCode == targetCode
+            return true
+        }
+
+        // 先在全量有向端点图上找循环。改名链本身按声明顺序前进，但互为前后端点的
+        // 循环无论在文件中谁先谁后都自相矛盾；涉及循环的规则不得吞并不同课程。
+        val renameAdjacency = plan.renames.mapIndexed { index, rule ->
+            val target = effectiveTargetRef(rule)
+            index to plan.renames.mapIndexedNotNull { candidateIndex, candidate ->
+                // 单条规则端点重叠只表示 code/title 可能互相精化，不能当作一条回边；
+                // 循环必须由另一条改名规则参与。
+                if (candidateIndex != index && target != null && refsChainMatch(candidate.was, target)) candidateIndex else null
             }
+        }.toMap()
+        val cyclicRuleIndexes = mutableSetOf<Int>()
+        fun hasRenamePath(from: Int, to: Int): Boolean {
+            val visiting = mutableSetOf<Int>()
+            fun dfs(node: Int): Boolean {
+                if (node == to) return true
+                if (!visiting.add(node)) return false
+                return renameAdjacency[node].orEmpty().any { next -> dfs(next) }
+            }
+            return dfs(from)
+        }
+        plan.renames.indices.forEach { index ->
+            val participatesInCycle = renameAdjacency[index].orEmpty().any { next ->
+                hasRenamePath(next, index)
+            }
+            if (participatesInCycle) cyclicRuleIndexes += index
         }
 
         /**
-         * 沿声明顺序把 A→B、B→C 解析到末端。只允许向后链接：较早的 broad/name-only
-         * 规则不能反向吞掉较晚的显式 code 改名；目标码歧义、链分叉或循环时保守禁用改名。
+         * 沿声明顺序把 A→B、B→C 解析到末端。候选链若回碰之前端点，说明它是
+         * 循环或覆盖原起点的 broad/name-only 规则，而不是课程身份的继续前进；
+         * 目标码歧义、链分叉或这种回碰都保守禁用本次改名解析。
          */
         fun terminalRename(initial: CourseRename): CourseRename? {
             var currentIndex = plan.renames.indexOf(initial)
-            if (currentIndex < 0) return null
-            val visitedIndexes = mutableSetOf<Int>()
-            while (visitedIndexes.add(currentIndex)) {
-                val current = plan.renames[currentIndex]
-                val currentTarget = effectiveTargetRef(current) ?: return null
+            if (currentIndex < 0 || currentIndex in cyclicRuleIndexes) return null
+            var current = plan.renames[currentIndex]
+            var currentTarget = effectiveTargetRef(current) ?: return null
+            val priorEndpoints = mutableListOf(initial.was)
+            while (true) {
                 val nextIndexes = plan.renames.mapIndexedNotNull { index, candidate ->
                     if (index > currentIndex && refsChainMatch(candidate.was, currentTarget)) index else null
                 }
                 if (nextIndexes.size > 1) return null
                 val nextIndex = nextIndexes.singleOrNull() ?: return current
+                val candidate = plan.renames[nextIndex]
+                val candidateTarget = effectiveTargetRef(candidate) ?: return null
+                val sourceTouchesEarlierEndpoint = priorEndpoints.any { prior ->
+                    refsChainMatch(candidate.was, prior)
+                }
+                val targetTouchesEarlierEndpoint = priorEndpoints.any { prior ->
+                    refsChainMatch(candidateTarget, prior)
+                }
+                // 回到先前目标端点是循环，必须让本轮改名整体失效；候选 source 只是
+                // 覆盖原起点的 broad 规则时则不是前进链，保留当前更精确目标并停止。
+                if (targetTouchesEarlierEndpoint) return null
+                if (sourceTouchesEarlierEndpoint) return current
+                priorEndpoints += currentTarget
                 currentIndex = nextIndex
+                current = candidate
+                currentTarget = candidateTarget
             }
-            return null
         }
 
         /**

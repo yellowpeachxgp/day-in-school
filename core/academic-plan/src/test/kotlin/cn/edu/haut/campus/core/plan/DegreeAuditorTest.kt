@@ -851,4 +851,104 @@ class DegreeAuditorTest {
         assertEquals("同名不同码不得抵扣父组显式 code 课程", listOf("P1"), parentProgress.pendingCourses.map { it.code })
     }
 
+    @Test
+    fun laterBroadNameOnlyRuleDoesNotOverrideSameTitleCodedRename() {
+        val group = PlanFixtures.group(
+            id = "g-broad-later-rename",
+            credits = "3",
+            courses = listOf(PlanCourseRef("HIST201", "Survey")),
+            title = "后置宽泛改名组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef("HIST101", "Survey"),
+                    now = PlanCourseRef("HIST201", "Survey")
+                ),
+                CourseRename(
+                    was = PlanCourseRef(null, "Survey"),
+                    now = PlanCourseRef("NAMEONLY", "Survey Renamed")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("HIST101", name = "Survey", credits = "3", id = "same-title-coded-pass")),
+            emptyList(),
+            now
+        )
+        PlanFixtures.assertAmount("3", report.groupById("g-broad-later-rename")!!.earnedCredits)
+        assertTrue(report.representativeAttemptIds.containsKey("HIST201"))
+        assertTrue(report.unclassified.isEmpty())
+    }
+
+    @Test
+    fun renameChainUsesCodedSuccessorForUncodedIntermediate() {
+        val group = PlanFixtures.group(
+            id = "g-chain-uncoded-intermediate",
+            credits = "3",
+            courses = listOf(PlanCourseRef("C301", "Final Name")),
+            title = "缺中间码链式组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef("C101", "Original Name"),
+                    now = PlanCourseRef(null, "Intermediate Name")
+                ),
+                CourseRename(
+                    was = PlanCourseRef("C201", "Intermediate Name"),
+                    now = PlanCourseRef("C301", "Final Name")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("C101", name = "Original Name", credits = "3", id = "uncoded-chain-original")),
+            emptyList(),
+            now
+        )
+        PlanFixtures.assertAmount("3", report.groupById("g-chain-uncoded-intermediate")!!.earnedCredits)
+        assertTrue(report.representativeAttemptIds.containsKey("C301"))
+        assertTrue(report.unclassified.isEmpty())
+    }
+
+    @Test
+    fun reciprocalRenameCycleIsDisabledAndBothCodedCoursesKeepCredit() {
+        val group = PlanFixtures.group(
+            id = "g-reciprocal-rename",
+            credits = "6",
+            courses = listOf(
+                PlanCourseRef("A101", "Algebra"),
+                PlanCourseRef("B101", "Biology")
+            ),
+            title = "循环改名组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef("A101", "Algebra"),
+                    now = PlanCourseRef("B101", "Biology")
+                ),
+                CourseRename(
+                    was = PlanCourseRef("B101", "Biology"),
+                    now = PlanCourseRef("A101", "Algebra")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("A101", name = "Algebra", credits = "3", id = "algebra-pass"),
+                PlanFixtures.attempt("B101", name = "Biology", credits = "3", id = "biology-pass")
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-reciprocal-rename")!!
+        PlanFixtures.assertAmount("6", progress.earnedCredits, "循环改名必须禁用而不是把两门课合并成一门")
+        assertEquals(2, progress.assignedCourses.size)
+        PlanFixtures.assertAmount("6", report.totalEarnedCredits)
+    }
+
 }
