@@ -2,6 +2,8 @@ package cn.edu.haut.campus.core.packages.datapack
 
 import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.JsonValue
+import cn.edu.haut.campus.core.packages.PackageError
+import cn.edu.haut.campus.core.packages.PackageException
 import cn.edu.haut.campus.core.packages.crypto.Ed25519
 import cn.edu.haut.campus.core.packages.v2.ExtensionPublicKeyCodec
 import java.nio.charset.StandardCharsets
@@ -105,7 +107,8 @@ object DisDatapackSignature {
     ): DataPackSignatureVerification {
         validateShape(signature)
         val publicKey = trustRoot.keyForFingerprint(signature.publicKeyFingerprint)
-            ?: throw datapackSignatureInvalid(
+            ?: throw PackageException(
+                PackageError.SIGNATURE_UNTRUSTED_PUBLISHER,
                 "dis-datapack/v1 签名者不在固定发布者信任根中",
                 RUNTIME_DATAPACK_UNTRUSTED_SIGNER
             )

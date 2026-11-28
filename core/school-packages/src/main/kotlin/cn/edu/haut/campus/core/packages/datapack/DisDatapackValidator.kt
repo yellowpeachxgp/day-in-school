@@ -9,6 +9,14 @@ private val VERSION_PATTERN = Regex("^(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})\
 private val MAINTAINER_PATTERN = Regex("^[a-z0-9-]+:[^\\s]+$")
 private val ITEM_ID_PATTERN = Regex("^[a-z0-9][a-z0-9._/-]{0,119}$")
 private val TIME_PATTERN = Regex("^([01][0-9]|2[0-3]):[0-5][0-9]$")
+private val DATAPACK_VERIFICATION_LEVELS = setOf(
+    "UNVERIFIED",
+    "SOURCE_CONFIRMED",
+    "MOCK_TESTED",
+    "DEVICE_TESTED",
+    "SCHOOL_VERIFIED",
+    "DISTRIBUTION_READY"
+)
 
 private data class BaseItemFields(
     val id: String,
@@ -55,7 +63,7 @@ object DisDatapackValidator {
     }
 
     private fun parseVerificationLevel(value: JsonValue?, path: String): VerificationLevel {
-        val raw = expectEnumWireValue(value, path, VerificationLevel.entries.map { it.name }.toSet())
+        val raw = expectEnumWireValue(value, path, DATAPACK_VERIFICATION_LEVELS)
         return VerificationLevel.valueOf(raw)
     }
 
