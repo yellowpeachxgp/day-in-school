@@ -75,5 +75,5 @@ class AutomationOutboxProcessor(
     }
 
     private suspend fun latestRunStartedAt(ruleId: String): Instant? =
-        engine.runs(ruleId).first().firstOrNull { !it.dryRun }?.startedAt
+        engine.runs(ruleId).first().filter { !it.dryRun }.maxByOrNull { it.startedAt }?.startedAt
 }
