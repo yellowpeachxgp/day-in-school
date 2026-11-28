@@ -12,17 +12,39 @@ import java.nio.file.StandardCopyOption
 import java.nio.file.FileVisitResult
 import java.nio.file.attribute.BasicFileAttributes
 import java.util.concurrent.ConcurrentHashMap
+import java.util.stream.Collectors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+/** 当前云身份在缓存键中的最小事实。原始 cloudUserId 只参与进程内哈希键材料，不写入缓存文件。 */
+data class CommunityCacheIdentity(
+    val cloudUserId: String,
+    val identityGeneration: Long,
+) {
+    init {
+        require(cloudUserId.isNotBlank() && cloudUserId.length <= 256) { "cloudUserId 不能为空且不能超过 256 字符" }
+        require(identityGeneration >= 0L) { "identityGeneration 不能为负" }
+    }
+
+    internal fun keyMaterial(): JsonValue.Obj = JsonValue.Obj(
+        linkedMapOf(
+            "cloud_user_id" to JsonValue.Str(cloudUserId),
+            "identity_generation" to JsonValue.Num(identityGeneration.toString()),
+        ),
+    )
+}
+
 /** 读响应缓存键。绝不包含 Authorization、refresh token、cookie 或设备秘密。 */
 data class CommunityCacheKey(
+    val cloudIdentity: CommunityCacheIdentity,
+    val apiBaseUrl: String,
     val operationId: String,
     val resolvedPath: String,
     val queryParams: Map<String, List<String>> = emptyMap(),
     val body: JsonValue.Obj? = null,
 ) {
     init {
+        require(apiBaseUrl.isNotBlank()) { "apiBaseUrl 不能为空" }
         require(operationId.isNotBlank()) { "operationId 不能为空" }
         require(resolvedPath.startsWith("/api/v1/")) { "缓存路径必须是 /api/v1 相对路径" }
     }
@@ -37,6 +59,8 @@ data class CommunityCacheKey(
         }
         return JsonValue.Obj(
             linkedMapOf(
+                "cloud_identity" to cloudIdentity.keyMaterial(),
+                "api_base_url" to JsonValue.Str(apiBaseUrl),
                 "operation_id" to JsonValue.Str(operationId),
                 "path" to JsonValue.Str(resolvedPath),
                 "query" to JsonValue.Obj(queryFields),
@@ -71,12 +95,25 @@ object CommunityCacheDirectories {
  * Room v17 尚未按 D14 顺序可用前的 Profile 隔离文件缓存。
  * 原子写入、损坏 fail-closed、条数/字节上限与彻底擦除都在本类内完成。
  */
-class FileCommunityCacheStore(
+class FileCommunityCacheStore internal constructor(
     private val rootDir: Path,
-    private val maxEntries: Int = 128,
-    private val maxBytes: Long = 2L * 1024L * 1024L,
-    private val maxEntryBytes: Int = 512 * 1024,
+    private val maxEntries: Int,
+    private val maxBytes: Long,
+    private val maxEntryBytes: Int,
+    private val deleteTreeImpl: (Path) -> Unit,
 ) : CommunityCacheStore {
+    constructor(
+        rootDir: Path,
+        maxEntries: Int = 128,
+        maxBytes: Long = 2L * 1024L * 1024L,
+        maxEntryBytes: Int = 512 * 1024,
+    ) : this(
+        rootDir = rootDir,
+        maxEntries = maxEntries,
+        maxBytes = maxBytes,
+        maxEntryBytes = maxEntryBytes,
+        deleteTreeImpl = ::deleteTreeRecursively,
+    )
     private val responsesDir: Path = rootDir.resolve("responses")
     private val rootKey = rootDir.toAbsolutePath().normalize().toString()
     private val lock = ROOT_LOCKS.computeIfAbsent(rootKey) { Any() }
@@ -100,7 +137,7 @@ class FileCommunityCacheStore(
                 return@synchronized null
             }
             val parsed = runCatching {
-                val text = Files.readString(file, Charsets.UTF_8)
+                val text = Files.newBufferedReader(file, Charsets.UTF_8).use { it.readText() }
                 Json.parse(text).asObjOrNull
             }.getOrNull()
             val decoded = parsed?.let { decodeEntry(it, key) }
@@ -143,7 +180,7 @@ class FileCommunityCacheStore(
         synchronized(lock) {
             if (Files.exists(responsesDir)) {
                 Files.list(responsesDir).use { stream ->
-                    stream.filter { Files.isRegularFile(it) }.forEach { runCatching { Files.deleteIfExists(it) } }
+                    stream.filter { Files.isRegularFile(it) }.forEach { Files.deleteIfExists(it) }
                 }
             }
             Files.createDirectories(responsesDir)
@@ -156,7 +193,15 @@ class FileCommunityCacheStore(
             // 先推进本进程内代际再删除：擦除前已在途的旧实例写入在锁释放后必然失效，
             // 而擦除后新建的实例采用新代际，可以继续正常使用同一目录。
             WIPE_GENERATIONS[rootKey] = (WIPE_GENERATIONS[rootKey] ?: 0L) + 1L
-            deleteTree(rootDir)
+            try {
+                deleteTreeImpl(rootDir)
+                WIPE_FAILURES.remove(rootKey)
+            } catch (error: Exception) {
+                // 擦除失败必须同时“显式传播 + 阻断后续读写”：调用方不得宣称成功，
+                // 新实例也不得把可能残留的失权快照当作可用缓存。重试 wipe 成功后才解除阻断。
+                WIPE_FAILURES[rootKey] = true
+                throw error
+            }
         }
     }
 
@@ -169,7 +214,8 @@ class FileCommunityCacheStore(
         }
     }
 
-    private fun isRetiredByWipe(): Boolean = (WIPE_GENERATIONS[rootKey] ?: 0L) != instanceWipeGeneration
+    private fun isRetiredByWipe(): Boolean =
+        WIPE_FAILURES.containsKey(rootKey) || (WIPE_GENERATIONS[rootKey] ?: 0L) != instanceWipeGeneration
 
     private fun encodeEntry(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long): JsonValue.Obj {
         return JsonValue.Obj(
@@ -200,7 +246,8 @@ class FileCommunityCacheStore(
     private fun pruneOverflow() {
         val files = if (Files.isDirectory(responsesDir)) {
             Files.list(responsesDir).use { stream ->
-                stream.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".json") }.toList()
+                stream.filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".json") }
+                    .collect(Collectors.toList())
             }
         } else {
             emptyList()
@@ -229,25 +276,28 @@ class FileCommunityCacheStore(
     private companion object {
         private val ROOT_LOCKS = ConcurrentHashMap<String, Any>()
         private val WIPE_GENERATIONS = ConcurrentHashMap<String, Long>()
+        private val WIPE_FAILURES = ConcurrentHashMap<String, Boolean>()
     }
 
-    private fun deleteTree(path: Path) {
-        if (!Files.exists(path)) return
-        Files.walkFileTree(
-            path,
-            object : SimpleFileVisitor<Path>() {
-                override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                    Files.deleteIfExists(file)
-                    return FileVisitResult.CONTINUE
-                }
+}
 
-                override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                    Files.deleteIfExists(dir)
-                    return FileVisitResult.CONTINUE
-                }
-            },
-        )
-    }
+private fun deleteTreeRecursively(path: Path) {
+    if (!Files.exists(path)) return
+    Files.walkFileTree(
+        path,
+        object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                Files.deleteIfExists(file)
+                return FileVisitResult.CONTINUE
+            }
+
+            override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
+                if (exc != null) throw exc
+                Files.deleteIfExists(dir)
+                return FileVisitResult.CONTINUE
+            }
+        },
+    )
 }
 
 class InMemoryCommunityCacheStore : CommunityCacheStore {

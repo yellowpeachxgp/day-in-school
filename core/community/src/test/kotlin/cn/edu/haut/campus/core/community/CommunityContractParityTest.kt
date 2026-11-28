@@ -7,9 +7,10 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * Line-oriented extraction of the checked-in OpenAPI copy. The test intentionally reads the
- * authoritative YAML text instead of duplicating a generated manifest: adding, renaming, or
- * flipping a W4 community operation in contracts/ immediately breaks this parity test.
+ * Line-oriented structural extraction of the checked-in OpenAPI copy. The test intentionally reads
+ * the authoritative YAML text instead of duplicating a generated manifest: adding, renaming, or
+ * flipping a W4 community operation in contracts/ immediately breaks this structural parity test.
+ * It intentionally does not claim field-level schema parity; typed request validation is covered separately.
  */
 class CommunityContractParityTest {
     private data class ContractOperation(
@@ -23,12 +24,12 @@ class CommunityContractParityTest {
     )
 
     @Test
-    fun handwrittenOperationTableMatchesOpenApiExactly() {
+    fun handwrittenOperationTableHasStructuralParityWithOpenApi() {
         val contractOperations = extractCommunityOperations(Files.readString(Path.of("contracts/openapi/cloud-v1.yaml")))
         val localOperations = CommunityOperation.all.associateBy { it.operationId }
 
-        assertEquals("contract operation ids must exactly match handwritten client ids", contractOperations.keys, localOperations.keys)
-        assertEquals("community contract operation count", contractOperations.size, localOperations.size)
+        assertEquals("structural parity: contract operation ids must match handwritten client ids", contractOperations.keys, localOperations.keys)
+        assertEquals("structural parity: community contract operation count", contractOperations.size, localOperations.size)
 
         for ((operationId, contract) in contractOperations) {
             val local = requireNotNull(localOperations[operationId])
@@ -47,9 +48,9 @@ class CommunityContractParityTest {
     }
 
     @Test
-    fun offlineCacheWhitelistIsExactlyGroupAndMemberSnapshots() {
+    fun offlineCacheWhitelistIsExactlyGroupMetadataSnapshots() {
         assertEquals(
-            setOf("listGroups", "getGroup", "listGroupMembers"),
+            setOf("listGroups", "getGroup"),
             CommunityOperation.all.filter { it.offlineCacheAllowed }.map { it.operationId }.toSet(),
         )
     }

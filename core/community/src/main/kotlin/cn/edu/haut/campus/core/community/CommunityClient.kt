@@ -22,12 +22,20 @@ class CommunityClient(
     private val accessTokenProvider: suspend () -> String?,
     private val featureGate: CommunityFeatureGate,
     private val cacheStore: CommunityCacheStore? = null,
+    private val cacheIdentityProvider: (suspend () -> CommunityCacheIdentity?)? = null,
     private val transport: CommunityTransport = OkHttpCommunityTransport(),
     private val clock: Clock = Clock.systemUTC(),
 ) {
     private val normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl)
 
-    suspend fun execute(
+    init {
+        require(cacheStore == null || cacheIdentityProvider != null) {
+            "启用 community 缓存时必须注入当前 cloudUserId/identityGeneration 提供者"
+        }
+    }
+
+    /** 模块内部执行入口：外部调用方只能使用类型化 API 扩展，不能绕过请求类型校验注入任意 raw body。 */
+    internal suspend fun execute(
         operation: CommunityOperation,
         pathParams: Map<String, String> = emptyMap(),
         queryParams: Map<String, List<String>> = emptyMap(),
@@ -43,12 +51,21 @@ class CommunityClient(
         validateOperationShape(operation, pathParams, body, idempotencyKey)
 
         val resolvedPath = resolvePath(operation.pathTemplate, pathParams)
-        val cacheKey = CommunityCacheKey(
-            operationId = operation.operationId,
-            resolvedPath = resolvedPath,
-            queryParams = queryParams,
-            body = if (operation.readOnly && operation.offlineCacheAllowed) body else null,
-        )
+        val cacheIdentity = if (operation.readOnly && operation.offlineCacheAllowed) {
+            cacheIdentityProvider?.invoke()
+        } else {
+            null
+        }
+        val cacheKey = cacheIdentity?.let {
+            CommunityCacheKey(
+                cloudIdentity = it,
+                apiBaseUrl = normalizedBaseUrl,
+                operationId = operation.operationId,
+                resolvedPath = resolvedPath,
+                queryParams = queryParams,
+                body = body,
+            )
+        }
         val url = normalizedBaseUrl + resolvedPath + encodeQuery(queryParams)
         val headers = linkedMapOf("Authorization" to "Bearer " + accessToken)
         if (operation.idempotencyRequired) {
@@ -64,7 +81,7 @@ class CommunityClient(
         if (!operation.readOnly) {
             // 写请求即使网络失败也可能已在服务端提交（STORAGE_COMMIT_UNKNOWN 类竞态）。
             // 乐观丢弃本地快照最多造成一次重新拉取；保留旧快照则可能继续展示已退出成员或已撤回共享。
-            runCatching { cacheStore?.invalidateAll() }
+            invalidateSnapshotsOrNull(statusCode = null)?.let { return CommunityResult.Failure(it) }
         }
 
         val response = try {
@@ -94,14 +111,15 @@ class CommunityClient(
                         retryable = false,
                     ),
                 )
-            if (operation.readOnly && operation.offlineCacheAllowed) {
+            if (cacheKey != null) {
                 val store = cacheStore
                 if (store != null) {
                     runCatching { store.write(cacheKey, envelope, clock.millis()) }
                 }
-            } else {
+            } else if (!operation.readOnly) {
                 // 写前已保守清空；这里重复一次以覆盖写前清理自身失败但写成功的少见路径。
-                runCatching { cacheStore?.invalidateAll() }
+                // 纯 GET/查询不得在成功后误清群组元数据快照。
+                invalidateSnapshotsOrNull(statusCode = response.statusCode)?.let { return CommunityResult.Failure(it) }
             }
             return CommunityResult.Success(
                 value = envelope,
@@ -112,6 +130,11 @@ class CommunityClient(
 
         if (response.statusCode == 401) return CommunityResult.AuthenticationRequired
         val error = parseErrorBody(response.statusCode, response.body)
+        if (response.statusCode == 403 || response.statusCode == 404) {
+            // 403/404 是权威失权/删除信号。群组列表与详情快照互相重叠，无法可靠局部投影，
+            // 因此保守清空这个很小的群组元数据缓存分区；清理失败时绝不返回原错误让旧数据之后复活。
+            invalidateSnapshotsOrNull(statusCode = response.statusCode)?.let { return CommunityResult.Failure(it) }
+        }
         val serverUnavailable = response.statusCode == 408 || response.statusCode == 429 || response.statusCode >= 500
         if (serverUnavailable) {
             return cachedOrFailure(
@@ -125,12 +148,12 @@ class CommunityClient(
     }
 
     private suspend fun cachedOrFailure(
-        cacheKey: CommunityCacheKey,
+        cacheKey: CommunityCacheKey?,
         cacheable: Boolean,
         fallbackReason: CommunityCacheFallbackReason,
         error: CommunityError,
     ): CommunityResult<CommunityEnvelope> {
-        if (cacheable) {
+        if (cacheable && cacheKey != null) {
             val cached = runCatching { cacheStore?.read(cacheKey) }.getOrNull()
             if (cached != null) {
                 return CommunityResult.Success(
@@ -143,6 +166,22 @@ class CommunityClient(
             }
         }
         return CommunityResult.Failure(error)
+    }
+
+    private suspend fun invalidateSnapshotsOrNull(statusCode: Int?): CommunityError? {
+        val store = cacheStore ?: return null
+        return try {
+            store.invalidateAll()
+            null
+        } catch (error: Exception) {
+            CommunityError(
+                kind = CommunityErrorKind.CACHE,
+                code = "CACHE_INVALIDATION_FAILED",
+                message = "云端状态已变化，但本地群组快照清理失败；为保护隐私未继续使用缓存",
+                statusCode = statusCode,
+                retryable = true,
+            )
+        }
     }
 
     private fun provenance(fetchedAtEpochMillis: Long): DataProvenance =

@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.database
 
+import cn.edu.haut.campus.core.community.CommunityCacheIdentity
 import cn.edu.haut.campus.core.community.CommunityCacheKey
 import cn.edu.haut.campus.core.community.CommunityEnvelope
 import cn.edu.haut.campus.core.community.FileCommunityCacheStore
@@ -8,6 +9,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -53,7 +55,26 @@ class CommunityCacheWipeTest {
         }
     }
 
+    @Test
+    fun communityCacheDeletionFailurePropagatesInsteadOfClaimingSuccessfulWipe() = runBlocking {
+        CommunityCacheWipeRegistration.wipeProfileOverrideForTest = { _, _ ->
+            throw java.io.IOException("synthetic community cache delete failure")
+        }
+        try {
+            val error = runCatching { fixture.repository.wipeAllPersonalData() }.exceptionOrNull()
+            assertTrue("文件缓存擦除失败必须传播，不得伪装成完成", error is java.io.IOException)
+            assertEquals("synthetic community cache delete failure", error?.message)
+        } finally {
+            CommunityCacheWipeRegistration.wipeProfileOverrideForTest = null
+        }
+    }
+
     private fun cacheKey(marker: String): CommunityCacheKey = CommunityCacheKey(
+        cloudIdentity = CommunityCacheIdentity(
+            cloudUserId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            identityGeneration = 1L,
+        ),
+        apiBaseUrl = "https://cloud.example.test",
         operationId = "listGroups",
         resolvedPath = "/api/v1/groups",
         queryParams = mapOf("school_id" to listOf(marker)),

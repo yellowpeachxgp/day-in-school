@@ -10,13 +10,14 @@ data class CommunityClientAssembly(
     val cacheStore: CommunityCacheStore,
 )
 
-/** Factory for the supported Android integration shape: profile-isolated file cache plus injected cloud auth/feature gate. */
+/** Factory for the supported Android integration shape: profile-isolated file cache plus injected cloud auth, cloud identity generation, and feature gate. */
 object CommunityClientFactory {
     fun createFileBacked(
         filesDir: File,
         baseUrl: String,
         scope: SchoolAccountScope,
         accessTokenProvider: suspend () -> String?,
+        cacheIdentityProvider: suspend () -> CommunityCacheIdentity?,
         featureGate: CommunityFeatureGate,
         transport: CommunityTransport = OkHttpCommunityTransport(),
         clock: Clock = Clock.systemUTC(),
@@ -29,6 +30,7 @@ object CommunityClientFactory {
                 accessTokenProvider = accessTokenProvider,
                 featureGate = featureGate,
                 cacheStore = cacheStore,
+                cacheIdentityProvider = cacheIdentityProvider,
                 transport = transport,
                 clock = clock,
             ),

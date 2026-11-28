@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.core.community
 
-import cn.edu.haut.campus.core.model.Staleness
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -26,6 +25,7 @@ class CommunityClientDomainWireTest {
         accessTokenProvider = { "synthetic-access-token" },
         featureGate = CommunityFeatureGate.ENABLED,
         cacheStore = cacheStore,
+        cacheIdentityProvider = { communityTestCacheIdentity() },
         transport = transport,
         clock = fixedClock,
     )
@@ -86,7 +86,7 @@ class CommunityClientDomainWireTest {
     }
 
     @Test
-    fun memberSnapshotRemainsWithinPrivacyApprovedOfflineCacheWhitelist() = runTest {
+    fun memberEnvelopeIsNeverRetainedAndFailsExplicitlyOffline() = runTest {
         val cache = InMemoryCommunityCacheStore()
         val transport = RecordingCommunityTransport(
             jsonResponse(successBody("[]", requestId = "req-members")),
@@ -94,11 +94,12 @@ class CommunityClientDomainWireTest {
         )
         val subject = client(transport, cache)
         assertTrue(subject.listGroupMembers(groupId) is CommunityResult.Success)
-        assertEquals(1, cache.countEntries())
+        assertEquals("AUTO-038：成员信封含 cloud_user_id/display_name/sharing_level，绝不落地缓存", 0, cache.countEntries())
 
         val offline = subject.listGroupMembers(groupId)
-        assertTrue(offline is CommunityResult.Success)
-        assertEquals(Staleness.STALE, (offline as CommunityResult.Success).staleness)
+        assertTrue(offline is CommunityResult.Failure)
+        assertEquals("NETWORK_UNAVAILABLE", (offline as CommunityResult.Failure).error.code)
+        assertEquals(0, cache.countEntries())
     }
 
     @Test

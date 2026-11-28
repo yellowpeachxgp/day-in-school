@@ -14,6 +14,14 @@ internal fun communityTestScope(): SchoolAccountScope = SchoolAccountScope(
     profileId = ProfileId("prof_community_test"),
 )
 
+internal fun communityTestCacheIdentity(
+    cloudUserId: String = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    identityGeneration: Long = 1L,
+): CommunityCacheIdentity = CommunityCacheIdentity(
+    cloudUserId = cloudUserId,
+    identityGeneration = identityGeneration,
+)
+
 private fun responseMeta(requestId: String): JsonValue.Obj = JsonValue.Obj(
     linkedMapOf(
         "request_id" to JsonValue.Str(requestId),

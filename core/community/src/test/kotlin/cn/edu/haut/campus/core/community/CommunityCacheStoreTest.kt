@@ -11,7 +11,13 @@ import org.junit.Test
 import java.nio.file.Files
 
 class CommunityCacheStoreTest {
-    private fun key(operationId: String = "listGroups", marker: String = "haut"): CommunityCacheKey = CommunityCacheKey(
+    private fun key(
+        operationId: String = "listGroups",
+        marker: String = "haut",
+        identity: CommunityCacheIdentity = communityTestCacheIdentity(),
+    ): CommunityCacheKey = CommunityCacheKey(
+        cloudIdentity = identity,
+        apiBaseUrl = "https://cloud.example.test",
         operationId = operationId,
         resolvedPath = "/api/v1/groups",
         queryParams = mapOf("school_id" to listOf(marker)),
@@ -116,12 +122,16 @@ class CommunityCacheStoreTest {
             "window_start_at" to JsonValue.Str("2026-11-28T08:00:00+08:00"),
         )
         val first = CommunityCacheKey(
+            cloudIdentity = communityTestCacheIdentity(),
+            apiBaseUrl = "https://cloud.example.test",
             operationId = "queryGroupAvailability",
             resolvedPath = "/api/v1/groups/g-1/availability/query",
             queryParams = mapOf("b" to listOf("2"), "a" to listOf("1")),
             body = body,
         )
         val second = CommunityCacheKey(
+            cloudIdentity = communityTestCacheIdentity(),
+            apiBaseUrl = "https://cloud.example.test",
             operationId = "queryGroupAvailability",
             resolvedPath = "/api/v1/groups/g-1/availability/query",
             queryParams = mapOf("a" to listOf("1"), "b" to listOf("2")),
@@ -144,6 +154,90 @@ class CommunityCacheStoreTest {
                 kotlinx.coroutines.runBlocking { store.write(cacheKey, envelope(), 1L) }
             }
             assertEquals(0, store.countEntries())
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cacheKeySeparatesCloudUserIdentityGenerationAndBaseUrl() = runTest {
+        val base = key()
+        val same = key()
+        val otherUser = key(
+            identity = communityTestCacheIdentity(
+                cloudUserId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                identityGeneration = 1L,
+            ),
+        )
+        val nextGeneration = key(identity = communityTestCacheIdentity(identityGeneration = 2L))
+        val otherBase = CommunityCacheKey(
+            cloudIdentity = communityTestCacheIdentity(),
+            apiBaseUrl = "https://mirror.example.test",
+            operationId = "listGroups",
+            resolvedPath = "/api/v1/groups",
+            queryParams = mapOf("school_id" to listOf("haut")),
+        )
+
+        assertEquals(base.storageId, same.storageId)
+        assertNotEquals(base.storageId, otherUser.storageId)
+        assertNotEquals(base.storageId, nextGeneration.storageId)
+        assertNotEquals(base.storageId, otherBase.storageId)
+    }
+
+    @Test
+    fun cacheFileDoesNotPersistRawCloudUserId() = runTest {
+        val filesDir = Files.createTempDirectory("community-cache-identity-test").toFile()
+        try {
+            val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_identity_key")
+            val cloudUserId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            val store = FileCommunityCacheStore(root)
+            val cacheKey = key(identity = communityTestCacheIdentity(cloudUserId = cloudUserId))
+            store.write(cacheKey, envelope(), 9L)
+            val responseFile = root.toPath().resolve("responses").resolve(cacheKey.storageId + ".json")
+
+            val persisted = Files.readString(responseFile, Charsets.UTF_8)
+            assertFalse(persisted.contains(cloudUserId))
+            assertEquals("req-cache", store.read(cacheKey)?.envelope?.requestId)
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun wipeDeletionFailurePropagatesAndBlocksFurtherReadsUntilSuccessfulRetry() = runTest {
+        val filesDir = Files.createTempDirectory("community-cache-wipe-failure-test").toFile()
+        try {
+            val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_wipe_failure")
+            val cacheKey = key()
+            var failDeletion = true
+            val store = FileCommunityCacheStore(
+                root.toPath(),
+                128,
+                2L * 1024L * 1024L,
+                512 * 1024,
+            ) { path ->
+                if (failDeletion) throw java.io.IOException("synthetic delete failure")
+                if (!path.toFile().deleteRecursively() && Files.exists(path)) {
+                    throw java.io.IOException("synthetic retry delete failure")
+                }
+            }
+            store.write(cacheKey, envelope(), 11L)
+            val responseFile = root.toPath().resolve("responses").resolve(cacheKey.storageId + ".json")
+            assertTrue(Files.exists(responseFile))
+
+            org.junit.Assert.assertThrows(java.io.IOException::class.java) {
+                kotlinx.coroutines.runBlocking { store.wipe() }
+            }
+
+            assertTrue("失败注入不删除文件，用于证明异常不得伪装成已擦除", Files.exists(responseFile))
+            assertNull("擦除失败后即使是残留文件也不得继续被读作缓存", store.read(cacheKey))
+
+            failDeletion = false
+            store.wipe()
+            assertFalse(root.exists())
+            val replacement = FileCommunityCacheStore(root)
+            replacement.write(cacheKey, envelope("req-after-retry"), 12L)
+            assertEquals("req-after-retry", replacement.read(cacheKey)?.envelope?.requestId)
         } finally {
             filesDir.deleteRecursively()
         }

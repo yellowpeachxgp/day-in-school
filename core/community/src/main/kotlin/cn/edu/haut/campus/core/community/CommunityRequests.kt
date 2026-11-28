@@ -109,24 +109,26 @@ data class CreateGroupInviteRequest(
     }
 }
 
+/**
+ * AUTO-030 从严收窄后的成员管理请求：只允许管理角色，类型层面不存在 sharingLevel。
+ * 客户端无法证明任意 memberId 就是调用者本人，因此不提供任何经该端点代改 sharing_level 的 API 路径；
+ * 忙闲共享/撤销只走 ReplaceGroupAvailabilityRequest 与 /availability/me 自服务端点，由服务端按调用者身份派生 sharing_level。
+ */
 data class UpdateGroupMemberRequest(
-    val role: String? = null,
-    val sharingLevel: String? = null,
+    val role: String,
 ) : CommunityRequestBody {
     init {
-        if (role != null) requireWireEnum(role, setOf("OWNER", "ADMIN", "MEMBER"), "role")
-        if (sharingLevel != null) requireWireEnum(sharingLevel, setOf("NONE", "BUSY_BLOCKS_30MIN"), "sharing_level")
-        require(role != null || sharingLevel != null) { "UpdateGroupMemberRequest 至少要更新一个字段" }
+        requireWireEnum(role, setOf("OWNER", "ADMIN", "MEMBER"), "role")
     }
 
     override fun toJson(): JsonValue.Obj {
         val fields = jsonFields()
         fields.putString("role", role)
-        fields.putString("sharing_level", sharingLevel)
         return jsonObject(fields)
     }
 }
 
+/** 自服务忙闲共享的唯一客户端写入类型；不包含 memberId 或 sharingLevel，shared/NONE 状态由自服务端点语义派生。 */
 data class ReplaceGroupAvailabilityRequest(
     val blocks: List<AvailabilityBlockInput>,
     val ttlSeconds: Int,

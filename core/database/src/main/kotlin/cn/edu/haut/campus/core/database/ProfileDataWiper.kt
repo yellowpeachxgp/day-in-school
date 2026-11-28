@@ -165,7 +165,8 @@ class ProfileDataWiper internal constructor(
                 it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
         }
-        runCatching { CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfileId) }
+        // community 文件缓存属于个人云快照：删除失败必须向外传播，绝不能在 runCatching 后宣称完成伪擦除。
+        CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfileId)
         for (hook in beforeWipeHooks.values) {
             runCatching { hook.invoke() }
         }

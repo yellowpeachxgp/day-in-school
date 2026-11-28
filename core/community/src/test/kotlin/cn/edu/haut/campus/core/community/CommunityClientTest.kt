@@ -22,12 +22,14 @@ class CommunityClientTest {
         cacheStore: CommunityCacheStore? = null,
         featureGate: CommunityFeatureGate = CommunityFeatureGate.ENABLED,
         token: String? = "synthetic-access-token",
+        cacheIdentityProvider: suspend () -> CommunityCacheIdentity? = { communityTestCacheIdentity() },
     ): CommunityClient = CommunityClient(
         baseUrl = "https://cloud.example.test",
         scope = communityTestScope(),
         accessTokenProvider = { token },
         featureGate = featureGate,
         cacheStore = cacheStore,
+        cacheIdentityProvider = cacheIdentityProvider,
         transport = transport,
         clock = fixedClock,
     )
@@ -70,7 +72,10 @@ class CommunityClientTest {
             UpdateGroupMemberRequest(role = "GROUP_OWNER")
         }
         assertEquals("OWNER", UpdateGroupMemberRequest(role = "OWNER").toJson().str("role"))
-        assertEquals("BUSY_BLOCKS_30MIN", UpdateGroupMemberRequest(sharingLevel = "BUSY_BLOCKS_30MIN").toJson().str("sharing_level"))
+        // AUTO-030 类型防线：成员管理类型根本不存在 sharingLevel 属性/访问器，序列化也绝不出现 sharing_level。
+        assertFalse(UpdateGroupMemberRequest::class.java.declaredFields.any { it.name.equals("sharingLevel", ignoreCase = true) })
+        assertFalse(UpdateGroupMemberRequest::class.java.methods.any { it.name == "getSharingLevel" })
+        assertFalse(UpdateGroupMemberRequest(role = "ADMIN").toJson().fields.containsKey("sharing_level"))
     }
 
     @Test
@@ -86,7 +91,7 @@ class CommunityClientTest {
         val update = subject.updateGroupMember(
             groupId = groupId,
             memberId = memberId,
-            request = UpdateGroupMemberRequest(role = "ADMIN", sharingLevel = "NONE"),
+            request = UpdateGroupMemberRequest(role = "ADMIN"),
             idempotencyKey = "idem-member-1",
         )
         val remove = subject.removeGroupMember(
@@ -104,6 +109,40 @@ class CommunityClientTest {
         assertTrue(transport.requests[1].url.endsWith(expectedPath))
         assertEquals("DELETE", transport.requests[1].method)
         assertEquals("idem-remove-1", transport.requests[1].headers["Idempotency-Key"])
+    }
+
+    @Test
+    fun sharingLevelSelfServiceUsesOnlyAvailabilityMeEndpointAndNeverMemberManagementBody() = runTest {
+        val transport = RecordingCommunityTransport(
+            jsonResponse(successBody("{}", requestId = "req-share-self")),
+            jsonResponse(successBody("{}", requestId = "req-withdraw-self")),
+        )
+        val subject = client(transport)
+        val groupId = "11111111-1111-4111-8111-111111111111"
+
+        val share = subject.replaceMyGroupAvailability(
+            groupId = groupId,
+            request = ReplaceGroupAvailabilityRequest(
+                blocks = listOf(AvailabilityBlockInput("2026-11-28T08:00:00Z", "2026-11-28T09:00:00Z")),
+                ttlSeconds = 1800,
+            ),
+            idempotencyKey = "idem-share-self",
+        )
+        val withdraw = subject.deleteMyGroupAvailability(
+            groupId = groupId,
+            idempotencyKey = "idem-withdraw-self",
+        )
+
+        assertTrue(share is CommunityResult.Success)
+        assertTrue(withdraw is CommunityResult.Success)
+        assertEquals("PUT", transport.requests[0].method)
+        assertTrue(transport.requests[0].url.endsWith("/api/v1/groups/" + groupId + "/availability/me"))
+        val shareBody = requireNotNull(Json.parse(requireNotNull(transport.requests[0].body)).asObjOrNull)
+        assertFalse(shareBody.fields.containsKey("member_id"))
+        assertFalse(shareBody.fields.containsKey("sharing_level"))
+        assertEquals("DELETE", transport.requests[1].method)
+        assertTrue(transport.requests[1].url.endsWith("/api/v1/groups/" + groupId + "/availability/me"))
+        assertNull(transport.requests[1].body)
     }
 
     @Test
@@ -175,6 +214,27 @@ class CommunityClientTest {
     }
 
     @Test
+    fun successfulUncachedReadDoesNotInvalidateGroupMetadataSnapshots() = runTest {
+        val cache = InMemoryCommunityCacheStore()
+        val transport = RecordingCommunityTransport(
+            jsonResponse(successBody("[]", requestId = "req-list-before-read")),
+            jsonResponse(successBody("{}", requestId = "req-ledger-read")),
+            networkFailure(),
+        )
+        val subject = client(transport, cacheStore = cache)
+        val groupId = "11111111-1111-4111-8111-111111111111"
+
+        assertTrue(subject.listGroups("haut") is CommunityResult.Success)
+        assertEquals(1, cache.countEntries())
+        assertTrue(subject.getLedgerBalances(groupId) is CommunityResult.Success)
+        assertEquals("纯 GET 成功不得误清群组快照", 1, cache.countEntries())
+
+        val offline = subject.listGroups("haut")
+        assertTrue(offline is CommunityResult.Success)
+        assertEquals(Staleness.STALE, (offline as CommunityResult.Success).staleness)
+    }
+
+    @Test
     fun failedMutationStillInvalidatesSnapshotsBecauseServerCommitMayBeUnknown() = runTest {
         val cache = InMemoryCommunityCacheStore()
         val transport = RecordingCommunityTransport(
@@ -210,6 +270,75 @@ class CommunityClientTest {
         assertEquals(CommunityResult.AuthenticationRequired, unauthenticated)
         assertEquals(0, transport.requests.size)
         assertEquals(0, cache.countEntries())
+    }
+
+    @Test
+    fun authoritativeForbiddenOrNotFoundInvalidatesSnapshotsBeforeAnyLaterFallback() = runTest {
+        for ((status, code) in listOf(403 to "GROUP_PERMISSION_DENIED", 404 to "GROUP_NOT_FOUND")) {
+            val cache = InMemoryCommunityCacheStore()
+            val transport = RecordingCommunityTransport(
+                jsonResponse(successBody("[]", requestId = "req-list-authoritative-" + status)),
+                jsonResponse(errorBody(code, retryable = false), status = status),
+                networkFailure(),
+            )
+            val subject = client(transport, cacheStore = cache)
+
+            assertTrue(subject.listGroups("haut") is CommunityResult.Success)
+            assertEquals(1, cache.countEntries())
+            val authoritative = subject.listGroups("haut")
+            assertTrue(authoritative is CommunityResult.Failure)
+            assertEquals(code, (authoritative as CommunityResult.Failure).error.code)
+            assertEquals("HTTP " + status + " 权威失败必须清理群组快照", 0, cache.countEntries())
+
+            val offline = subject.listGroups("haut")
+            assertTrue(offline is CommunityResult.Failure)
+            assertEquals("NETWORK_UNAVAILABLE", (offline as CommunityResult.Failure).error.code)
+        }
+    }
+
+    @Test
+    fun switchedCloudIdentityOrGenerationCannotReadPreviousGroupSnapshot() = runTest {
+        val cloudUserA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        val cloudUserB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        var identity = communityTestCacheIdentity(cloudUserId = cloudUserA, identityGeneration = 1L)
+        val cache = InMemoryCommunityCacheStore()
+        val transport = RecordingCommunityTransport(
+            jsonResponse(successBody("[]", requestId = "req-list-identity-a")),
+            networkFailure(),
+            networkFailure(),
+        )
+        val subject = client(
+            transport,
+            cacheStore = cache,
+            cacheIdentityProvider = { identity },
+        )
+
+        assertTrue(subject.listGroups("haut") is CommunityResult.Success)
+        assertEquals(1, cache.countEntries())
+
+        identity = communityTestCacheIdentity(cloudUserId = cloudUserB, identityGeneration = 2L)
+        val afterSwitch = subject.listGroups("haut")
+        assertTrue(afterSwitch is CommunityResult.Failure)
+        assertEquals("NETWORK_UNAVAILABLE", (afterSwitch as CommunityResult.Failure).error.code)
+
+        identity = communityTestCacheIdentity(cloudUserId = cloudUserA, identityGeneration = 3L)
+        val afterAbaRelogin = subject.listGroups("haut")
+        assertTrue(afterAbaRelogin is CommunityResult.Failure)
+        assertEquals("NETWORK_UNAVAILABLE", (afterAbaRelogin as CommunityResult.Failure).error.code)
+    }
+
+    @Test
+    fun cacheStoreRequiresExplicitCloudIdentityProvider() {
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            CommunityClient(
+                baseUrl = "https://cloud.example.test",
+                scope = communityTestScope(),
+                accessTokenProvider = { "token" },
+                featureGate = CommunityFeatureGate.ENABLED,
+                cacheStore = InMemoryCommunityCacheStore(),
+                transport = RecordingCommunityTransport(),
+            )
+        }
     }
 
     @Test
@@ -252,6 +381,7 @@ class CommunityClientTest {
                 baseUrl = "https://cloud.example.test",
                 scope = communityTestScope(),
                 accessTokenProvider = { "synthetic-access-token" },
+                cacheIdentityProvider = { communityTestCacheIdentity() },
                 featureGate = CommunityFeatureGate.ENABLED,
                 transport = transport,
                 clock = fixedClock,

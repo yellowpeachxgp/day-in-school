@@ -227,6 +227,9 @@ class CampusRepository internal constructor(
 
         override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? =
             this@CampusRepository.cloudHttpTransportForTest
+
+        override suspend fun wipeCommunityCacheForCloudIdentityChange() =
+            CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
     }
     private val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
         environment = repositoryEnvironment,

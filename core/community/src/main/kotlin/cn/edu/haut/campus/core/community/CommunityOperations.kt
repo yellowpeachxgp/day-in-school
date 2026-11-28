@@ -10,7 +10,7 @@ enum class CommunityOperation(
     val successEnvelope: String,
     val readOnly: Boolean = false,
     val idempotencyRequired: Boolean = false,
-    /** MASTER_PLAN W4 只允许群组快照离线缓存；其他协作/众包数据离线时必须显式失败而非长期保留。 */
+    /** AUTO-038 只允许群组元数据快照离线缓存；成员信封与其他协作/众包数据离线时必须显式失败而非长期保留。 */
     val offlineCacheAllowed: Boolean = false,
 ) {
     LIST_GROUPS("listGroups", "GET", "/api/v1/groups", CommunityFeature.GROUPS, successEnvelope = "GroupListEnvelope", readOnly = true, offlineCacheAllowed = true),
@@ -21,7 +21,7 @@ enum class CommunityOperation(
     CREATE_GROUP_INVITE("createGroupInvite", "POST", "/api/v1/groups/{groupId}/invites", CommunityFeature.GROUPS, requestSchema = "CreateGroupInviteRequest", successEnvelope = "GroupInviteEnvelope", idempotencyRequired = true),
     ACCEPT_GROUP_INVITE("acceptGroupInvite", "POST", "/api/v1/group-invites/{code}/accept", CommunityFeature.GROUPS, successEnvelope = "GroupMemberEnvelope", idempotencyRequired = true),
     REVOKE_GROUP_INVITE("revokeGroupInvite", "DELETE", "/api/v1/groups/{groupId}/invites/{inviteId}", CommunityFeature.GROUPS, successEnvelope = "ActionAckEnvelope", idempotencyRequired = true),
-    LIST_GROUP_MEMBERS("listGroupMembers", "GET", "/api/v1/groups/{groupId}/members", CommunityFeature.GROUPS, successEnvelope = "GroupMemberListEnvelope", readOnly = true, offlineCacheAllowed = true),
+    LIST_GROUP_MEMBERS("listGroupMembers", "GET", "/api/v1/groups/{groupId}/members", CommunityFeature.GROUPS, successEnvelope = "GroupMemberListEnvelope", readOnly = true),
     UPDATE_GROUP_MEMBER("updateGroupMember", "PATCH", "/api/v1/groups/{groupId}/members/{memberId}", CommunityFeature.GROUPS, requestSchema = "UpdateGroupMemberRequest", successEnvelope = "GroupMemberEnvelope", idempotencyRequired = true),
     REMOVE_GROUP_MEMBER("removeGroupMember", "DELETE", "/api/v1/groups/{groupId}/members/{memberId}", CommunityFeature.GROUPS, successEnvelope = "ActionAckEnvelope", idempotencyRequired = true),
 
@@ -83,8 +83,8 @@ enum class CommunityOperation(
         }
         require(!offlineCacheAllowed || readOnly) { "离线缓存只允许用于只读 operation" }
         require(
-            !offlineCacheAllowed || operationId in setOf("listGroups", "getGroup", "listGroupMembers"),
-        ) { "W4 隐私边界只允许群组/成员快照离线缓存" }
+            !offlineCacheAllowed || operationId in setOf("listGroups", "getGroup"),
+        ) { "AUTO-038 隐私边界只允许群组元数据快照离线缓存" }
     }
 
     companion object {

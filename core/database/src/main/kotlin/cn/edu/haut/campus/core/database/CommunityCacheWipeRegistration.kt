@@ -14,10 +14,18 @@ import java.io.File
  * CampusRepository facade.
  */
 object CommunityCacheWipeRegistration {
+    /** 同模块测试用失败注入缝；生产始终为 null。 */
+    @Volatile
+    internal var wipeProfileOverrideForTest: (suspend (File, String) -> Unit)? = null
+
     fun rootForProfile(filesDir: File, profileId: String): File =
         CommunityCacheDirectories.rootForProfile(filesDir, profileId)
 
     suspend fun wipeProfile(filesDir: File, profileId: String) {
+        wipeProfileOverrideForTest?.let { override ->
+            override(filesDir, profileId)
+            return
+        }
         FileCommunityCacheStore(rootForProfile(filesDir, profileId)).wipe()
     }
 }
