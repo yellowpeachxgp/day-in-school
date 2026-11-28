@@ -6,7 +6,9 @@ import cn.edu.haut.campus.core.database.CourseScheduleRuleEntity
 import cn.edu.haut.campus.core.database.ExamScheduleEntity
 import cn.edu.haut.campus.core.database.GradeAttemptEntity
 import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.core.database.OccurrenceOverrideEntity
+import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.core.database.PersonalEventEntity
 import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
 import cn.edu.haut.campus.core.database.UtilityMeterEntity
@@ -22,6 +24,8 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.first
@@ -298,6 +302,161 @@ class VaultBackupServiceTest {
         assertTrue(combined.contains("blob_store"))
     }
 
+    @Test
+    fun exportOmitsRuntimeDiagnosticAndUpstreamProvenanceColumnsAndRestoresSafeDefaults() = runBlocking {
+        seedPortableRows()
+        database.cloudAndParcelDao().upsertLibraryBookingPlan(libraryPlanRow())
+        database.cloudAndParcelDao().upsertParcelItem(parcelRow())
+        database.vaultDao().upsertPersonalEvent(
+            personalEventRow().copy(provenanceJson = "{\"detail\":\"upstream-provenance-detail\"}")
+        )
+
+        val backup = exportBackup().first
+        val plaintext = BackupEnvelopeCrypto.decrypt(backup, passphrase)
+        val entries = BackupZip.read(plaintext)
+        plaintext.fill(0)
+        val combined = String(entries.getValue(BackupFormatConstants.MANIFEST_ENTRY), Charsets.UTF_8) +
+            String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8)
+        listOf("lastDiagnosticMessage", "sourcesJson", "fieldProvenanceJson", "checkpointsJson", "provenanceJson")
+            .forEach { assertFalse("不应导出 " + it, combined.contains(it)) }
+        listOf(
+            "do-not-export-diagnostic", "upstream-source-detail", "upstream-field-detail",
+            "upstream-checkpoint-detail", "upstream-provenance-detail"
+        ).forEach { assertFalse("不应导出上游值", combined.contains(it)) }
+
+        val dataText = String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8)
+        val dataRoot = Json.parse(dataText).asObjOrNull ?: error("data.json 必须是 object")
+        val tableValues = (dataRoot.fields.getValue("tables") as JsonValue.Arr).items
+        val actualColumns = tableValues.associate { value ->
+            val obj = value.asObjOrNull ?: error("table 必须是 object")
+            val table = (obj.fields.getValue("table") as JsonValue.Str).value
+            val columns = (obj.fields.getValue("columns") as JsonValue.Arr).items.map { (it as JsonValue.Str).value }.toSet()
+            table to columns
+        }
+        BackupTableCatalog.policies.forEach { policy ->
+            assertEquals("备份列必须逐表等于显式白名单: " + policy.table, policy.exportedColumns, actualColumns[policy.table])
+        }
+
+        val preview = service.inspect(ByteArrayInputStream(backup), passphrase)
+        wipePortableTables()
+        service.restore(preview, RestoreMode.REPLACE, emptyMap())
+        assertEquals(null, database.cloudAndParcelDao().getLibraryBookingPlanById("lib-1")?.lastDiagnosticMessage)
+        val parcel = database.cloudAndParcelDao().getParcelByTrackingNumber("trk-1")
+        assertEquals("[]", parcel?.sourcesJson)
+        assertEquals("{}", parcel?.fieldProvenanceJson)
+        assertEquals("[]", parcel?.checkpointsJson)
+        assertTrue(database.vaultDao().getPersonalEvent("pe-1")?.provenanceJson?.contains("LOCAL_BACKUP_RESTORE") == true)
+    }
+
+    @Test
+    fun secretKeyBlacklistCoversAuthSessionKeyCookieAndTokenVariants() {
+        listOf(
+            "accessToken", "refresh_token", "idToken", "authToken", "sessionId", "x-api-key",
+            "privateKey", "clientSecret", "cookie", "set-cookie", "Authorization"
+        ).forEach { key ->
+            val error = runCatching { BackupSchemaSafety.validateKeyName(key, "测试") }.exceptionOrNull()
+            assertTrue("应拒绝 " + key, error is BackupValidationException)
+        }
+        listOf("sourceKey", "courseKey", "eventScopeKey", "author").forEach { key ->
+            val error = runCatching { BackupSchemaSafety.validateKeyName(key, "测试") }.exceptionOrNull()
+            assertEquals("不应误伤稳定标识列 " + key, null, error)
+        }
+    }
+
+    @Test
+    fun exportFailsClosedWhenNestedTextContainsBearerTokenOrCookieCanary() = runBlocking {
+        seedPortableRows()
+        val jwtCanary = listOf(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+            "eyJzdWIiOiJhY2N0X2JhY2t1cCIsImV4cCI6MTkwMDAwMDAwMH0",
+            "c2lnbmF0dXJlLWNhbmFyeS0xMjM0NTY3ODkw"
+        ).joinToString(".")
+        val cookieValue = "session-canary-" + "1234567890abcdef"
+        val cookieHeader = "SESSION" + "=" + cookieValue + "; csrftoken=" + "csrf-canary-123456"
+        val cases = listOf(
+            Triple("bearer", "{\"nested\":\"Bearer " + jwtCanary + "\"}", listOf(jwtCanary)),
+            Triple("cookie", "{\"outer\":[{\"safe\":\"" + cookieHeader + "\"}]}", listOf(cookieValue, "csrf-canary-123456"))
+        )
+
+        cases.forEach { (label, nestedText, canaries) ->
+            database.vaultDao().upsertPersonalEvent(personalEventRow().copy(note = nestedText))
+            val out = ByteArrayOutputStream()
+            val error = runCatching { service.export(scope, BackupSelection.ALL, passphrase, out) }.exceptionOrNull()
+            assertTrue(label + " 应 fail-closed", error is BackupValidationException)
+            assertEquals(label + " 不应产生导出字节", 0, out.size())
+            canaries.forEach { canary -> assertFalse("错误消息不得回显 canary", error?.message.orEmpty().contains(canary)) }
+        }
+    }
+
+    @Test
+    fun nonIntegerManifestAndEnvelopeMetadataFailClosed() = runBlocking {
+        seedPortableRows()
+        val exported = exportBackup()
+        val schemaVersion = database.openHelper.writableDatabase.version
+        val cases = listOf(
+            "\"formatVersion\":1" to "\"formatVersion\":1.9",
+            "\"schemaVersion\":" + schemaVersion to "\"schemaVersion\":" + schemaVersion + ".9",
+            "\"entryCount\":" + exported.second.entryCount to "\"entryCount\":" + exported.second.entryCount + ".9",
+            "\"rowCount\":1" to "\"rowCount\":1.9"
+        )
+        cases.forEach { (target, replacement) ->
+            val modified = reencryptWithManifestReplacement(exported.first, target, replacement)
+            val error = runCatching { service.inspect(ByteArrayInputStream(modified), passphrase) }.exceptionOrNull()
+            assertTrue(target + " 必须 fail-closed", error is BackupCorruptedException)
+            assertFalse(error is BackupVersionTooNewException)
+        }
+
+        val modifiedEnvelope = rewriteEnvelopeHeader(exported.first) { header ->
+            header.replace(
+                "\"iterations\":" + BackupFormatConstants.MIN_PBKDF2_ITERATIONS,
+                "\"iterations\":1.9"
+            )
+        }
+        val envelopeError = runCatching { service.inspect(ByteArrayInputStream(modifiedEnvelope), passphrase) }.exceptionOrNull()
+        assertTrue(envelopeError is BackupCorruptedException)
+        assertFalse(envelopeError is BackupWrongPassphraseException)
+    }
+
+    @Test
+    fun kdfBaselineLegacyRestoreAndWeakPassphraseRulesAreEnforced() = runBlocking {
+        seedPortableRows()
+        val exported = exportBackup()
+        assertTrue(envelopeHeaderText(exported.first).contains("\"iterations\":" + BackupFormatConstants.MIN_PBKDF2_ITERATIONS))
+        assertEquals(600_000, BackupFormatConstants.MIN_PBKDF2_ITERATIONS)
+        assertEquals(600_000, BackupFormatConstants.DEFAULT_PBKDF2_ITERATIONS)
+
+        val plaintext = BackupEnvelopeCrypto.decrypt(exported.first, passphrase)
+        val legacy = BackupEnvelopeCrypto.encrypt(
+            plaintext,
+            passphrase,
+            BackupFormatConstants.LEGACY_MIN_PBKDF2_ITERATIONS,
+            allowLegacyIterations = true
+        )
+        plaintext.fill(0)
+        val preview = service.inspect(ByteArrayInputStream(legacy), passphrase)
+        assertEquals(exported.second.entryCount, preview.manifest.entryCount)
+        val report = service.restore(preview, RestoreMode.REPLACE, emptyMap())
+        assertTrue(report.updatedRows + report.unchangedRows + report.insertedRows > 0)
+
+        val weakExport = runCatching {
+            VaultBackupService(
+                database = database,
+                scope = scope,
+                journal = journal,
+                appVersion = "backup-test",
+                pbkdf2Iterations = BackupFormatConstants.LEGACY_MIN_PBKDF2_ITERATIONS
+            )
+        }.exceptionOrNull()
+        assertNotNull(weakExport)
+
+        val out = ByteArrayOutputStream()
+        val weakPassphrase = runCatching {
+            service.export(scope, BackupSelection.ALL, "eleven-char".toCharArray(), out)
+        }.exceptionOrNull()
+        assertTrue(weakPassphrase is BackupWeakPassphraseException)
+        assertEquals(0, out.size())
+    }
+
     private fun newService(
         scopeOverride: SchoolAccountScope = scope,
         mutationTokenGenerator: () -> String = { UUID.randomUUID().toString() }
@@ -334,16 +493,26 @@ class VaultBackupServiceTest {
     }
 
     private fun reencryptWithManifestVersion(backup: ByteArray, version: Int, fieldName: String = "formatVersion"): ByteArray {
-        val plaintext = BackupEnvelopeCrypto.decrypt(backup, passphrase)
-        val entries = BackupZip.read(plaintext)
-        val manifest = String(entries.getValue(BackupFormatConstants.MANIFEST_ENTRY), Charsets.UTF_8)
-        val modifiedManifest = if (fieldName == "formatVersion") {
-            manifest.replace("\"formatVersion\":1", "\"formatVersion\":" + version)
+        val target: String
+        val replacement: String
+        if (fieldName == "formatVersion") {
+            target = "\"formatVersion\":1"
+            replacement = "\"formatVersion\":" + version
         } else {
             val schemaVersion = database.openHelper.writableDatabase.version
-            manifest.replace("\"schemaVersion\":" + schemaVersion, "\"schemaVersion\":" + version)
+            target = "\"schemaVersion\":" + schemaVersion
+            replacement = "\"schemaVersion\":" + version
         }
-        require(modifiedManifest != manifest) { "测试 manifest 未找到 " + fieldName }
+        return reencryptWithManifestReplacement(backup, target, replacement)
+    }
+
+    private fun reencryptWithManifestReplacement(backup: ByteArray, target: String, replacement: String): ByteArray {
+        val plaintext = BackupEnvelopeCrypto.decrypt(backup, passphrase)
+        val entries = BackupZip.read(plaintext)
+        plaintext.fill(0)
+        val manifest = String(entries.getValue(BackupFormatConstants.MANIFEST_ENTRY), Charsets.UTF_8)
+        val modifiedManifest = manifest.replace(target, replacement)
+        require(modifiedManifest != manifest) { "测试 manifest 未找到目标字段" }
         val blobs = entries.filterKeys { it.startsWith(BackupFormatConstants.BLOB_ENTRY_PREFIX) }
             .mapKeys { (path, _) -> path.removePrefix(BackupFormatConstants.BLOB_ENTRY_PREFIX) }
         val modifiedZip = BackupZip.create(
@@ -351,7 +520,30 @@ class VaultBackupServiceTest {
             String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8),
             blobs
         )
-        return BackupEnvelopeCrypto.encrypt(modifiedZip, passphrase, BackupFormatConstants.MIN_PBKDF2_ITERATIONS)
+        return BackupEnvelopeCrypto.encrypt(
+            modifiedZip,
+            passphrase,
+            BackupFormatConstants.LEGACY_MIN_PBKDF2_ITERATIONS,
+            allowLegacyIterations = true
+        )
+    }
+
+    private fun envelopeHeaderText(container: ByteArray): String {
+        val magicSize = 8
+        val headerLength = ByteBuffer.wrap(container, magicSize, 4).order(ByteOrder.BIG_ENDIAN).int
+        return String(container.copyOfRange(magicSize + 4, magicSize + 4 + headerLength), Charsets.UTF_8)
+    }
+
+    private fun rewriteEnvelopeHeader(container: ByteArray, transform: (String) -> String): ByteArray {
+        val magicSize = 8
+        val headerLength = ByteBuffer.wrap(container, magicSize, 4).order(ByteOrder.BIG_ENDIAN).int
+        val headerStart = magicSize + 4
+        val headerEnd = headerStart + headerLength
+        val original = String(container.copyOfRange(headerStart, headerEnd), Charsets.UTF_8)
+        val transformedBytes = transform(original).toByteArray(Charsets.UTF_8)
+        require(!transformedBytes.contentEquals(original.toByteArray(Charsets.UTF_8))) { "测试 header 未被修改" }
+        val lengthBytes = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(transformedBytes.size).array()
+        return container.copyOfRange(0, magicSize) + lengthBytes + transformedBytes + container.copyOfRange(headerEnd, container.size)
     }
 
     private fun wipePortableTables() {
@@ -468,6 +660,56 @@ class VaultBackupServiceTest {
         rawWeeks = "16-17",
         category = "实践",
         syncedAtEpochMilli = 100L
+    )
+
+    private fun libraryPlanRow() = LibraryBookingPlanEntity(
+        id = "lib-1",
+        schoolId = scope.schoolId.value,
+        executionMode = "LOCAL_DEVICE",
+        targetLocalDate = "2026-01-05",
+        targetLocalTime = "08:00:00",
+        timezoneId = "Asia/Shanghai",
+        precheckAtEpochMillis = 100L,
+        finalCheckAtEpochMillis = 200L,
+        fireAtEpochMillis = 300L,
+        precheckStatus = "PENDING",
+        finalCheckStatus = "PENDING",
+        fireStatus = "PENDING",
+        preferredAreaName = "二层东区",
+        preferredSeatLabel = "A101",
+        allowAlternativeSeat = true,
+        cloudJobId = null,
+        externalBookingId = null,
+        evidenceSha256 = null,
+        priceMicropeach = 0L,
+        paymentState = "NOT_REQUIRED",
+        status = "ARMED",
+        stateVersion = 1,
+        generation = 1,
+        lastDiagnosticMessage = "do-not-export-diagnostic",
+        createdAtEpochMillis = 100L,
+        updatedAtEpochMillis = 100L,
+        repeatDays = 1,
+        remainingDays = 1,
+        ownerCloudUserId = null,
+        ownerStudentId = null
+    )
+
+    private fun parcelRow() = ParcelItemEntity(
+        id = "parcel-1",
+        trackingNumber = "trk-1",
+        carrierCode = "zto",
+        carrierName = "中通快递",
+        status = "IN_TRANSIT",
+        pickupCode = null,
+        stationName = "校内驿站",
+        itemTitle = "书籍",
+        estimatedDeliveryText = "预计今日送达",
+        sourcesJson = "[{\"detail\":\"upstream-source-detail\"}]",
+        fieldProvenanceJson = "{\"detail\":\"upstream-field-detail\"}",
+        checkpointsJson = "[{\"detail\":\"upstream-checkpoint-detail\"}]",
+        createdAtEpochMillis = 100L,
+        updatedAtEpochMillis = 100L
     )
 
     private fun utilityMeterRow() = UtilityMeterEntity(
