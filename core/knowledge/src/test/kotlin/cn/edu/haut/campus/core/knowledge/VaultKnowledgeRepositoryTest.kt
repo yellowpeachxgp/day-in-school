@@ -78,6 +78,7 @@ class VaultKnowledgeRepositoryTest {
 
     @After
     fun tearDown() {
+        repository.close()
         database.close()
     }
 
@@ -181,8 +182,6 @@ class VaultKnowledgeRepositoryTest {
         assertEquals(material.id, row?.sourceEntityId)
 
         val window = TimeWindow(Instant.parse("2026-03-09T00:00:00Z"), Instant.parse("2026-03-10T00:00:00Z"))
-        val personalStore = KnowledgeRuntimeFactory.create(database, scope, extractor, clock = { now })
-        assertNotNull(personalStore)
         val timelineEvents = PersonalTimelineSource(
             cn.edu.haut.campus.core.vault.RoomPersonalEventStore(
                 database = database,
@@ -264,6 +263,7 @@ class VaultKnowledgeRepositoryTest {
         val otherRepository = KnowledgeRuntimeFactory.create(database, otherScope, extractor, clock = { now })
         assertTrue(otherRepository.listMaterials(otherScope).isEmpty())
         assertTrue(otherRepository.searchMaterials(otherScope, "隔离关键词").isEmpty())
+        otherRepository.close()
     }
 
     private fun knowledgeJournalForTimeline(database: HautDatabase): cn.edu.haut.campus.core.vault.RoomVaultJournal {

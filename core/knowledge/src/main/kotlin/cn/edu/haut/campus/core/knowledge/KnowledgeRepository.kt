@@ -5,7 +5,8 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 import java.io.OutputStream
 
 /** 课程知识空间端口。实现必须本地优先、按 scope 隔离，不得联网或代理 AI。 */
-interface KnowledgeRepository {
+interface KnowledgeRepository : AutoCloseable {
+    /** 关闭工厂创建的 outbox 门面；调用后本 repository 不得再写入。 */
     suspend fun archiveMaterial(request: ArchiveMaterialRequest, actor: Actor = Actor.USER): CourseMaterial
 
     suspend fun getMaterial(scope: SchoolAccountScope, materialId: String): CourseMaterial?

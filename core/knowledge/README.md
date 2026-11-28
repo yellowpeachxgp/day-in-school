@@ -13,7 +13,7 @@
 任务卡为 course_materials、review_tasks 预留 Room v16，但 v13（W2-02）、v14（W2-05）、v15（W3-01）尚未按编号顺序合入。为了不抢占迁移编号、不制造跨卡迁移冲突，本实现采用过渡持久化：
 
 1. metadata 是小型 canonical JSON，经 versioned-knowledge-document/v1 信封写入既有 blob_store；
-2. 原始文件与抽取 payload 是不可变 blob；metadata 只保存 blobId/SHA-256/统计，实体 journal 不塞大正文；
+2. 原始文件与抽取 payload 是不可变 blob；原始字节在 blob_store 使用 application/octet-stream 作为内容身份，导入方声明的 MIME 只保存在 metadata，避免同字节跨课程/标签冲突；大 blob 读取经 SQLite substr 分块，绕开 CursorWindow 单行上限。metadata 只保存 blobId/SHA-256/统计，实体 journal 不塞大正文；
 3. course_materials 逻辑实体类型为 COURSE_MATERIAL，页级搜索投影为 COURSE_MATERIAL_PAGE；review_tasks 逻辑实体使用既有 REVIEW_ITEM；
 4. 待 v13–v15 合入且 v16 窗口可使用时，应按这些格式做显式迁移，不得重写既有 blob 内容身份。
 
@@ -21,7 +21,7 @@
 
 ## 组合入口
 
-KnowledgeRuntimeFactory.create(database, scope, textExtractor) 返回 KnowledgeRepository。应用层只需要注入当前 profile 的 HautDatabase、精确 SchoolAccountScope 与 W2-04 抽取端口。主导航与文件选择器接入不在本切片内，避免抢占 MainActivity/AppGraph 热点。
+KnowledgeRuntimeFactory.create(database, scope, textExtractor) 返回 KnowledgeRepository。应用层只需要注入当前 profile 的 HautDatabase、精确 SchoolAccountScope 与 W2-04 抽取端口。repository 实现 AutoCloseable；若门面早于账号库销毁，集成方必须 close 以释放 W1-03 outbox 的 Room invalidation observer。主导航与文件选择器接入不在本切片内，避免抢占 MainActivity/AppGraph 热点。
 
 ## 搜索定位
 

@@ -69,7 +69,10 @@ class VaultKnowledgeRepositoryEdgeTest {
     }
 
     @After
-    fun tearDown() = database.close()
+    fun tearDown() {
+        repository.close()
+        database.close()
+    }
 
     @Test
     fun largeMaterialCanBeExportedThroughChunkedBlobReads() = runBlocking {

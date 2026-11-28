@@ -41,9 +41,10 @@ object KnowledgeRuntimeFactory {
         val searchProjector = KnowledgeSearchProjector(scope, searchIndex, blobStore)
         val materialSnapshots = CourseMaterialSnapshotStore(materialDocuments, scope, searchProjector, clock)
         val reviewSnapshots = ReviewTaskSnapshotStore(reviewDocuments, scope, clock)
+        val outbox = RoomEventOutbox(database)
         val journal = RoomVaultJournal(
             database = database,
-            outbox = RoomEventOutbox(database),
+            outbox = outbox,
             snapshotStores = listOf(
                 materialSnapshots,
                 reviewSnapshots,
@@ -69,7 +70,8 @@ object KnowledgeRuntimeFactory {
             reviewDocuments = reviewDocuments,
             personalEventStore = personalEvents,
             textExtractor = textExtractor,
-            clock = clock
+            clock = clock,
+            ownedCloseables = listOf(outbox)
         )
     }
 }

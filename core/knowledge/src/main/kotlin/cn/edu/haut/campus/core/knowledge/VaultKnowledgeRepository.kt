@@ -40,8 +40,13 @@ class VaultKnowledgeRepository internal constructor(
     private val reviewDocuments: VersionedBlobDocumentStore,
     private val personalEventStore: PersonalEventStore,
     private val textExtractor: TextExtractPort,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    private val ownedCloseables: List<AutoCloseable> = emptyList()
 ) : KnowledgeRepository {
+
+    override fun close() {
+        ownedCloseables.forEach { it.close() }
+    }
 
     override suspend fun archiveMaterial(request: ArchiveMaterialRequest, actor: Actor): CourseMaterial {
         requireScope(request.scope)
