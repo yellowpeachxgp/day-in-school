@@ -126,7 +126,7 @@ class CommunityDormCollaborationAdapter(
 
         val members = requireArray(membersResult.value.data, "data").map { parseDormMember(it.requireObj("member")) }
         val entries = requireArray(entriesResult.value.data, "data").map {
-            parseDormLedgerEntry(it.requireObj("ledger entry")).also { entry -> validateDormLedgerEntryInvariants(entry) }
+            parseDormLedgerEntry(it.requireObj("ledger entry")).also { entry -> validateCloudLedgerEntryInvariants(entry) }
         }
         val balances = parseDormLedgerBalances(balancesResult.value.data.requireObj("ledger balances"))
         val settlements = requireArray(settlementsResult.value.data, "data").map { parseDormSettlement(it.requireObj("settlement")) }
@@ -190,9 +190,11 @@ class CommunityDormCollaborationAdapter(
             idempotencyKey = idempotencyKey,
         ).unwrap("createLedgerEntry")
         val entry = parseDormLedgerEntry(result.value.data.requireObj("ledger entry"))
-        validateDormLedgerEntryInvariants(entry)
-        validateSharesMatchCoreLedger(input.amountFen, input.splitRule, activeMemberIds, entry.shares)
-        require(entry.shares == expectedShares) { "云端分摊结果与本地预览不一致" }
+        validateCloudLedgerEntryInvariants(entry)
+        validateCloudSharesMatchCoreLedger(input.amountFen, input.splitRule, activeMemberIds, entry.shares)
+        if (entry.shares != expectedShares) {
+            throw DormCollaborationException(DormErrorKind.CONTRACT, "云端分摊结果与本地预览不一致", retryable = false)
+        }
         return entry
     }
 
@@ -218,10 +220,10 @@ class CommunityDormCollaborationAdapter(
             idempotencyKey = idempotencyKey,
         ).unwrap("amendLedgerEntry")
         val entry = parseDormLedgerEntry(result.value.data.requireObj("ledger correction"))
-        validateDormLedgerEntryInvariants(entry)
-        validateSharesMatchCoreLedger(input.amountFen, input.splitRule, activeMemberIds, entry.shares)
-        require(entry.kind == DormLedgerEntryKind.CORRECTION && entry.correctsEntryId == entryId) {
-            "云端更正记录缺少正确的 corrects_entry_id 链"
+        validateCloudLedgerEntryInvariants(entry)
+        validateCloudSharesMatchCoreLedger(input.amountFen, input.splitRule, activeMemberIds, entry.shares)
+        if (entry.kind != DormLedgerEntryKind.CORRECTION || entry.correctsEntryId != entryId) {
+            throw DormCollaborationException(DormErrorKind.CONTRACT, "云端更正记录缺少正确的 corrects_entry_id 链", retryable = false)
         }
         return entry
     }
@@ -395,6 +397,37 @@ class CommunityDormCollaborationAdapter(
             message = operation + "：" + message,
             retryable = retryable,
             userAction = userAction,
+        )
+    }
+}
+
+private fun validateCloudLedgerEntryInvariants(entry: DormLedgerEntry) {
+    try {
+        validateDormLedgerEntryInvariants(entry)
+    } catch (error: IllegalArgumentException) {
+        throw DormCollaborationException(
+            DormErrorKind.CONTRACT,
+            "云端账本记录违反整数分/分摊守恒契约：" + error.message,
+            retryable = false,
+            cause = error,
+        )
+    }
+}
+
+private fun validateCloudSharesMatchCoreLedger(
+    amountFen: Long,
+    rule: DormSplitRule,
+    activeMemberIds: Collection<String>,
+    expectedShares: List<DormSplitShare>,
+) {
+    try {
+        validateSharesMatchCoreLedger(amountFen, rule, activeMemberIds, expectedShares)
+    } catch (error: IllegalArgumentException) {
+        throw DormCollaborationException(
+            DormErrorKind.CONTRACT,
+            "云端分摊结果与 core:ledger largest-remainder 语义不一致",
+            retryable = false,
+            cause = error,
         )
     }
 }
