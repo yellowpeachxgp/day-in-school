@@ -376,7 +376,7 @@ private fun E2eeSyncPanel(sync: E2eeSyncPanelUiState, actions: BackupCenterUiAct
             ) { Text("停用并撤销") }
         }
     }
-    if (sync.enabled && sync.devices.isNotEmpty()) {
+    if (sync.devices.isNotEmpty()) {
         Spacer(modifier = Modifier.height(10.dp))
         Text("同步设备", style = MaterialTheme.typography.titleSmall)
         sync.devices.take(4).forEach { device ->

@@ -415,7 +415,7 @@ class BackupCenterViewModel(
             status.conflicts.isNotEmpty() || status.pendingWriteCount > 0 -> SettingsUiMatrix.Partial
             else -> SettingsUiMatrix.Content
         }
-        val devices = if (status?.enabled == true && hasCloudSession) {
+        val devices = if (hasCloudSession) {
             runCatching { client.listDevices() }.getOrDefault(emptyList()).map { device ->
                 E2eeSyncDeviceSummary(
                     deviceId = device.deviceId,

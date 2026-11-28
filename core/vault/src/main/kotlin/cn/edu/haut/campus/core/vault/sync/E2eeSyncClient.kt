@@ -19,8 +19,8 @@ class E2eeSyncClient internal constructor(
     suspend fun status(): E2eeSyncStatus = newEngineForCurrentState().status()
 
     suspend fun listDevices(): List<SyncDevice> {
-        val (state, api) = stateAndApi()
-        if (!state.enabled) return emptyList()
+        val (_, api) = stateAndApi()
+        // 设备管理是账号安全控制：即使 consent 已撤回或本机已停用，仍允许列出现存登记并撤销失窃设备。
         return api.listDevices()
     }
 
@@ -51,9 +51,14 @@ class E2eeSyncClient internal constructor(
         when (mode) {
             E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE -> {
                 if (keyStore.exists()) {
-                    throw E2eeSyncCryptoException("本机已存在同步密钥；为避免割裂同步空间，请使用已有恢复密钥加入或先明确擦除本地同步状态")
+                    // 首轮启用可能在密钥落盘后、设备登记成功前失败；此时用户尚未拿到恢复密钥。
+                    // state.keyId 仍为空可证明从未完成启用，必须复用该密钥完成同一轮注册而不是迫使用户丢失空间。
+                    if (state.keyId != null) {
+                        throw E2eeSyncCryptoException("本机已存在同步密钥；为避免割裂同步空间，请使用已有恢复密钥加入或先明确擦除本地同步状态")
+                    }
+                } else {
+                    recoveryForUser = keyStore.createNew()
                 }
-                recoveryForUser = keyStore.createNew()
             }
             E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE -> {
                 val recovery = recoveryKeyInput?.trim().orEmpty()
@@ -62,9 +67,17 @@ class E2eeSyncClient internal constructor(
             }
         }
         val material = keyStore.load()
+        if (mode == E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE && recoveryForUser == null && state.keyId == null) {
+            recoveryForUser = E2eeSyncRecoveryKeys.encodeMaterial(material.masterKey, material.syncSpaceId)
+        }
         try {
             val deviceId = state.deviceId?.takeIf { it.isNotBlank() } ?: uuid()
             E2eeSyncProtocol.requireValidUuid(deviceId, "deviceId")
+            if (state.deviceId != deviceId) {
+                // 在任何网络写之前持久化 installation UUID：注册结果不确定时，下一次重试必须携带同一
+                // device_id 与同一 Idempotency-Key，不能因进程重启/网络中断再生成的新设备挤占配额。
+                stateStore.save(state.copy(deviceId = deviceId))
+            }
             val api = apiFactory { deviceId }
             val consent = api.grantConsent()
             val label = deviceLabel?.trim()?.takeIf { it.isNotEmpty() }?.take(80)

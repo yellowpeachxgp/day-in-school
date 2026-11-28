@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.vault.sync
 
+import java.io.IOException
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -53,6 +54,34 @@ class E2eeSyncClientLifecycleTest {
     }
 
     @Test
+    fun interruptedFirstRegistrationRetriesWithSameDeviceKeyAndIdempotencyIdentity() = runBlocking {
+        val api = LifecycleApi()
+        api.failNextRegisterWithIOException = true
+        val keyStore = InMemoryE2eeSyncKeyStore()
+        val stateStore = InMemoryE2eeSyncStateStore()
+        val client = E2eeSyncClient(
+            stateStore = stateStore,
+            keyStore = keyStore,
+            backupStore = EmptyBackupStore(),
+            apiFactory = { api },
+            cloudUserIdProvider = { "cloud-user-a" }
+        )
+
+        try {
+            client.enable(E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE, "测试 Android")
+            org.junit.Assert.fail("首次注册网络失败必须向上暴露")
+        } catch (expected: IOException) {
+            // expected: 密钥与 installation UUID 已在首个网络写前持久化
+        }
+        val failedDeviceId = stateStore.load().deviceId
+        assertNotNull(failedDeviceId)
+
+        val retry = client.enable(E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE, "测试 Android")
+        assertEquals(failedDeviceId, retry.deviceId)
+        assertNotNull("中断重试成功后仍必须给用户一次抄写恢复密钥的机会", retry.recoveryKeyForUserCopy)
+    }
+
+    @Test
     fun cloudIdentityMismatchFreezesEnableInsteadOfMixingAccounts() = runBlocking {
         val api = LifecycleApi()
         val client = E2eeSyncClient(
@@ -82,6 +111,7 @@ class E2eeSyncClientLifecycleTest {
     private class LifecycleApi : E2eeSyncApi {
         val events = mutableListOf<String>()
         private val consentId = UUID.randomUUID().toString()
+        var failNextRegisterWithIOException = false
 
         override suspend fun grantConsent(): SyncConsentRecord {
             events += "grant"
@@ -100,6 +130,10 @@ class E2eeSyncClientLifecycleTest {
         override suspend fun listDevices(): List<SyncDevice> = emptyList()
 
         override suspend fun registerDevice(deviceId: String, consentId: String, deviceLabel: String?, idempotencyKey: String): SyncDevice {
+            if (failNextRegisterWithIOException) {
+                failNextRegisterWithIOException = false
+                throw IOException("simulated registration network loss")
+            }
             events += "register"
             return SyncDevice(deviceId, "ACTIVE", deviceLabel, "ANDROID", 1, "2026-01-01T00:00:00Z", null, null, null)
         }

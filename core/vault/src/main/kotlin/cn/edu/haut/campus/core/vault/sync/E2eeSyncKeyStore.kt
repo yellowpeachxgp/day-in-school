@@ -69,6 +69,12 @@ object E2eeSyncRecoveryKeys {
 
     fun syncSpaceId(syncSpace: ByteArray): String =
         Base64.getUrlEncoder().withoutPadding().encodeToString(syncSpace)
+
+    fun encodeMaterial(masterKey: ByteArray, syncSpaceId: String): String = try {
+        encode(masterKey, Base64.getUrlDecoder().decode(syncSpaceId))
+    } catch (error: IllegalArgumentException) {
+        throw E2eeSyncCryptoException("sync space id 不是合法 base64url", error)
+    }
 }
 
 /** Android Keystore 包装密钥 + 应用私有目录密封文件。包装密钥不可导出；sealed 文件不含明文 key。 */
