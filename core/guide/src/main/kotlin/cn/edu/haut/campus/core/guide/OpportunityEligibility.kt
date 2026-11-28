@@ -7,7 +7,19 @@ data class RequirementAssessment(
     val requirement: OpportunityRequirement,
     val fact: OpportunityRequirementFact?,
     val satisfaction: RequirementSatisfaction
-)
+) {
+    /**
+     * 自动资格判断只相信 COMPUTED 证据。USER_ATTESTATION 是个人线索，可在 UI 中展示、
+     * 也可作为人工 override 的依据，但不能把不可核实信息自动提升为「符合」。
+     */
+    val automaticSatisfaction: RequirementSatisfaction
+        get() = when {
+            satisfaction == RequirementSatisfaction.NOT_SATISFIED -> RequirementSatisfaction.NOT_SATISFIED
+            satisfaction == RequirementSatisfaction.SATISFIED && fact?.source == RequirementFactSource.COMPUTED ->
+                RequirementSatisfaction.SATISFIED
+            else -> RequirementSatisfaction.UNKNOWN
+        }
+}
 
 data class EligibilityAssessment(
     val baseState: EligibilityState,
@@ -48,15 +60,15 @@ object OpportunityEligibilityEvaluator {
             )
         }
         val baseState = when {
-            assessments.any { it.satisfaction == RequirementSatisfaction.NOT_SATISFIED } -> EligibilityState.NOT_ELIGIBLE
-            assessments.all { it.satisfaction == RequirementSatisfaction.SATISFIED } -> EligibilityState.ELIGIBLE
+            assessments.any { it.automaticSatisfaction == RequirementSatisfaction.NOT_SATISFIED } -> EligibilityState.NOT_ELIGIBLE
+            assessments.all { it.automaticSatisfaction == RequirementSatisfaction.SATISFIED } -> EligibilityState.ELIGIBLE
             else -> EligibilityState.NEEDS_VERIFICATION
         }
         return EligibilityAssessment(
             baseState = baseState,
             effectiveState = manualOverride?.state ?: baseState,
             requirements = assessments,
-            missingRequirementIds = assessments.filter { it.satisfaction == RequirementSatisfaction.UNKNOWN }.map { it.requirement.id },
+            missingRequirementIds = assessments.filter { it.automaticSatisfaction == RequirementSatisfaction.UNKNOWN }.map { it.requirement.id },
             manualOverride = manualOverride
         )
     }

@@ -148,8 +148,12 @@ object GuideProgressCodec {
         materialObject.fields.forEach { (indexRaw, value) ->
             val index = indexRaw.toIntOrNull()
                 ?: throw GuidePersistenceException("opportunity 材料下标不是非负整数：" + indexRaw)
-            if (index < 0) throw GuidePersistenceException("opportunity 材料下标不能为负：" + indexRaw)
-            materials[index] = expectInstant(value, "$.completedMaterials." + indexRaw)
+            if (index < 0 || indexRaw != index.toString()) {
+                throw GuidePersistenceException("opportunity 材料下标必须是非负规范整数：" + indexRaw)
+            }
+            if (materials.put(index, expectInstant(value, "$.completedMaterials." + indexRaw)) != null) {
+                throw GuidePersistenceException("opportunity 材料下标重复：" + indexRaw)
+            }
         }
         return try {
             OpportunityProgressSnapshot(

@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.guide
 
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
+import cn.edu.haut.campus.core.packages.datapack.OpportunityRequirement
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
@@ -26,7 +27,26 @@ class OpportunityEligibilityTest {
     }
 
     @Test
-    fun all_satisfied_requirements_are_eligible() {
+    fun all_computed_satisfied_requirements_are_eligible() {
+        val computableItem = item.copy(
+            requirements = listOf(
+                OpportunityRequirement("enrolled", "在读学生", computable = true),
+                OpportunityRequirement("credits", "达到最低学分", computable = true)
+            )
+        )
+        val assessment = OpportunityEligibilityEvaluator.assess(
+            computableItem,
+            facts = mapOf(
+                "enrolled" to OpportunityRequirementFact(RequirementSatisfaction.SATISFIED, RequirementFactSource.COMPUTED),
+                "credits" to OpportunityRequirementFact(RequirementSatisfaction.SATISFIED, RequirementFactSource.COMPUTED)
+            )
+        )
+
+        assertEquals(EligibilityState.ELIGIBLE, assessment.baseState)
+    }
+
+    @Test
+    fun user_attested_yes_remains_needs_verification_without_manual_override() {
         val assessment = OpportunityEligibilityEvaluator.assess(
             item,
             facts = mapOf(
@@ -35,7 +55,8 @@ class OpportunityEligibilityTest {
             )
         )
 
-        assertEquals(EligibilityState.ELIGIBLE, assessment.baseState)
+        assertEquals(EligibilityState.NEEDS_VERIFICATION, assessment.baseState)
+        assertEquals(listOf("mentor"), assessment.missingRequirementIds)
     }
 
     @Test

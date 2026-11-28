@@ -117,14 +117,13 @@ data class ProcedureRunSnapshot(
     init {
         require(revision > 0) { "procedure 进度 revision 必须为正" }
         require(!updatedAt.isBefore(createdAt)) { "procedure 进度 updatedAt 不能早于 createdAt" }
-        require(packId.isNotBlank() && itemId.isNotBlank() && artifactSha256.length == 64) {
-            "procedure 进度缺少包/条目/摘要身份"
-        }
-        require(answers.keys.all { it.isNotBlank() } && answers.values.all { it.isNotBlank() }) {
-            "procedure 答案键值不能为空"
+        requireProgressIdentity(packId, itemId, artifactSha256, "procedure")
+        require(answers.keys.all { validProgressToken(it) } && answers.values.all { it.isNotBlank() }) {
+            "procedure 答案键值不能为空或含非法字符"
         }
         require(completedStepIds.distinct().size == completedStepIds.size) { "procedure 已完成步骤重复" }
-        require(scheduledSteps.keys.all { it.isNotBlank() }) { "procedure 计划步骤 ID 不能为空" }
+        require(completedStepIds.all(::validProgressToken)) { "procedure 已完成步骤 ID 含非法字符" }
+        require(scheduledSteps.keys.all(::validProgressToken)) { "procedure 计划步骤 ID 不能为空或含非法字符" }
     }
 }
 
@@ -206,11 +205,20 @@ data class OpportunityProgressSnapshot(
     init {
         require(revision > 0) { "opportunity 进度 revision 必须为正" }
         require(!updatedAt.isBefore(createdAt)) { "opportunity 进度 updatedAt 不能早于 createdAt" }
-        require(packId.isNotBlank() && itemId.isNotBlank() && artifactSha256.length == 64) {
-            "opportunity 进度缺少包/条目/摘要身份"
-        }
+        requireProgressIdentity(packId, itemId, artifactSha256, "opportunity")
+        require(facts.keys.all(::validProgressToken)) { "opportunity 资格要求 ID 含非法字符" }
         require(completedMaterials.keys.all { it >= 0 }) { "opportunity 材料下标不能为负" }
     }
+}
+
+private val HEX_SHA256 = Regex("^[0-9a-f]{64}$")
+
+private fun validProgressToken(value: String): Boolean =
+    value.isNotBlank() && value.length <= 256 && value.none { it.isISOControl() || it.isWhitespace() }
+
+private fun requireProgressIdentity(packId: String, itemId: String, artifactSha256: String, label: String) {
+    require(validProgressToken(packId) && validProgressToken(itemId)) { label + " 进度缺少合法包/条目身份" }
+    require(HEX_SHA256.matches(artifactSha256)) { label + " 进度 artifactSha256 必须是小写 SHA-256 hex" }
 }
 
 sealed interface GuideRestoreResult {
