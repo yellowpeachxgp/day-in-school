@@ -44,7 +44,7 @@ class PersonalTimelineSourceTest {
     }
 
     @Test
-    fun personal source声明personal_events全部首批宿主kind() {
+    fun personalSource声明personalEvents全部首批宿主kind() {
         val source = PersonalTimelineSource(PersonalEventTimelineInputProvider { _, _ -> flowOf(emptyList()) })
 
         assertEquals(
