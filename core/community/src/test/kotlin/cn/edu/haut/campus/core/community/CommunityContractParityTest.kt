@@ -102,7 +102,7 @@ class CommunityContractParityTest {
 
         resetOperationState()
         yaml.lines().forEach { line ->
-            val pathMatch = Regex("^  (/api/v1\S*):").find(line)
+            val pathMatch = Regex("^  (/api/v1\\S*):").find(line)
             if (pathMatch != null) {
                 flush()
                 currentPath = pathMatch.groupValues[1]
@@ -111,7 +111,7 @@ class CommunityContractParityTest {
                 return@forEach
             }
 
-            val methodMatch = Regex("^    (get|post|put|patch|delete):\s*$").find(line)
+            val methodMatch = Regex("^    (get|post|put|patch|delete):\\s*$").find(line)
             if (methodMatch != null) {
                 flush()
                 currentMethod = methodMatch.groupValues[1]
@@ -141,7 +141,7 @@ class CommunityContractParityTest {
                 extractSchemaRef(trimmed)?.let { requestSchema = it }
             }
             if (insideResponses) {
-                val statusMatch = Regex("^'(\d{3})':").find(trimmed)
+                val statusMatch = Regex("^'(\\d{3})':").find(trimmed)
                 if (statusMatch != null) currentStatusCode = statusMatch.groupValues[1]
                 if (currentStatusCode?.startsWith("2") == true) {
                     extractSchemaRef(trimmed)?.let { successEnvelopes += it }

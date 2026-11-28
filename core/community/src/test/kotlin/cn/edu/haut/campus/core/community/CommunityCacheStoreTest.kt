@@ -113,7 +113,7 @@ class CommunityCacheStoreTest {
         val filesDir = Files.createTempDirectory("community-cache-limit-test").toFile()
         try {
             val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_limit")
-            val store = FileCommunityCacheStore(root, maxEntryBytes = 32)
+            val store = FileCommunityCacheStore(root.toPath(), maxEntryBytes = 32)
             val cacheKey = key()
             org.junit.Assert.assertThrows(java.io.IOException::class.java) {
                 kotlinx.coroutines.runBlocking { store.write(cacheKey, envelope(), 1L) }
