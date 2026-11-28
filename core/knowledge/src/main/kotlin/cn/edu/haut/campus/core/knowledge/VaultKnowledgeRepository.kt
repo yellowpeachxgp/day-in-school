@@ -422,12 +422,20 @@ class VaultKnowledgeRepository internal constructor(
         // 单字 CJK fallback 也按原文子串定位，因为索引层本来就用 normalizedText fallback。
         if (unit.any(::isCjkCharacter)) {
             if (unit.all(::isCjkCharacter)) return normalizedText.contains(unit)
+            val startsWithNonCjkWord = !isCjkCharacter(unit.first())
+            val endsWithNonCjkWord = !isCjkCharacter(unit.last())
+            val tailPrefixRunLength = trailingNonCjkWordRunLength(unit)
             var mixedIndex = normalizedText.indexOf(unit)
             while (mixedIndex >= 0) {
                 val mixedEnd = mixedIndex + unit.length
-                val leftEmbedded = mixedIndex > 0 && isNonCjkWordContinuationCharacter(normalizedText[mixedIndex - 1])
-                val rightEmbedded = mixedEnd < normalizedText.length && isNonCjkWordContinuationCharacter(normalizedText[mixedEnd])
-                if (!leftEmbedded && !rightEmbedded) return true
+                // 只在匹配片自身以非 CJK 词开头/结尾时检查该侧嵌入；CJK 与非 CJK 相邻本来就是
+                // Vault 混合脚本分词边界，不能把 CPU缓存RAM 误判成一个英文词。
+                val leftEmbedded = startsWithNonCjkWord && mixedIndex > 0 &&
+                    isNonCjkWordContinuationCharacter(normalizedText[mixedIndex - 1])
+                val rightEmbedded = endsWithNonCjkWord && mixedEnd < normalizedText.length &&
+                    isNonCjkWordContinuationCharacter(normalizedText[mixedEnd])
+                val allowsTailPrefixContinuation = isQueryTail && tailPrefixRunLength >= 3
+                if (!leftEmbedded && (!rightEmbedded || allowsTailPrefixContinuation)) return true
                 mixedIndex = normalizedText.indexOf(unit, mixedIndex + 1)
             }
             return false
@@ -449,6 +457,18 @@ class VaultKnowledgeRepository internal constructor(
             index = normalizedText.indexOf(unit, index + 1)
         }
         return false
+    }
+
+    private fun trailingNonCjkWordRunLength(unit: String): Int {
+        var length = 0
+        var index = unit.length
+        while (index > 0) {
+            val char = unit[index - 1]
+            if (isCjkCharacter(char) || !isWordContinuationCharacter(char)) break
+            length++
+            index--
+        }
+        return length
     }
 
     private fun isWordContinuationCharacter(char: Char): Boolean {

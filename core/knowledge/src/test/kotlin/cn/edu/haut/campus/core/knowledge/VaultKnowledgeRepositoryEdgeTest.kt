@@ -330,6 +330,55 @@ class VaultKnowledgeRepositoryEdgeTest {
     }
 
     @Test
+    fun mixedScriptMatchAcceptsNaturalScriptBoundaries() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 4, "CPU缓存RAM"))
+        repository.archiveMaterial(pdfRequest("混排边界课件", byteArrayOf(6)))
+
+        val forward = repository.searchMaterials(scope, "CPU缓存")
+        assertEquals(1, forward.size)
+        assertEquals(4, forward[0].pageIndex)
+        assertEquals(0, forward[0].lineIndex)
+        assertNotNull(forward[0].bounds)
+
+        val backward = repository.searchMaterials(scope, "缓存RAM")
+        assertEquals(1, backward.size)
+        assertEquals(4, backward[0].pageIndex)
+        assertEquals(0, backward[0].lineIndex)
+        assertNotNull(backward[0].bounds)
+    }
+
+    @Test
+    fun mixedScriptTailPrefixCanLocateLongFinalWordRun() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 1, "缓存protocol"))
+        repository.archiveMaterial(pdfRequest("协议课件", byteArrayOf(7)))
+
+        val hits = repository.searchMaterials(scope, "缓存pro")
+        assertEquals(1, hits.size)
+        assertEquals(1, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+        assertNotNull(hits[0].bounds)
+    }
+
+    @Test
+    fun mixedScriptPrefixDoesNotLocateShortOrNonfinalWordRun() = runBlocking {
+        extractor.pdfLines = listOf(
+            extractedLine(0, 2, "缓存protocol"),
+            extractedLine(1, 2, "x pr")
+        )
+        repository.archiveMaterial(pdfRequest("缓存pr 缓存pro x 课件", byteArrayOf(8)))
+
+        val shortRunHits = repository.searchMaterials(scope, "缓存pr")
+        assertEquals(1, shortRunHits.size)
+        assertNull("短尾词不是 FTS 前缀，不得定位到缓存praxis/protocol 类长词", shortRunHits[0].pageIndex)
+        assertNull(shortRunHits[0].lineIndex)
+
+        val nonfinalHits = repository.searchMaterials(scope, "缓存pro x")
+        assertEquals(1, nonfinalHits.size)
+        assertNull("非查询尾部混排片不得享受 pro 前缀续接", nonfinalHits[0].pageIndex)
+        assertNull(nonfinalHits[0].lineIndex)
+    }
+
+    @Test
     fun photoOcrArchivesIndexesAndKeepsImageCoordinates() = runBlocking {
         extractor.imageLines = listOf(
             extractedLine(0, 0, "黑板：缓存一致性", coordinateSpace = TextCoordinateSpace.IMAGE_PIXEL_TOP_LEFT)
