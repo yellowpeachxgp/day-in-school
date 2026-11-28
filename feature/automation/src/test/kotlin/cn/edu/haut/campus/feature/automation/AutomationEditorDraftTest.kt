@@ -52,6 +52,17 @@ class AutomationEditorDraftTest {
     }
 
     @Test
+    fun commuteConditionIncludesExplicitOriginCampus() {
+        val draft = AutomationEditorDraft(commuteTime = true, commuteFromCampusText = "haut-lianhuajie")
+
+        val condition = draft.toRule(AutomationPreviewFixtures.scope).conditions.first {
+            it.type == BuiltinAutomationTypes.CONDITION_COMMUTE_TIME
+        }
+
+        assertEquals("haut-lianhuajie", condition.config.str("fromCampus"))
+    }
+
+    @Test
     fun personalEventActionIsAvailableAlongsideTask() {
         val draft = AutomationEditorDraft(createEvent = true, eventDurationMinutesText = "45")
 

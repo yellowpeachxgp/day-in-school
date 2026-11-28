@@ -214,6 +214,7 @@ private fun draftFromRule(rule: AutomationRule): AutomationEditorDraft {
             ?: triggered.campusIdText,
         focusPeriod = cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_FOCUS_PERIOD in conditionTypes,
         commuteTime = commuteSpec != null,
+        commuteFromCampusText = commuteSpec?.config?.str("fromCampus") ?: triggered.commuteFromCampusText,
         commuteMaxMinutesText = commuteSpec?.config?.obj("maxMinutes")?.intOrNull()?.toString() ?: triggered.commuteMaxMinutesText,
         dataFreshness = freshnessSpec != null,
         freshnessMaxAgeHoursText = freshnessSpec?.config?.obj("maxAgeSeconds")?.intOrNull()?.let { (it / 3600).coerceAtLeast(1).toString() }

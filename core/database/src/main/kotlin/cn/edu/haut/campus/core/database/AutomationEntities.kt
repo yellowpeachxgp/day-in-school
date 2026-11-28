@@ -32,7 +32,8 @@ data class AutomationRuleEntity(
     val templateId: String?,
     val schemaVersion: Int,
     val createdAtEpochMs: Long,
-    val updatedAtEpochMs: Long
+    val updatedAtEpochMs: Long,
+    val activatedAtEpochMs: Long?
 )
 
 /** 自动化运行记录；evaluations/outcomes 是小型脱敏事实 JSON，不包含凭据或原文 blob。 */
@@ -268,6 +269,7 @@ val MIGRATION_12_13 = object : Migration(12, 13) {
                 schemaVersion INTEGER NOT NULL,
                 createdAtEpochMs INTEGER NOT NULL,
                 updatedAtEpochMs INTEGER NOT NULL,
+                activatedAtEpochMs INTEGER,
                 PRIMARY KEY(id)
             )
             """.trimIndent()

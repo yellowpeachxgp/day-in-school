@@ -167,11 +167,20 @@ class AutomationRuntime private constructor(
 
     private suspend fun processWakeExclusive(reason: String): AutomationWakeSummary {
         val now = clock.instant()
+        // wipe/账号异常导致周期任务被取消后，任何后续手动或闹钟唤醒都必须自愈 backstop；
+        // UPDATE 是幂等重排，不是保活循环。
+        AutomationRuntimeCoordinator.schedulePeriodic(appContext, accountScope())
         val publishedGeofence = runCatching { geofenceMonitor.sampleAndPublish() }.getOrDefault(0)
         val publishedUtility = runCatching { utilityBalanceProjector.publishChangedBalances() }.getOrDefault(0)
         val consumed = consumeOutboxExclusive()
         val planned = planEnabledRules(now)
-        val due = planned.filter { !it.second.fireAt.isAfter(now) }
+        val activationCutoffs = database.automationDao().getRulesSnapshot().associate { row ->
+            row.id to row.activatedAtEpochMs?.let(Instant::ofEpochMilli)
+        }
+        val due = planned.filter { (rule, trigger) ->
+            val cutoff = activationCutoffs[rule.id]
+            !trigger.fireAt.isAfter(now) && (cutoff == null || !trigger.fireAt.isBefore(cutoff))
+        }
         var fired = 0
         for ((rule, trigger) in due) {
             val result = engine.executeTrigger(
@@ -205,7 +214,10 @@ class AutomationRuntime private constructor(
         ruleStore = ruleStore,
         engine = engine,
         consumerGroup = CONSUMER_GROUP,
-        utilitySamplesProvider = { utilityBalanceHistoryProvider.samples() }
+        utilitySamplesProvider = { utilityBalanceHistoryProvider.samples() },
+        activationCutoffProvider = { ruleId ->
+            database.automationDao().getRule(ruleId)?.activatedAtEpochMs?.let(Instant::ofEpochMilli)
+        }
     ).consumeOnce()
 
     private suspend fun planEnabledRules(now: Instant): List<Pair<AutomationRule, PlannedTriggerInstance>> {
@@ -283,10 +295,8 @@ private class RepositoryDataFreshnessPort(
         val prefs = repository.preferencesFlow.first()
         val epochMs = when (capability) {
             CapabilityKind.TIMETABLE_READ,
-            CapabilityKind.GRADES_READ,
-            CapabilityKind.EXAMS_READ,
             CapabilityKind.ACADEMIC_CALENDAR_READ,
-            CapabilityKind.ACADEMIC_TERMS_READ -> prefs.lastAutoSyncEpochMillis
+            CapabilityKind.ACADEMIC_TERMS_READ -> prefs.lastAcademicDataSyncEpochMillis
             CapabilityKind.UTILITIES -> prefs.lastUtilitySampleEpochMillis
             else -> null
         }

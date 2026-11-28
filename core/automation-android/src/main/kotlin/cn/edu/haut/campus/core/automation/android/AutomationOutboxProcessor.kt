@@ -21,6 +21,7 @@ class AutomationOutboxProcessor(
     private val codecRegistry: DomainEventCodecRegistry = DomainEventCodecRegistry.DEFAULT,
     private val consumerGroup: String = AutomationRuntime.CONSUMER_GROUP,
     private val utilitySamplesProvider: suspend (SchoolAccountScope) -> List<DomainEvent.UtilityBalanceSampled> = { emptyList() },
+    private val activationCutoffProvider: suspend (String) -> Instant? = { null },
     private val clock: () -> Instant = Instant::now
 ) {
     suspend fun consumeOnce(): Int {
@@ -45,7 +46,7 @@ class AutomationOutboxProcessor(
                 val context = if (event is DomainEvent.UtilityBalanceSampled) {
                     ThresholdEvaluationContext(
                         previousSamples = utilitySamples,
-                        lastTriggeredAt = latestRunStartedAt(rule.id),
+                        lastTriggeredAt = latestRunStartedAt(rule.id, activationCutoffProvider(rule.id)),
                         evaluatedAt = clock()
                     )
                 } else {
@@ -74,6 +75,9 @@ class AutomationOutboxProcessor(
         return consumed
     }
 
-    private suspend fun latestRunStartedAt(ruleId: String): Instant? =
-        engine.runs(ruleId).first().filter { !it.dryRun }.maxByOrNull { it.startedAt }?.startedAt
+    private suspend fun latestRunStartedAt(ruleId: String, activationCutoff: Instant?): Instant? =
+        engine.runs(ruleId).first()
+            .filter { !it.dryRun && (activationCutoff == null || !it.startedAt.isBefore(activationCutoff)) }
+            .maxByOrNull { it.startedAt }
+            ?.startedAt
 }

@@ -250,6 +250,7 @@ class ProfileDataWiper internal constructor(
                 prefs.remove(CampusRepositoryPrefKeys.USER_MANUAL_TERM_SEASON)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_SEASONAL_ROLLOVER_TERM_ID)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS)
+                prefs.remove(CampusRepositoryPrefKeys.LAST_ACADEMIC_DATA_SYNC_MS)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_MS)
                 prefs.remove(CampusRepositoryPrefKeys.LAST_REMINDER_RECONCILE_SUMMARY)
                 prefs.remove(CampusRepositoryPrefKeys.REMINDER_DIAGNOSTIC_LOGS)

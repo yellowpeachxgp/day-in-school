@@ -262,9 +262,17 @@ private fun AutomationEditor(
         ToggleRow("专注时段", draft.focusPeriod) { value -> onDraftChange { it.copy(focusPeriod = value) } }
         ToggleRow("通勤时长", draft.commuteTime) { value -> onDraftChange { it.copy(commuteTime = value) } }
         if (draft.commuteTime) {
+            AutomationTextField(draft.commuteFromCampusText, "通勤起点校区 ID") { value ->
+                onDraftChange { it.copy(commuteFromCampusText = value.filter { ch -> ch.isLetterOrDigit() || ch == '-' }.take(64)) }
+            }
             AutomationTextField(draft.commuteMaxMinutesText, "通勤上限（分钟）") { value ->
                 onDraftChange { it.copy(commuteMaxMinutesText = value.filter(Char::isDigit).take(4)) }
             }
+            Text(
+                "目前只有起止校区相同的通勤有确定估计；跨校区证据不足会按 UNKNOWN 不触发。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         ToggleRow("数据新鲜度", draft.dataFreshness) { value -> onDraftChange { it.copy(dataFreshness = value) } }
         if (draft.dataFreshness) {

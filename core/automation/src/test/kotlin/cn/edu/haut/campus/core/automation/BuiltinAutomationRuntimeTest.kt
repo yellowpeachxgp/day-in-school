@@ -130,6 +130,7 @@ class BuiltinAutomationRuntimeTest {
         val outside = sample("outside", 2100, now.minusSeconds(60))
         val insideBand = sample("inside-band", 2050, now.minusSeconds(60))
         val stillBelow = sample("still-below", 1950, now.minusSeconds(60))
+        val recharge = sample("recharge", 2200, now.minusSeconds(180))
 
         fun evaluate(samples: List<DomainEvent.UtilityBalanceSampled>, last: Instant? = null) =
             BuiltinTriggerPlanner.instanceForDomainEvent(
@@ -139,6 +140,7 @@ class BuiltinAutomationRuntimeTest {
             )
 
         assertNotNull(evaluate(listOf(outside)))
+        assertNotNull("从高值经滞后带逐步下降仍必须触发", evaluate(listOf(recharge, insideBand)))
         assertNull("滞后带内不能形成新的进入边沿", evaluate(listOf(insideBand)))
         assertNull("持续低于阈值不能重复触发", evaluate(listOf(stillBelow)))
         assertNull("冷却期内不能重新进入", evaluate(listOf(outside), now.minusSeconds(3600)))

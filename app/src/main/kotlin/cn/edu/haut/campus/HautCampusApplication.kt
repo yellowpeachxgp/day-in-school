@@ -65,8 +65,20 @@ class HautCampusApplication : Application() {
                         scope: cn.edu.haut.campus.core.model.SchoolAccountScope,
                         reason: String
                     ): Boolean {
-                        WidgetRefreshCoordinator.requestImmediateRefreshAll(this@HautCampusApplication)
-                        return true
+                        // 首页卡片由 Room Flow 驱动；这里执行既有自节流的教务/水电刷新，成功后广播小组件。
+                        val academicHealthy = runCatching {
+                            when (val result = active.repository.performDynamicAcademicSync(force = false)) {
+                                null -> true // 频率限制/功能关闭意味着本轮无需刷新
+                                else -> result.isSuccess
+                            }
+                        }.getOrDefault(false)
+                        val utilitySampled = runCatching {
+                            active.repository.performPeriodicUtilitySampleIfEligible()
+                        }.getOrDefault(false)
+                        if (academicHealthy || utilitySampled) {
+                            WidgetRefreshCoordinator.requestImmediateRefreshAll(this@HautCampusApplication)
+                        }
+                        return academicHealthy || utilitySampled
                     }
                 }
                 AutomationRuntime.bind(this@HautCampusApplication, active, automationRefreshPort)

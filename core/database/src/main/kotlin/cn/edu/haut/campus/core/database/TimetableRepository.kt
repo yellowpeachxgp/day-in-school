@@ -958,6 +958,7 @@ class TimetableRepository internal constructor(
         preferences.edit {
             it[CampusRepositoryPrefKeys.ONBOARDING_COMPLETED] = true
             it[CampusRepositoryPrefKeys.CLEAN_BASE_V2] = true
+            it[CampusRepositoryPrefKeys.LAST_ACADEMIC_DATA_SYNC_MS] = System.currentTimeMillis()
             if (setAsCurrentTerm) {
                 val (xnm, xqm) = HautAcademicEndpoints.fromTermId(preview.termId)
                 it[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] = xnm

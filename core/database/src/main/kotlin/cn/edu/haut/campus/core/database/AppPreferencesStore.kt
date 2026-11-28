@@ -125,6 +125,7 @@ internal class AppPreferencesStore(
             syncXnm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XNM] ?: AcademicTermResolver.defaultAcademicYearCode(),
             syncXqm = prefs[CampusRepositoryPrefKeys.SAVED_SYNC_XQM] ?: AcademicTermResolver.defaultSemesterCode(),
             lastAutoSyncEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_AUTO_SYNC_MS],
+            lastAcademicDataSyncEpochMillis = prefs[CampusRepositoryPrefKeys.LAST_ACADEMIC_DATA_SYNC_MS],
             customChannelUrls = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CHANNEL_URLS]),
             customClubGroupNumbers = decodeKeyValueMap(prefs[CampusRepositoryPrefKeys.CUSTOM_CLUB_GROUPS]),
             campusCommunityCatalog = CampusCloudOidcHelper.parseCampusContentJsonString(

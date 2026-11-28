@@ -44,7 +44,8 @@ class AutomationWipeTest {
                 templateId = null,
                 schemaVersion = 1,
                 createdAtEpochMs = 1L,
-                updatedAtEpochMs = 1L
+                updatedAtEpochMs = 1L,
+                activatedAtEpochMs = null
             )
         )
         dao.insertRun(

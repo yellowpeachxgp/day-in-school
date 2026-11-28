@@ -154,19 +154,46 @@ object BuiltinTriggerPlanner {
         }
         val current = BigDecimal.valueOf(sampled.balanceCents)
         if (!compare(current, spec.op, spec.value)) return false
-        val previous = context.previousSamples
+        val previousValues = context.previousSamples
             .filter { it.meterRef.id == sampled.meterRef.id && it.eventId != sampled.eventId && !it.occurredAt.isAfter(sampled.occurredAt) }
-            .maxByOrNull { it.occurredAt }
-            ?: return true
-        val previousValue = BigDecimal.valueOf(previous.balanceCents)
+            .sortedByDescending { it.occurredAt }
+            .map { BigDecimal.valueOf(it.balanceCents) }
+        if (previousValues.isEmpty()) return true
         return when (spec.op) {
-            CompareOp.LESS_THAN -> previousValue >= spec.value.add(spec.hysteresis)
-            CompareOp.LESS_OR_EQUAL -> previousValue > spec.value.add(spec.hysteresis)
-            CompareOp.GREATER_THAN -> previousValue <= spec.value.subtract(spec.hysteresis)
-            CompareOp.GREATER_OR_EQUAL -> previousValue < spec.value.subtract(spec.hysteresis)
+            CompareOp.LESS_THAN -> wasRearmedForFallingEdge(previousValues, spec.value, spec.hysteresis, inclusiveBoundary = false)
+            CompareOp.LESS_OR_EQUAL -> wasRearmedForFallingEdge(previousValues, spec.value, spec.hysteresis, inclusiveBoundary = true)
+            CompareOp.GREATER_THAN -> wasRearmedForRisingEdge(previousValues, spec.value, spec.hysteresis, inclusiveBoundary = false)
+            CompareOp.GREATER_OR_EQUAL -> wasRearmedForRisingEdge(previousValues, spec.value, spec.hysteresis, inclusiveBoundary = true)
             CompareOp.EQUAL,
-            CompareOp.NOT_EQUAL -> !compare(previousValue, spec.op, spec.value)
+            CompareOp.NOT_EQUAL -> !compare(previousValues.first(), spec.op, spec.value)
         }
+    }
+
+    /** 滞后带内读数只保持既有状态；必须向历史回退到最近一次明确的重新武装/仍处触发态读数。 */
+    private fun wasRearmedForFallingEdge(
+        previousValues: List<BigDecimal>,
+        threshold: BigDecimal,
+        hysteresis: BigDecimal,
+        inclusiveBoundary: Boolean
+    ): Boolean {
+        val rearm = threshold.add(hysteresis)
+        val decisive = previousValues.firstOrNull { value ->
+            if (inclusiveBoundary) value > rearm || value <= threshold else value >= rearm || value < threshold
+        } ?: return true
+        return if (inclusiveBoundary) decisive > rearm else decisive >= rearm
+    }
+
+    private fun wasRearmedForRisingEdge(
+        previousValues: List<BigDecimal>,
+        threshold: BigDecimal,
+        hysteresis: BigDecimal,
+        inclusiveBoundary: Boolean
+    ): Boolean {
+        val rearm = threshold.subtract(hysteresis)
+        val decisive = previousValues.firstOrNull { value ->
+            if (inclusiveBoundary) value < rearm || value >= threshold else value <= rearm || value > threshold
+        } ?: return true
+        return if (inclusiveBoundary) decisive < rearm else decisive <= rearm
     }
 
     private fun geofenceMatches(spec: TriggerSpec.Geofence, event: DomainEvent): Boolean {

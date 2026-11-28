@@ -50,6 +50,13 @@ class RoomAutomationRuleStore(
         val existing = dao.getRule(rule.id)
         val payload = AutomationJsonCodec.encodeRulePayload(rule)
         val nowMs = clock().toEpochMilli()
+        val activatedAtMs = if (!rule.enabled) {
+            null
+        } else if (existing == null || !existing.enabled || existing.triggerJson != payload.triggerJson) {
+            nowMs
+        } else {
+            existing.activatedAtEpochMs ?: nowMs
+        }
         dao.upsertRule(
             AutomationRuleEntity(
                 id = rule.id,
@@ -67,7 +74,8 @@ class RoomAutomationRuleStore(
                 templateId = rule.templateId,
                 schemaVersion = rule.schemaVersion,
                 createdAtEpochMs = existing?.createdAtEpochMs ?: nowMs,
-                updatedAtEpochMs = nowMs
+                updatedAtEpochMs = nowMs,
+                activatedAtEpochMs = activatedAtMs
             )
         )
     }

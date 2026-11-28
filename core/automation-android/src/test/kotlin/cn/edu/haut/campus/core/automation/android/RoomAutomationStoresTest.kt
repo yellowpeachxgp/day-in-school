@@ -83,6 +83,33 @@ class RoomAutomationStoresTest {
     }
 
     @Test
+    fun activationCutoffIsPreservedAcrossContentEditAndResetOnTriggerOrEnableTransition() = runBlocking {
+        var clockMs = now.toEpochMilli()
+        val ruleStore = RoomAutomationRuleStore(database, scope) { Instant.ofEpochMilli(clockMs) }
+        val rule = sampleRule()
+        ruleStore.upsert(rule)
+        val first = database.automationDao().getRule(rule.id)?.activatedAtEpochMs
+        assertEquals(clockMs, first)
+
+        clockMs += 1000L
+        ruleStore.upsert(rule.copy(actions = rule.actions))
+        assertEquals("触发器未变化的内容保存不得重置激活边界", first, database.automationDao().getRule(rule.id)?.activatedAtEpochMs)
+
+        clockMs += 1000L
+        ruleStore.upsert(rule.copy(enabled = false))
+        assertEquals(null, database.automationDao().getRule(rule.id)?.activatedAtEpochMs)
+
+        clockMs += 1000L
+        ruleStore.upsert(rule.copy(enabled = true))
+        assertEquals(clockMs, database.automationDao().getRule(rule.id)?.activatedAtEpochMs)
+
+        clockMs += 1000L
+        val changedTrigger = rule.copy(trigger = TriggerSpec.AtTime(LocalTime.of(9, 0), setOf(DayOfWeek.MONDAY)))
+        ruleStore.upsert(changedTrigger)
+        assertEquals(clockMs, database.automationDao().getRule(rule.id)?.activatedAtEpochMs)
+    }
+
+    @Test
     fun dedupeRoomStoreRenewsOnlyLiveOwnerAndFencesStaleCompletion() = runBlocking {
         val store = RoomAutomationDedupeStore(database)
         val acquiredAt = now

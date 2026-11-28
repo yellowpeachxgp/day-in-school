@@ -35,7 +35,7 @@ data class AutomationEditorDraft(
     val atTime: LocalTime = LocalTime.of(8, 0),
     val days: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
     val beforeMinutesText: String = "20",
-    val eventTypeText: String = "data.stale",
+    val eventTypeText: String = "utility.balance.sampled",
     val thresholdValueText: String = "15",
     val thresholdWater: Boolean = false,
     val thresholdHysteresisText: String = "1",
@@ -46,6 +46,7 @@ data class AutomationEditorDraft(
     val onCampus: Boolean = false,
     val focusPeriod: Boolean = false,
     val commuteTime: Boolean = false,
+    val commuteFromCampusText: String = "haut-songshanlu",
     val commuteMaxMinutesText: String = "45",
     val dataFreshness: Boolean = false,
     val freshnessMaxAgeHoursText: String = "24",
@@ -80,6 +81,7 @@ data class AutomationEditorDraft(
         }
         if (campusIdText.isBlank() && (triggerChoice == AutomationTriggerChoice.GEOFENCE || onCampus)) return "请填写校区 ID"
         val commuteMaxMinutes = commuteMaxMinutesText.toIntOrNull()
+        if (commuteTime && commuteFromCampusText.isBlank()) return "请填写通勤起点校区"
         if (commuteTime && (commuteMaxMinutes == null || commuteMaxMinutes !in 0..1440)) return "通勤上限必须是 0..1440 分钟"
         val freshnessHours = freshnessMaxAgeHoursText.toIntOrNull()
         if (dataFreshness && (freshnessHours == null || freshnessHours !in 1..168)) return "新鲜度上限必须是 1..168 小时"
@@ -156,6 +158,7 @@ data class AutomationEditorDraft(
                     BuiltinAutomationTypes.CONDITION_COMMUTE_TIME,
                     jsonObject(
                         "maxMinutes" to JsonValue.Num(commuteMaxMinutesText.toInt().toString()),
+                        "fromCampus" to JsonValue.Str(commuteFromCampusText.trim()),
                         "toCampus" to JsonValue.Str(campusIdText.trim())
                     )
                 )

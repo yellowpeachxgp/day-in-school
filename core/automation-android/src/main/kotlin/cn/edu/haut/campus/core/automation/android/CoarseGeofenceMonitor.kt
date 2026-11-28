@@ -77,7 +77,7 @@ class CoarseGeofenceMonitor(
         require(scope == this.scope) { "粗定位在校状态 scope 不一致" }
         val location = bestCoarseLocation() ?: return null
         val sampledAt = Instant.ofEpochMilli(location.time)
-        if (!CoarseGeofencePolicy.isUsable(location.time, location.accuracy, now)) return null
+        if (!CoarseGeofencePolicy.isUsable(location.time, location.takeIf { it.hasAccuracy() }?.accuracy, now)) return null
         val insideCampus = CAMPUS_POLYGONS.entries.firstOrNull { (_, polygon) ->
             pointInPolygon(location.latitude, location.longitude, polygon)
         }?.key
