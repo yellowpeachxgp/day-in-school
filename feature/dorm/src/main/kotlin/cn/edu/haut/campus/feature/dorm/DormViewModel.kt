@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import cn.edu.haut.campus.core.model.Staleness
-import cn.edu.haut.campus.feature.dorm.state.DormRepairDraft
 import cn.edu.haut.campus.feature.dorm.state.DormScreenStatus
 import cn.edu.haut.campus.feature.dorm.state.DormTab
 import cn.edu.haut.campus.feature.dorm.state.DormUiAction
@@ -28,6 +27,7 @@ class DormViewModel(
     private val utilityStatusPort: DormUtilityStatusPort,
     private val schoolId: String,
     private val clock: Clock = Clock.systemUTC(),
+    private val currentCloudUserId: suspend () -> String? = { null },
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(DormUiState())
     val uiState: StateFlow<DormUiState> = mutableState.asStateFlow()
@@ -104,6 +104,7 @@ class DormViewModel(
                             else -> null
                         },
                         snapshot = snapshot,
+                        currentCloudUserId = currentCloudUserId(),
                         notice = notice,
                     )
                 }
@@ -386,11 +387,12 @@ class DormViewModel(
             utilityStatusPort: DormUtilityStatusPort,
             schoolId: String,
             clock: Clock = Clock.systemUTC(),
+            currentCloudUserId: suspend () -> String? = { null },
         ): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 require(modelClass.isAssignableFrom(DormViewModel::class.java))
-                return DormViewModel(port, utilityStatusPort, schoolId, clock) as T
+                return DormViewModel(port, utilityStatusPort, schoolId, clock, currentCloudUserId) as T
             }
         }
     }

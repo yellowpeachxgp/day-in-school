@@ -12,7 +12,7 @@ import java.math.BigDecimal
 /** 十进制字符串精确转分；不使用浮点，最多两位小数，且拒绝零与 Long.MIN_VALUE（避免 UI 取负溢出）。 */
 fun parseYuanToFen(input: String, requirePositive: Boolean = false): Long {
     val text = input.trim().removePrefix("¥").trim()
-    require(text.matches(Regex("-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"))) { "金额必须是最多两位小数的十进制元" }
+    require(text.matches(Regex("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?"))) { "金额必须是最多两位小数的十进制元" }
     val decimal = try {
         BigDecimal(text)
     } catch (error: NumberFormatException) {

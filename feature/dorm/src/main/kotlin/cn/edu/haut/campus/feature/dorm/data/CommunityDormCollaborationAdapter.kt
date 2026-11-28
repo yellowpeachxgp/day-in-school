@@ -44,6 +44,7 @@ import cn.edu.haut.campus.core.community.listRepairTickets
 import cn.edu.haut.campus.core.community.listSettlements
 import cn.edu.haut.campus.core.community.requestDutySwap
 import cn.edu.haut.campus.core.community.resolveDutySwap
+import cn.edu.haut.campus.core.community.skipDutyTask
 import cn.edu.haut.campus.core.community.submitRepairReview
 import cn.edu.haut.campus.core.community.transitionRepairStatus
 import cn.edu.haut.campus.core.model.Staleness

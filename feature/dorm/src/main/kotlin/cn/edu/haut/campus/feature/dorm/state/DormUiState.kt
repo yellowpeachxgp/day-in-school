@@ -56,6 +56,7 @@ data class DormUiState(
     val snapshot: DormSnapshot? = null,
     val selectedTab: DormTab = DormTab.LEDGER,
     val utilityReminders: List<DormUtilityReminder> = emptyList(),
+    val currentCloudUserId: String? = null,
     val actionInFlight: Boolean = false,
     val notice: String? = null,
     val newGroupName: String = "",
