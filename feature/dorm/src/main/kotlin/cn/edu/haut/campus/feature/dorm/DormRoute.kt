@@ -46,7 +46,7 @@ fun DormRoute(
             factory = DormViewModel.factory(
                 port = runtime.collaborationPort,
                 utilityStatusPort = runtime.utilityStatusPort,
-                schoolId = activeSession.school.id,
+                schoolId = activeSession.school.id.value,
                 currentCloudUserId = runtime.currentCloudUserId,
             ),
         )
