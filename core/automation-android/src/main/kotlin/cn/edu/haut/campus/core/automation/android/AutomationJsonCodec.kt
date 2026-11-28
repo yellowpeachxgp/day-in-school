@@ -177,7 +177,13 @@ object AutomationJsonCodec {
         )
         TriggerSpec.OnEvent.TYPE -> TriggerSpec.OnEvent(
             eventType = node.reqString("eventType"),
-            filter = node.fields["filter"]?.asObjOrNull
+            filter = node.fields["filter"]?.let { filterNode ->
+                if (filterNode == JsonValue.Null) {
+                    null
+                } else {
+                    filterNode.asObjOrNull ?: throw IllegalArgumentException("OnEvent filter 必须是 object 或 null")
+                }
+            }
         )
         TriggerSpec.Threshold.TYPE -> TriggerSpec.Threshold(
             metric = MetricRef(node.reqString("metric")),
@@ -190,11 +196,18 @@ object AutomationJsonCodec {
         )
         else -> {
             if (type.startsWith("plugin.")) {
-                TriggerSpec.Plugin(
+                val configNode = node.fields["config"] ?: JsonValue.Null
+                val decoded = TriggerSpec.Plugin(
                     pluginId = node.reqString("pluginId"),
                     triggerId = node.reqString("triggerId"),
-                    config = node.fields["config"]?.asObjOrNull ?: JsonValue.Obj(emptyMap())
+                    config = if (configNode == JsonValue.Null) {
+                        JsonValue.Obj(emptyMap())
+                    } else {
+                        configNode.asObjOrNull ?: throw IllegalArgumentException("plugin trigger config 必须是 object")
+                    }
                 )
+                require(decoded.type == type) { "plugin trigger type 与 pluginId/triggerId 不一致" }
+                decoded
             } else {
                 throw IllegalArgumentException("未知 automation trigger type: " + type)
             }
@@ -222,7 +235,7 @@ object AutomationJsonCodec {
 
     private fun decodeConditionSpec(value: JsonValue): ConditionSpec {
         val node = value.asObjOrNull ?: throw IllegalArgumentException("condition spec 必须是 object")
-        return ConditionSpec(node.reqString("type"), node.fields["config"]?.asObjOrNull ?: JsonValue.Obj(emptyMap()))
+        return ConditionSpec(node.reqString("type"), decodeRequiredConfigObject(node, "condition"))
     }
 
     private fun encodeActionSpec(spec: ActionSpec): JsonValue.Obj = obj(
@@ -232,7 +245,7 @@ object AutomationJsonCodec {
 
     private fun decodeActionSpec(value: JsonValue): ActionSpec {
         val node = value.asObjOrNull ?: throw IllegalArgumentException("action spec 必须是 object")
-        return ActionSpec(node.reqString("type"), node.fields["config"]?.asObjOrNull ?: JsonValue.Obj(emptyMap()))
+        return ActionSpec(node.reqString("type"), decodeRequiredConfigObject(node, "action"))
     }
 
     private fun encodeConditionResult(result: ConditionResult): JsonValue.Obj = obj(
@@ -306,6 +319,11 @@ object AutomationJsonCodec {
         val evaluationsJson: String,
         val outcomesJson: String
     )
+
+    private fun decodeRequiredConfigObject(node: JsonValue.Obj, label: String): JsonValue.Obj {
+        val configNode = node.fields["config"] ?: throw IllegalArgumentException(label + " spec 缺少 config")
+        return configNode.asObjOrNull ?: throw IllegalArgumentException(label + " spec config 必须是 object")
+    }
 
     private fun canonical(value: JsonValue): String = Json.canonical(value)
     private fun parseObj(raw: String): JsonValue.Obj = Json.parse(raw).asObjOrNull

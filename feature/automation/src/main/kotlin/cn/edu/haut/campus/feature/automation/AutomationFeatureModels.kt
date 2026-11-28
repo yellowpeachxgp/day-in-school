@@ -28,7 +28,7 @@ enum class AutomationTriggerChoice(val label: String) {
 }
 
 data class AutomationEditorDraft(
-    val id: String = "rule-" + UUID.randomUUID().toString().substring(0, 8),
+    val id: String = "rule-" + UUID.randomUUID().toString(),
     val name: String = "新的自动化",
     val enabled: Boolean = true,
     val triggerChoice: AutomationTriggerChoice = AutomationTriggerChoice.AT_TIME,

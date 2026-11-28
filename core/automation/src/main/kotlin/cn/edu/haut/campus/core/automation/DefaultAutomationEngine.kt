@@ -119,7 +119,7 @@ class DefaultAutomationEngine(
             TriggerInstance(
                 ruleId = ruleId,
                 triggerInstanceKey = triggerInstanceKey,
-                firedAt = clock.instant(),
+                firedAt = nowMillis(),
                 source = "manual"
             )
         )
@@ -133,7 +133,7 @@ class DefaultAutomationEngine(
         val runId = AutomationKeys.runId(rule.id, boundInstance.triggerInstanceKey)
         // Room v13 以 epochMilli 持久化；在进入 dedupe CAS 前统一截断，避免纳秒精度让同一 owner 在
         // 持久层读回后被误判为 stale。内存实现同样按该精度接受语义验证。
-        val acquiredAt = clock.instant().truncatedTo(ChronoUnit.MILLIS)
+        val acquiredAt = nowMillis()
         val executionOwner = executionOwnerFactory()
         requireAutomationToken(executionOwner, "executionOwner", 128)
         val acquire = dedupeStore.tryAcquire(
@@ -152,7 +152,7 @@ class DefaultAutomationEngine(
             val existingRun = runStore.get(acquire.existing.runId)
             if (existingRun != null && acquire.existing.state == AutomationDedupeState.PENDING) {
                 // 崩溃可能发生在 run append 成功之后、dedupe 转终态之前；发现 run 已持久化时直接修复终态。
-                dedupeStore.markRunRecorded(acquire.existing, clock.instant())
+                dedupeStore.markRunRecorded(acquire.existing, nowMillis())
             }
             return TriggerExecutionResult.Duplicate(
                 dedupeKey = dedupeKey,
@@ -163,7 +163,7 @@ class DefaultAutomationEngine(
         val acquired = (acquire as DedupeAcquireResult.Acquired).record
         val alreadyAppendedRun = runStore.get(runId)
         if (alreadyAppendedRun != null) {
-            dedupeStore.markRunRecorded(acquired, clock.instant())
+            dedupeStore.markRunRecorded(acquired, nowMillis())
             return TriggerExecutionResult.Duplicate(
                 dedupeKey = dedupeKey,
                 existingRun = alreadyAppendedRun
@@ -191,7 +191,7 @@ class DefaultAutomationEngine(
             val run = executeRule(rule, instance, dryRun = false, executionFence = fence)
             fence.requireOwned()
             runStore.append(run)
-            val markedTerminal = dedupeStore.markRunRecorded(fence.currentRecord(), clock.instant())
+            val markedTerminal = dedupeStore.markRunRecorded(fence.currentRecord(), nowMillis())
             if (!markedTerminal && !hasRunRecordedTerminalForSameInstance(acquired)) {
                 throw AutomationDedupeCompletionException(acquired.dedupeKey)
             }
@@ -248,7 +248,7 @@ class DefaultAutomationEngine(
         dryRun: Boolean,
         executionFence: ExecutionFence?
     ): AutomationRun {
-        val startedAt = clock.instant()
+        val startedAt = nowMillis()
         val dedupeKey = AutomationKeys.dedupeKey(rule.id, instance.triggerInstanceKey, rule.dedupe, instance.firedAt)
         val runId = AutomationKeys.runId(rule.id, instance.triggerInstanceKey)
         val context = RunContext(
@@ -366,7 +366,7 @@ class DefaultAutomationEngine(
         dryRun = dryRun,
         dedupeKey = dedupeKey,
         startedAt = startedAt,
-        finishedAt = clock.instant(),
+        finishedAt = nowMillis(),
         statusReason = statusReason?.let { sanitizeDetail(it, 1000) }
     )
 
@@ -490,11 +490,11 @@ class DefaultAutomationEngine(
             val executor = checkNotNull(step.executor)
             val actionExecutionKey = AutomationKeys.actionExecutionKey(context.runId, step.index)
             val actionContext = context.copy(
-                now = clock.instant(),
+                now = nowMillis(),
                 actionIndex = step.index,
                 actionExecutionKey = actionExecutionKey
             )
-            val now = clock.instant()
+            val now = nowMillis()
             val initialCheckpoint = AutomationActionCheckpoint(
                 checkpointKey = actionExecutionKey,
                 dedupeKey = context.dedupeKey,
@@ -535,7 +535,7 @@ class DefaultAutomationEngine(
         checkpoint: AutomationActionCheckpoint,
         quietSuppressed: Boolean
     ): ActionOutcome {
-        val startedAt = clock.instant()
+        val startedAt = nowMillis()
         val outcome = when {
             executor.risk == ActionRisk.EXTERNAL_WRITE_FORBIDDEN -> ActionOutcome(
                 actionType = spec.type,
@@ -543,7 +543,7 @@ class DefaultAutomationEngine(
                 status = ActionOutcomeStatus.FAILED,
                 detail = "外部写动作被安全边界拒绝",
                 startedAt = startedAt,
-                finishedAt = clock.instant()
+                finishedAt = nowMillis()
             )
             quietSuppressed -> ActionOutcome(
                 actionType = spec.type,
@@ -551,7 +551,7 @@ class DefaultAutomationEngine(
                 status = ActionOutcomeStatus.SKIPPED_QUIET_HOURS,
                 detail = "quietHours 生效，通知动作已抑制",
                 startedAt = startedAt,
-                finishedAt = clock.instant()
+                finishedAt = nowMillis()
             )
             executor.risk == ActionRisk.NEEDS_USER_CONFIRM -> executeConfirmedAction(
                 rule = rule,
@@ -581,7 +581,7 @@ class DefaultAutomationEngine(
         if (confirmation == null) {
             confirmation = validConfirmation(rule, spec, actionContext)
             if (confirmation != null) {
-                val marked = checkpointStore.markConfirmationConsumed(working, confirmation, clock.instant())
+                val marked = checkpointStore.markConfirmationConsumed(working, confirmation, nowMillis())
                 if (!marked) {
                     reconciliationFailure = true
                 } else {
@@ -611,7 +611,7 @@ class DefaultAutomationEngine(
                     )
                 }
             }
-            !confirmation.isValidAt(clock.instant()) -> indeterminateOutcome(
+            !confirmation.isValidAt(nowMillis()) -> indeterminateOutcome(
                 spec,
                 executor.risk,
                 "一次性确认已过期且原执行结果不可对账"
@@ -626,7 +626,7 @@ class DefaultAutomationEngine(
         spec: ActionSpec,
         risk: ActionRisk
     ): ActionOutcome {
-        return if (checkpointStore.complete(checkpoint, outcome, clock.instant())) {
+        return if (checkpointStore.complete(checkpoint, outcome, nowMillis())) {
             outcome
         } else {
             reconcileCheckpointOutcome(checkpoint.checkpointKey, spec, risk)
@@ -649,7 +649,7 @@ class DefaultAutomationEngine(
     }
 
     private fun indeterminateOutcome(spec: ActionSpec, risk: ActionRisk, detail: String): ActionOutcome {
-        val now = clock.instant()
+        val now = nowMillis()
         return ActionOutcome(
             actionType = spec.type,
             risk = risk,
@@ -677,7 +677,7 @@ class DefaultAutomationEngine(
             it.ruleId == rule.id &&
                 it.actionType == spec.type &&
                 it.configDigest == digest &&
-                it.isValidAt(clock.instant())
+                it.isValidAt(nowMillis())
         }
     }
 
@@ -686,10 +686,10 @@ class DefaultAutomationEngine(
         executor: ActionExecutor,
         context: RunContext
     ): ActionOutcome {
-        val startedAt = clock.instant()
+        val startedAt = nowMillis()
         return try {
             val raw = executor.execute(spec, context.copy(now = startedAt))
-            normalizeActionOutcome(spec, executor, raw, startedAt, clock.instant())
+            normalizeActionOutcome(spec, executor, raw, startedAt, nowMillis())
         } catch (error: Throwable) {
             if (error is CancellationException || error is Error) throw error
             ActionOutcome(
@@ -698,7 +698,7 @@ class DefaultAutomationEngine(
                 status = ActionOutcomeStatus.FAILED,
                 detail = "动作执行异常（" + safeErrorName(error) + "）",
                 startedAt = startedAt,
-                finishedAt = clock.instant()
+                finishedAt = nowMillis()
             )
         }
     }
@@ -765,6 +765,8 @@ class DefaultAutomationEngine(
         }
     }
 
+    private fun nowMillis(): Instant = clock.instant().truncatedTo(ChronoUnit.MILLIS)
+
     private fun appendReason(existing: String?, addition: String): String =
         if (existing.isNullOrBlank()) addition else sanitizeDetail(existing + "；" + addition, 512)
 
@@ -787,7 +789,7 @@ class DefaultAutomationEngine(
 
         suspend fun renew(): Boolean {
             val base = current.get()
-            val now = clock.instant()
+            val now = nowMillis()
             return try {
                 val renewed = dedupeStore.renewLease(
                     expected = base,
@@ -810,7 +812,7 @@ class DefaultAutomationEngine(
 
         suspend fun requireOwned() {
             val base = current.get()
-            val now = clock.instant()
+            val now = nowMillis()
             val fresh = dedupeStore.find(dedupeKey)
             if (fresh != null &&
                 fresh.state == AutomationDedupeState.PENDING &&
