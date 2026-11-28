@@ -126,7 +126,7 @@ class GuidePersistenceTest {
             revision = 1
         )
         val encoded = GuideProgressCodec.encodeProcedureRun(snapshot)
-        val tampered = encoded.replace("\"durationSeconds\":30", "\"durationSeconds\":-1")
+        val tampered = encoded.replace("\"durationSeconds\":1800", "\"durationSeconds\":-1")
 
         assertFailsWith<GuidePersistenceException> {
             GuideProgressCodec.decodeProcedureRun(tampered)
