@@ -88,10 +88,12 @@ object ProcedurePathEvaluator {
             )
         }
         val current = currentIndex?.let { index -> stepStates[index] }
-        val actionable = if (blocked != null && current == null) blocked else null
+        // 分支问题一旦被确定在当前路径上就可回答；是否已完成前序步骤是执行进度，
+        // 不应阻止用户先答问卷、查看完整个人路径和材料清单。
+        val actionable = blocked
         val status = when {
-            blocked == null && current == null -> GuideRunStatus.COMPLETED
-            actionable != null -> GuideRunStatus.AWAITING_QUESTION
+            blocked != null -> GuideRunStatus.AWAITING_QUESTION
+            current == null -> GuideRunStatus.COMPLETED
             else -> GuideRunStatus.IN_PROGRESS
         }
         val path = PersonalPath(

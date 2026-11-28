@@ -23,20 +23,20 @@ class FlowRunnerTest {
         val runner = FlowRunner(store, clock)
 
         var state = runner.start(GuideTestFixtures.scope, pack, "student-certificate")
-        assertEquals(GuideRunStatus.IN_PROGRESS, state.status)
-        assertEquals("prepare", state.currentStep?.id)
-
-        state = runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "prepare")
         assertEquals(GuideRunStatus.AWAITING_QUESTION, state.status)
+        assertEquals("prepare", state.currentStep?.id)
         assertEquals("minor", state.actionableQuestion?.id)
         assertEquals(listOf("prepare"), state.path.steps.map { it.id })
 
         state = runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "no")
+        assertEquals(GuideRunStatus.IN_PROGRESS, state.status)
         assertEquals(listOf("prepare", "submit"), state.path.steps.map { it.id })
         assertTrue(state.path.complete)
-        assertEquals("submit", state.currentStep?.id)
+        assertEquals("prepare", state.currentStep?.id)
         assertEquals(listOf("学生证或校园卡", "一寸照片"), state.path.materials.map { it.name })
 
+        state = runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "prepare")
+        assertEquals("submit", state.currentStep?.id)
         state = runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "submit")
         assertEquals(GuideRunStatus.COMPLETED, state.status)
         assertEquals(2, state.completedCount)
@@ -48,28 +48,28 @@ class FlowRunnerTest {
         val store = InMemoryGuideProgressStore()
         val runner = FlowRunner(store, clock)
         runner.start(GuideTestFixtures.scope, pack, "student-certificate")
-        runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "prepare")
 
-        val state = runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "yes")
+        var state = runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "yes")
 
         assertEquals(listOf("prepare", "guardian", "submit"), state.path.steps.map { it.id })
-        assertEquals("guardian", state.currentStep?.id)
+        assertEquals("prepare", state.currentStep?.id)
         assertEquals(GuideRunStatus.IN_PROGRESS, state.status)
+        state = runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "prepare")
+        assertEquals("guardian", state.currentStep?.id)
     }
 
     @Test
-    fun answers_require_triggered_question_and_declared_option() = runTest {
+    fun known_path_question_can_be_answered_before_completion_but_value_is_declarative() = runTest {
         val store = InMemoryGuideProgressStore()
         val runner = FlowRunner(store, clock)
         runner.start(GuideTestFixtures.scope, pack, "student-certificate")
 
         assertFailsWithSuspend<GuideOperationException> {
-            runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "no")
-        }
-        runner.completeCurrentStep(GuideTestFixtures.scope, pack, "student-certificate", "prepare")
-        assertFailsWithSuspend<GuideOperationException> {
             runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "perhaps")
         }
+        val state = runner.answer(GuideTestFixtures.scope, pack, "student-certificate", "minor", "no")
+        assertEquals(GuideRunStatus.IN_PROGRESS, state.status)
+        assertEquals("prepare", state.currentStep?.id)
     }
 
     @Test
