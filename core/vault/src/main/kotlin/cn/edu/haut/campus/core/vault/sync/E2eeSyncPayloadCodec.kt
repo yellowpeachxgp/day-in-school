@@ -196,6 +196,11 @@ internal object E2eeSyncPayloadCodec {
             ) {
                 throw E2eeSyncCryptoException("同步 payload blob 摘要或大小不一致")
             }
+            try {
+                cn.edu.haut.campus.core.vault.BackupSchemaSafety.validateBlobBytes(bytes, "E2EE 同步 payload blob")
+            } catch (error: Throwable) {
+                throw E2eeSyncCryptoException("同步 payload blob 值级秘密防线拒绝", error)
+            }
             blobs[sha] = bytes
         }
         val referenced = row.cells.values.filterIsInstance<BackupCell.BlobValue>().map { it.sha256 }.toSet()

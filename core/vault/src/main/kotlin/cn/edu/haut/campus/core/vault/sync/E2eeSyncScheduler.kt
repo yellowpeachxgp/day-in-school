@@ -63,6 +63,11 @@ object E2eeSyncScheduler {
         cancel(context, active.profileId, active.generation)
         val client = E2eeSyncClientFactory.create(context, active.repository) ?: return
         if (!runCatching { client.status().enabled }.getOrDefault(false)) return
+        schedulePeriodicEnabled(context, active.profileId, active.generation)
+    }
+
+    /** 启用成功后的即时周期登记；调用方必须先确认 enabled，避免未经同意产生云端复制。 */
+    fun schedulePeriodicEnabled(context: Context, profileId: String, generation: Long) {
         val request = PeriodicWorkRequestBuilder<E2eeSyncWorker>(60L, TimeUnit.MINUTES)
             .setConstraints(
                 Constraints.Builder()
@@ -70,25 +75,28 @@ object E2eeSyncScheduler {
                     .build()
             )
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10L, TimeUnit.MINUTES)
-            .setInputData(workDataOf(E2eeSyncWorker.KEY_PROFILE_ID to active.profileId, E2eeSyncWorker.KEY_GENERATION to active.generation))
+            .setInputData(workDataOf(E2eeSyncWorker.KEY_PROFILE_ID to profileId, E2eeSyncWorker.KEY_GENERATION to generation))
             .build()
         runCatching {
             WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
-                periodicName(active.profileId, active.generation),
+                periodicName(profileId, generation),
                 ExistingPeriodicWorkPolicy.UPDATE,
                 request
             )
         }
     }
 
-    fun enqueueImmediate(context: Context, active: ActiveSession) {
+    fun enqueueImmediate(context: Context, active: ActiveSession) =
+        enqueueImmediate(context, active.profileId, active.generation)
+
+    fun enqueueImmediate(context: Context, profileId: String, generation: Long) {
         val request = OneTimeWorkRequestBuilder<E2eeSyncWorker>()
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setInputData(workDataOf(E2eeSyncWorker.KEY_PROFILE_ID to active.profileId, E2eeSyncWorker.KEY_GENERATION to active.generation))
+            .setInputData(workDataOf(E2eeSyncWorker.KEY_PROFILE_ID to profileId, E2eeSyncWorker.KEY_GENERATION to generation))
             .build()
         runCatching {
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                immediateName(active.profileId, active.generation),
+                immediateName(profileId, generation),
                 ExistingWorkPolicy.REPLACE,
                 request
             )

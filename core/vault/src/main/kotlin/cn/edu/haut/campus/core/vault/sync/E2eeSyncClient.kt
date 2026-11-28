@@ -115,10 +115,16 @@ class E2eeSyncClient internal constructor(
                 runCatching { api.withdrawConsent(consentId) }
             }
             // CT-07：撤回会使全部 device-bound cursor/ack watermark 失效；本地绝不能继续沿用。
-            state.enabled = false
-            state.cursor = null
-            state.pendingWrites.clear()
-            stateStore.save(state)
+            // revoke 是永久 tombstone，重新同意必须生成全新 installation UUID，不能复活旧 device_id。
+            val next = state.copy(
+                enabled = false,
+                deviceId = null,
+                consentId = null,
+                deviceLabel = null,
+                cursor = null
+            )
+            next.pendingWrites.clear()
+            stateStore.save(next)
         }
     }
 

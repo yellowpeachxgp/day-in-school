@@ -78,6 +78,8 @@ data class E2eeSyncState(
 )
 
 interface E2eeSyncStateStore {
+    /** 同进程同步互斥键；文件实现按 Profile 存储路径稳定，避免 UI 与 Worker 并发双写。 */
+    val lockKey: String
     suspend fun load(): E2eeSyncState
     suspend fun save(state: E2eeSyncState)
     suspend fun wipe()
@@ -274,12 +276,14 @@ class FileE2eeSyncStateStore(
     private val mutex = Mutex()
     private val rootDir: File
     private val stateFile: File
+    override val lockKey: String
 
     init {
         require(profileId.isNotBlank()) { "profileId 不能为空" }
         val digest = cn.edu.haut.campus.core.model.json.Digests.sha256Hex(profileId)
         rootDir = File(context.applicationContext.filesDir, "e2ee-sync/" + digest)
         stateFile = File(rootDir, "state.json")
+        lockKey = "file:e2ee-sync:" + digest
     }
 
     override suspend fun load(): E2eeSyncState = mutex.withLock {
@@ -311,6 +315,7 @@ class InMemoryE2eeSyncStateStore(
     private var state: E2eeSyncState = E2eeSyncState()
 ) : E2eeSyncStateStore {
     private val mutex = Mutex()
+    override val lockKey: String = "memory:e2ee-sync:" + System.identityHashCode(this)
 
     override suspend fun load(): E2eeSyncState = mutex.withLock { E2eeSyncStateCodec.copy(state) }
 

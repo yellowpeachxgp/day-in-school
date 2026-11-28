@@ -23,6 +23,7 @@ import cn.edu.haut.campus.core.vault.sync.E2eeSyncClientFactory
 import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflict
 import cn.edu.haut.campus.core.vault.sync.E2eeSyncConflictResolution
 import cn.edu.haut.campus.core.vault.sync.E2eeSyncEnableMode
+import cn.edu.haut.campus.core.vault.sync.E2eeSyncScheduler
 import java.io.IOException
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
@@ -42,6 +43,8 @@ class BackupCenterViewModel(
     private val backupService: BackupService?,
     private val syncClient: E2eeSyncClient? = null,
     private val cloudSessionProvider: suspend () -> Boolean = { false },
+    private val syncWorkProfileId: String? = null,
+    private val syncWorkGeneration: Long = -1L,
     private val postRestoreHooks: suspend () -> Unit = {}
 ) : ViewModel(), BackupCenterUiAction {
     private val mutableUiState = MutableStateFlow(
@@ -270,6 +273,10 @@ class BackupCenterViewModel(
             try {
                 val result = client.enable(mode, deviceLabel, recoveryKey)
                 refreshSyncStatus()
+                syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                    E2eeSyncScheduler.schedulePeriodicEnabled(appContext, profileId, syncWorkGeneration)
+                    E2eeSyncScheduler.enqueueImmediate(appContext, profileId, syncWorkGeneration)
+                }
                 mutableUiState.update {
                     it.copy(
                         sync = it.sync.copy(
@@ -327,6 +334,9 @@ class BackupCenterViewModel(
         mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
         viewModelScope.launch {
             client.disableAndWithdraw()
+            syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                E2eeSyncScheduler.cancel(appContext, profileId, syncWorkGeneration)
+            }
             refreshSyncStatus()
         }
     }
@@ -471,6 +481,8 @@ class BackupCenterViewModel(
                     backupService = VaultBackupServiceRegistry.forProfile(repository.profileId),
                     syncClient = E2eeSyncClientFactory.create(context.applicationContext, repository),
                     cloudSessionProvider = { repository.snapshotCloudIdentitySession() != null },
+                    syncWorkProfileId = repository.profileId,
+                    syncWorkGeneration = repository.sessionGeneration,
                     postRestoreHooks = {
                         runCatching { repository.rescheduleActiveLocalBookingPlans() }
                         runCatching {

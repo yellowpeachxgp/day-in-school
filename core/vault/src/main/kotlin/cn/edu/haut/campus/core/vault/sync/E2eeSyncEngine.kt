@@ -2,6 +2,7 @@ package cn.edu.haut.campus.core.vault.sync
 
 import cn.edu.haut.campus.core.model.json.Digests
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -17,7 +18,7 @@ internal class E2eeSyncEngine(
     private val clock: () -> Long = System::currentTimeMillis,
     private val uuid: () -> String = { UUID.randomUUID().toString() }
 ) {
-    private val mutex = Mutex()
+    private val runMutex: Mutex get() = mutexFor(stateStore)
 
     suspend fun status(): E2eeSyncStatus {
         val state = stateStore.load()
@@ -35,7 +36,7 @@ internal class E2eeSyncEngine(
         )
     }
 
-    suspend fun runOnce(): E2eeSyncRunReport = mutex.withLock {
+    suspend fun runOnce(): E2eeSyncRunReport = runMutex.withLock {
         val state = stateStore.load()
         val material = keyStore.load()
         try {
@@ -55,7 +56,7 @@ internal class E2eeSyncEngine(
         }
     }
 
-    suspend fun resolveConflict(conflictId: String, resolution: E2eeSyncConflictResolution): E2eeSyncRunReport = mutex.withLock {
+    suspend fun resolveConflict(conflictId: String, resolution: E2eeSyncConflictResolution): E2eeSyncRunReport = runMutex.withLock {
         val state = stateStore.load()
         val material = keyStore.load()
         try {
@@ -745,4 +746,11 @@ internal class E2eeSyncEngine(
 
     private fun idempotencyKey(operation: String, deviceId: String, blobId: String, writerCounter: Int, fingerprint: String): String =
         "e2ee-" + Digests.sha256Hex(operation, deviceId, blobId, writerCounter.toString(), fingerprint).take(72)
+
+    companion object {
+        private val runMutexes = ConcurrentHashMap<String, Mutex>()
+
+        private fun mutexFor(stateStore: E2eeSyncStateStore): Mutex =
+            runMutexes.getOrPut(stateStore.lockKey) { Mutex() }
+    }
 }

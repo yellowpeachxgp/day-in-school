@@ -124,23 +124,21 @@ class AndroidE2eeSyncKeyStore(
         if (root.optString("format") != SEALED_FORMAT) throw E2eeSyncCryptoException("本机同步密钥密封格式不受支持")
         val sealed = root.optString("sealed")
         val plaintext = unseal(sealed)
-        val payload = runCatching { JSONObject(String(plaintext, Charsets.UTF_8)) }.getOrElse {
-            throw E2eeSyncCryptoException("本机同步密钥 payload 损坏")
-        }
-        Arrays.fill(plaintext, 0)
-        val master = Base64.getDecoder().decode(payload.getString("master"))
-        val space = Base64.getDecoder().decode(payload.getString("space"))
-        if (master.size != E2eeSyncProtocol.MASTER_KEY_BYTES || space.size != E2eeSyncProtocol.SYNC_SPACE_BYTES) {
-            Arrays.fill(master, 0)
-            Arrays.fill(space, 0)
-            throw E2eeSyncCryptoException("本机同步密钥长度损坏")
-        }
-        E2eeSyncKeyMaterial(
-            masterKey = master,
-            syncSpaceId = E2eeSyncRecoveryKeys.syncSpaceId(space),
-            keyId = E2eeSyncBlockCipher.keyId(master)
-        ).also {
-            Arrays.fill(space, 0)
+        try {
+            if (plaintext.size != E2eeSyncProtocol.MASTER_KEY_BYTES + E2eeSyncProtocol.SYNC_SPACE_BYTES) {
+                throw E2eeSyncCryptoException("本机同步密钥长度损坏")
+            }
+            val master = plaintext.copyOfRange(0, E2eeSyncProtocol.MASTER_KEY_BYTES)
+            val space = plaintext.copyOfRange(E2eeSyncProtocol.MASTER_KEY_BYTES, plaintext.size)
+            return@withLock E2eeSyncKeyMaterial(
+                masterKey = master,
+                syncSpaceId = E2eeSyncRecoveryKeys.syncSpaceId(space),
+                keyId = E2eeSyncBlockCipher.keyId(master)
+            ).also {
+                Arrays.fill(space, 0)
+            }
+        } finally {
+            Arrays.fill(plaintext, 0)
         }
     }
 
@@ -153,11 +151,12 @@ class AndroidE2eeSyncKeyStore(
     }
 
     private fun storeUnlocked(master: ByteArray, space: ByteArray) {
-        val payload = JSONObject()
-            .put("master", Base64.getEncoder().encodeToString(master))
-            .put("space", Base64.getEncoder().encodeToString(space))
-            .toString()
-        val sealed = seal(payload.toByteArray(Charsets.UTF_8))
+        val payload = master + space
+        val sealed = try {
+            seal(payload)
+        } finally {
+            Arrays.fill(payload, 0)
+        }
         if (!rootDir.exists() && !rootDir.mkdirs()) throw E2eeSyncCryptoException("无法创建同步密钥目录")
         val tmp = File(rootDir, "device-key.json.tmp")
         tmp.writeText(JSONObject().put("format", SEALED_FORMAT).put("sealed", sealed).toString(), Charsets.UTF_8)
