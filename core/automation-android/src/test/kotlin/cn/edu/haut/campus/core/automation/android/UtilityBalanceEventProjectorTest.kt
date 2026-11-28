@@ -50,7 +50,7 @@ class UtilityBalanceEventProjectorTest {
     fun onlineNumericBalancePublishesOnlyChangesIntoOutbox() = runBlocking {
         upsertRoom("12.50 度", updatedAt = 1000L)
         var projectionNow = Instant.parse("2026-03-02T08:00:00Z")
-        val projector = UtilityBalanceEventProjector(database, scope) { projectionNow }
+        val projector = UtilityBalanceEventProjector(database, scope, clock = { projectionNow })
 
         assertEquals(1, projector.publishChangedBalances())
         assertEquals(0, projector.publishChangedBalances())
