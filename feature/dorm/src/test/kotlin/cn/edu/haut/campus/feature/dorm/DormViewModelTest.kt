@@ -103,7 +103,13 @@ class DormViewModelTest {
 
         viewModel.dispatch(DormUiAction.ReverseLedgerEntry(original.entryId))
         advanceUntilIdle()
-        assertEquals(-1000L, port.amendInputs.single().input.amountFen)
+        val amendInput = port.amendInputs.single().input
+        assertEquals(-1000L, amendInput.amountFen)
+        assertEquals(DormSplitRuleType.SELECTED, amendInput.splitRule.type)
+        assertEquals(
+            listOf(DormPreviewFixtures.member1, DormPreviewFixtures.member2, DormPreviewFixtures.member3),
+            amendInput.splitRule.participantMemberIds,
+        )
 
         viewModel.dispatch(DormUiAction.RequestDutySwap(DormPreviewFixtures.contentSnapshot.dutyTasks.first().taskId, DormPreviewFixtures.member3))
         advanceUntilIdle()

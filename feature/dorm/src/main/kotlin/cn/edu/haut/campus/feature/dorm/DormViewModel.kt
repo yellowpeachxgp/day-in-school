@@ -182,12 +182,20 @@ class DormViewModel(
         val snapshot = mutableState.value.snapshot ?: return
         val groupId = snapshot.selectedGroupId ?: return
         val original = snapshot.ledgerEntries.firstOrNull { it.entryId == entryId } ?: return
+        val reverseSplitRule = if (original.splitRule.type == DormSplitRuleType.EQUAL) {
+            DormSplitRule(
+                type = DormSplitRuleType.SELECTED,
+                participantMemberIds = original.shares.map { it.participantMemberId }.sorted(),
+            )
+        } else {
+            original.splitRule
+        }
         val input = DormLedgerEntryInput(
             title = original.title,
             amountFen = -original.amountFen,
             paidByMemberId = original.paidByMemberId,
-            occurredAt = Instant.now(clock).toString(),
-            splitRule = original.splitRule,
+            occurredAt = original.occurredAt,
+            splitRule = reverseSplitRule,
             entryKind = DormLedgerEntryKind.EXPENSE,
             note = "全额冲正 " + original.entryId,
         )
@@ -197,7 +205,7 @@ class DormViewModel(
                 entryId = original.entryId,
                 reason = "用户确认全额冲正：" + original.title,
                 input = input,
-                idempotencyKey = stableKey("ledger-amend", groupId, original.entryId, input.amountFen.toString(), input.paidByMemberId, input.splitRule.toString()),
+                idempotencyKey = stableKey("ledger-amend", groupId, original.entryId, input.amountFen.toString(), input.paidByMemberId, input.occurredAt, input.splitRule.toString()),
             )
         }
     }

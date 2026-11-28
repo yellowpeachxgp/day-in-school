@@ -216,6 +216,8 @@ class CommunityDormCollaborationAdapter(
         idempotencyKey: String,
     ): DormLedgerEntry {
         val activeMemberIds = loadActiveMemberIds(groupId)
+        // EQUAL 在更正时按当前 active 成员求值；显式 SELECTED/RATIOS/STAY_DAYS 可能合法地引用原账单的历史成员期。
+        val correctionEvaluationIds = (activeMemberIds + splitRuleParticipantIds(input.splitRule)).distinct()
         val result = client.amendLedgerEntry(
             groupId = groupId,
             entryId = entryId,
@@ -231,7 +233,7 @@ class CommunityDormCollaborationAdapter(
         ).unwrap("amendLedgerEntry")
         val entry = parseDormLedgerEntry(result.value.data.requireObj("ledger correction"))
         validateCloudLedgerEntryInvariants(entry)
-        validateCloudSharesMatchCoreLedger(input.amountFen, input.splitRule, activeMemberIds, entry.shares)
+        validateCloudSharesMatchCoreLedger(input.amountFen, input.splitRule, correctionEvaluationIds, entry.shares)
         if (entry.kind != DormLedgerEntryKind.CORRECTION || entry.correctsEntryId != entryId) {
             throw DormCollaborationException(DormErrorKind.CONTRACT, "云端更正记录缺少正确的 corrects_entry_id 链", retryable = false)
         }
@@ -423,6 +425,13 @@ private fun validateCloudLedgerEntryInvariants(entry: DormLedgerEntry) {
             cause = error,
         )
     }
+}
+
+private fun splitRuleParticipantIds(rule: DormSplitRule): Set<String> = when (rule.type) {
+    DormSplitRuleType.EQUAL -> emptySet()
+    DormSplitRuleType.SELECTED -> rule.participantMemberIds.toSet()
+    DormSplitRuleType.RATIOS -> rule.ratioWeights.keys
+    DormSplitRuleType.STAY_DAYS -> rule.stayDays.keys
 }
 
 private fun validateCloudSharesMatchCoreLedger(
