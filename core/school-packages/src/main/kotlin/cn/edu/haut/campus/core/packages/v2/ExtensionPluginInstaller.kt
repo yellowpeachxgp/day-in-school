@@ -143,9 +143,8 @@ class ExtensionPluginInstaller(
     fun setEnabled(schoolId: String, pluginId: String, enabled: Boolean): ExtensionInstallation {
         val existing = requireInstallation(schoolId, pluginId)
         val next = if (enabled) {
-            if (existing.status == "PENDING_PERMISSION_REVIEW") {
-                return confirmPendingPermissions(schoolId, pluginId)
-            }
+            // Enabling must never double as permission consent. A disabled upgrade enters
+            // review here; only the explicit confirmPendingPermissions action may activate it.
             existing.copy(
                 status = if (existing.pendingVersion != null) "PENDING_PERMISSION_REVIEW" else "ENABLED",
                 disabledReason = null,
@@ -212,6 +211,9 @@ class ExtensionPluginInstaller(
     fun scopedStorageCounts(schoolId: String, pluginId: String): Pair<Int, Int> =
         store.countScopedFiles("storage", schoolId, pluginId) to store.countScopedFiles("cache", schoolId, pluginId)
 
+    fun scopedStorageUsage(schoolId: String, pluginId: String): Pair<ExtensionScopedStorageUsage, ExtensionScopedStorageUsage> =
+        store.measureScopedFiles("storage", schoolId, pluginId) to store.measureScopedFiles("cache", schoolId, pluginId)
+
     fun putScopedStorageForTest(schoolId: String, pluginId: String, key: String, bytes: ByteArray, cache: Boolean = false) {
         store.putScopedBytes(if (cache) "cache" else "storage", schoolId, pluginId, key, bytes)
     }
@@ -222,19 +224,33 @@ class ExtensionPluginInstaller(
         store.loadInstallation(schoolId, pluginId)
             ?: throw PackageException(PackageError.MANIFEST_INVALID, "插件未安装：" + pluginId)
 
-    private fun loadStoredManifest(pluginId: String, version: String): ExtensionManifestV2 {
+    /**
+     * Re-verify and expose a stored signed package for declarative UI/data consumers.
+     * Persisted bytes remain evidence rather than trusted input: callers never receive
+     * a manifest or artifact map unless the publisher signature and every digest pass.
+     */
+    fun verifiedStoredPackage(
+        schoolId: String,
+        pluginId: String,
+        version: String? = null
+    ): VerifiedExtensionPackage {
+        val installation = requireInstallation(schoolId, pluginId)
+        val targetVersion = version ?: installation.activeVersion
+        return loadVerifiedStoredPackage(pluginId, targetVersion)
+    }
+
+    private fun loadStoredManifest(pluginId: String, version: String): ExtensionManifestV2 =
+        loadVerifiedStoredPackage(pluginId, version).manifest
+
+    private fun loadVerifiedStoredPackage(pluginId: String, version: String): VerifiedExtensionPackage {
         val bytes = store.readVersionManifestBytes(pluginId, version)
             ?: throw PackageException(PackageError.ROLLBACK_UNAVAILABLE, "目标插件版本不存在或已损坏：" + version)
-        // Persisted package bytes are evidence, not trusted input. Every lifecycle
-        // decision that reads an old version (permission confirmation, revocation,
-        // and rollback) re-verifies the publisher signature and every declared
-        // artifact digest before using its manifest.
         return ExtensionPackageVerifier.verify(
             bytes,
             store.readVersionArtifactMap(pluginId, version),
             keys,
             currentHostApi
-        ).manifest
+        )
     }
 
     private fun extractUiSlotsJson(manifestBytes: ByteArray): String {

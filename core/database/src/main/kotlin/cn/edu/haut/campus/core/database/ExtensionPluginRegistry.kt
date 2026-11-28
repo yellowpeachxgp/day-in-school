@@ -6,9 +6,7 @@ import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.packages.PackageError
 import cn.edu.haut.campus.core.packages.PackageException
 import cn.edu.haut.campus.core.packages.v2.ExtensionInstallation
-import cn.edu.haut.campus.core.packages.v2.ExtensionPluginFileStore
 import cn.edu.haut.campus.core.packages.v2.ExtensionPluginInstaller
-import cn.edu.haut.campus.core.packages.v2.ExtensionPublisherTrustRoots
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -31,14 +29,9 @@ internal class ExtensionPluginRegistry(
 ) {
     private val cloudAndParcelDao = environment.database.cloudAndParcelDao()
     private val schoolId = environment.accountProfile.schoolId
-    private val installer = ExtensionPluginInstaller(
-        store = ExtensionPluginFileStore(
-            ExtensionPluginWipeRegistration.rootForProfile(
-                appContext.filesDir,
-                environment.accountProfile.id
-            ).toPath()
-        ),
-        keys = ExtensionPublisherTrustRoots.officialExamplesRegistry()
+    private val installer = ExtensionPluginRuntimeRegistry.installerForProfile(
+        appContext.filesDir,
+        environment.accountProfile.id
     )
 
     val installedExtensionPluginsFlow: Flow<List<InstalledExtensionPluginEntity>> =

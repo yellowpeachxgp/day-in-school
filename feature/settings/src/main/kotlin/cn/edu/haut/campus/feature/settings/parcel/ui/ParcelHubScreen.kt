@@ -92,7 +92,9 @@ import org.json.JSONArray
 internal fun ParcelHubScreenContent(
     state: ParcelHubUiState,
     actions: ParcelHubUiAction,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    parcelCardsContent: @Composable () -> Unit = {},
+    parcelProvidersContent: @Composable () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val parcels = state.parcels
@@ -230,6 +232,8 @@ internal fun ParcelHubScreenContent(
                             }
                         }
                     }
+
+                    parcelCardsContent()
 
                     if (parcels.isEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {
@@ -419,6 +423,8 @@ internal fun ParcelHubScreenContent(
                             }
                         }
                     }
+
+                    parcelProvidersContent()
 
                     if (xiaomiAccounts.isEmpty()) {
                         XPeachCard(modifier = Modifier.fillMaxWidth()) {

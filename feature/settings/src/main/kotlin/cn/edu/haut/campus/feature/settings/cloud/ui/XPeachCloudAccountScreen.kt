@@ -57,6 +57,9 @@ import cn.edu.haut.campus.core.campusservices.NativeOidcLoginResult
 import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiAction
 import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiState
+import cn.edu.haut.campus.feature.settings.plugin.state.PluginManagementUiAction
+import cn.edu.haut.campus.feature.settings.plugin.state.PluginManagementUiState
+import cn.edu.haut.campus.feature.settings.plugin.ui.PluginManagementScreen
 import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
@@ -77,7 +80,9 @@ internal fun XPeachCloudAccountScreenContent(
     state: XPeachCloudUiState,
     actions: XPeachCloudUiAction,
     onBack: () -> Unit,
-    onNavigateToCloudSeatBooking: () -> Unit = {}
+    onNavigateToCloudSeatBooking: () -> Unit = {},
+    pluginManagementState: PluginManagementUiState = PluginManagementUiState(),
+    onPluginManagementAction: (PluginManagementUiAction) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -564,108 +569,40 @@ internal fun XPeachCloudAccountScreenContent(
                     )
                 }
 
-                for (plugin in plugins) {
-                    val slotSummary = remember(plugin.uiSlotsJson) {
-                        parsePluginSlotSummary(plugin.uiSlotsJson)
-                    }
+                PluginManagementScreen(
+                    state = pluginManagementState,
+                    onAction = onPluginManagementAction
+                )
+
+                val legacyUnverifiedPlugins = plugins.filter { it.status == "LEGACY_UNVERIFIED" }
+                legacyUnverifiedPlugins.forEach { legacy ->
                     XPeachCard(modifier = Modifier.fillMaxWidth()) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 10.dp),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
                                 Text(
-                                    text = plugin.name,
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = legacy.name,
+                                    style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "标识：${plugin.pluginId} · 版本 ${plugin.activeVersion}",
+                                    text = "未验证遗留扩展 · 不会渲染；只能移除",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.error
                                 )
-                            }
-                            if (plugin.status == "ENABLED") {
-                                XPeachStatusDotText(
-                                    text = "已启用",
-                                    dotColor = XPeachTheme.readablePrimary
-                                )
-                            } else if (plugin.status == "LEGACY_UNVERIFIED") {
-                                XPeachStatusDotText(
-                                    text = "未验证遗留",
-                                    dotColor = MaterialTheme.colorScheme.error
-                                )
-                            } else {
-                                XPeachStatusDotText(
-                                    text = "已停用",
-                                    dotColor = MaterialTheme.colorScheme.outline
-                                )
-                            }
-                        }
-
-                        if (slotSummary != null) {
-                            XPeachInsetDivider(verticalPadding = 8.dp)
-                            Text(
-                                text = slotSummary.first,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            if (slotSummary.second.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = slotSummary.second,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            if (plugin.status == "ENABLED" || plugin.status == "DISABLED") {
-                                FilledTonalButton(
-                                    onClick = {
-                                        scope.launch {
-                                            val next = if (plugin.status == "ENABLED") "DISABLED" else "ENABLED"
-                                            actions.upsertExtensionPlugin(
-                                                plugin.copy(
-                                                    status = next,
-                                                    updatedAtEpochMillis = System.currentTimeMillis()
-                                                )
-                                            )
-                                            feedbackBanner = if (next == "ENABLED") "已启用「${plugin.name}」" else "已停用「${plugin.name}」"
-                                        }
-                                    },
-                                    shape = RoundedCornerShape(12.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(if (plugin.status == "ENABLED") "停用扩展" else "启用扩展")
-                                }
                             }
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
-                                        actions.removeExtensionPlugin(plugin.pluginId)
-                                        feedbackBanner = "已移除「${plugin.name}」"
+                                        actions.removeExtensionPlugin(legacy.pluginId)
+                                        feedbackBanner = "已移除未验证遗留扩展"
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("移除扩展", color = MaterialTheme.colorScheme.error)
-                            }
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("移除", color = MaterialTheme.colorScheme.error) }
                         }
                     }
                 }
