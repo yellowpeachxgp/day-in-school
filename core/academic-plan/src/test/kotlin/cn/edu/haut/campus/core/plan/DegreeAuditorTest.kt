@@ -446,7 +446,7 @@ class DegreeAuditorTest {
         PlanFixtures.assertAmount("6", progress.earnedCredits, "同名不同码是两门课程，不得被改名规则误并为重修")
         assertEquals(2, progress.assignedCourses.size)
         PlanFixtures.assertAmount("6", report.totalEarnedCredits)
-        assertEquals(1, report.trace.count { it.rule == "rename" }, "只有 HIST101 可命中显式代码改名规则")
+        assertEquals("只有 HIST101 可命中显式代码改名规则", 1, report.trace.count { it.rule == "rename" })
     }
 
     @Test

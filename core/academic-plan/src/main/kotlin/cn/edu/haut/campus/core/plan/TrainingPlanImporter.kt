@@ -56,11 +56,17 @@ data class TrainingPlanImport(
 object TrainingPlanImporter {
 
     const val JSON_FORMAT = "univ-training-plan/v1"
+    const val CSV_MAX_INPUT_CHARS = 1_000_000
+    const val CSV_MAX_ROWS = 5_000
+    const val CSV_MAX_COLUMNS = 16
+    const val CSV_MAX_FIELD_CHARS = 4_096
+    const val CSV_MAX_GROUP_DEPTH = 8
 
     val csvFormatDocumentation: String =
         "CSV 列：group_path,kind,required_credits,course_code,course_name,offering,prerequisites。" +
             "group_path 用 / 分层；kind 取 required|elective|practice|general；" +
-            "offering 取 spring|autumn|both|unknown；prerequisites 用英文分号分隔；首行表头可选"
+            "offering 取 spring|autumn|both|unknown；prerequisites 用英文分号分隔；首行表头可选。" +
+            "硬上限：输入 1,000,000 字符、5,000 行、16 列、字段 4,096 字符、路径 8 层；引号字段必须闭合"
 
     fun import(input: ImportInput): TrainingPlanImport = when (input) {
         is ImportInput.JsonDocument -> importJson(input.text)
@@ -195,7 +201,12 @@ object TrainingPlanImporter {
             val byColumn = columns.zip(row).toMap()
             val rawPath = byColumn["group_path"].orEmpty().trim()
             val courseName = byColumn["course_name"].orEmpty().trim()
-            if (rawPath.isEmpty() || courseName.isEmpty()) {
+            val rawPathSegments = rawPath.split('/')
+            if (rawPathSegments.size > CSV_MAX_GROUP_DEPTH) {
+                throw IllegalArgumentException("CSV group_path 深度超过硬上限 " + CSV_MAX_GROUP_DEPTH + " 层")
+            }
+            val pathSegments = rawPathSegments.map { it.trim() }.filter { it.isNotEmpty() }
+            if (rawPath.isEmpty() || courseName.isEmpty() || pathSegments.isEmpty()) {
                 skipped++
                 warnings += "跳过缺少 group_path 或 course_name 的行: " + row.joinToString(",").take(80)
                 return@mapNotNull null
@@ -228,7 +239,7 @@ object TrainingPlanImporter {
             val prerequisites = byColumn["prerequisites"].orEmpty()
                 .split(';').map { it.trim() }.filter { it.isNotEmpty() }
             RowInfo(
-                path = rawPath.split('/').map { it.trim() }.filter { it.isNotEmpty() },
+                path = pathSegments,
                 kind = kind,
                 requiredCredits = credits,
                 course = PlanCourseRef(
@@ -519,35 +530,66 @@ object TrainingPlanImporter {
         }
     }
 
-    /** 最小 CSV 解析：支持引号包裹与双引号转义，不支持内嵌换行。 */
+    /**
+     * 最小 CSV 解析：支持引号包裹与双引号转义，不支持内嵌换行。
+     * 尺寸、行列、字段长度与引号闭合全部是硬上限/硬校验，防止粘贴大文本时无界消耗内存。
+     */
     internal fun parseCsvRows(text: String): List<List<String>> {
+        require(text.length <= CSV_MAX_INPUT_CHARS) {
+            "CSV 输入超过大小硬上限 " + CSV_MAX_INPUT_CHARS + " 字符"
+        }
         val rows = mutableListOf<List<String>>()
         val current = StringBuilder()
         val row = mutableListOf<String>()
         var inQuotes = false
         var index = 0
-        fun endRow() {
+
+        fun appendFieldChar(ch: Char) {
+            if (current.length >= CSV_MAX_FIELD_CHARS) {
+                throw IllegalArgumentException("CSV 字段超过硬上限 " + CSV_MAX_FIELD_CHARS + " 字符")
+            }
+            current.append(ch)
+        }
+
+        fun endField() {
+            if (row.size >= CSV_MAX_COLUMNS) {
+                throw IllegalArgumentException("CSV 行列数超过硬上限 " + CSV_MAX_COLUMNS + " 列")
+            }
             row += current.toString()
             current.clear()
-            if (row.any { it.isNotBlank() }) rows += row.toList()
+        }
+
+        fun endRow() {
+            endField()
+            if (row.any { it.isNotBlank() }) {
+                rows += row.toList()
+                if (rows.size > CSV_MAX_ROWS) {
+                    throw IllegalArgumentException("CSV 行数超过硬上限 " + CSV_MAX_ROWS + " 行")
+                }
+            }
             row.clear()
         }
+
         while (index < text.length) {
             val ch = text[index]
             when {
                 inQuotes && ch == '"' && index + 1 < text.length && text[index + 1] == '"' -> {
-                    current.append('"'); index++
+                    appendFieldChar('"')
+                    index++
                 }
                 ch == '"' -> inQuotes = !inQuotes
-                !inQuotes && ch == ',' -> { row += current.toString(); current.clear() }
+                !inQuotes && ch == ',' -> endField()
                 !inQuotes && (ch == '\u000a' || ch == '\u000d') -> {
                     if (ch == '\u000d' && index + 1 < text.length && text[index + 1] == '\u000a') index++
                     endRow()
                 }
-                else -> current.append(ch)
+                inQuotes && (ch == '\u000a' || ch == '\u000d') ->
+                    throw IllegalArgumentException("CSV 不支持引号字段内嵌换行")
+                else -> appendFieldChar(ch)
             }
             index++
         }
+        if (inQuotes) throw IllegalArgumentException("CSV 引号字段未闭合")
         if (current.isNotEmpty() || row.isNotEmpty()) endRow()
         return rows
     }

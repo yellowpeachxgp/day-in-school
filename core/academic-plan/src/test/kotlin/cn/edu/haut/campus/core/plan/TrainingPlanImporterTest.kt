@@ -241,4 +241,47 @@ class TrainingPlanImporterTest {
         assertTrue(report.gaps.any { it.groupId == "gw-root" && it.missingCredits.compareTo(BigDecimal("140")) == 0 })
     }
 
+    @Test
+    fun csvHardLimitRejectsOversizedInput() {
+        val csv = "x".repeat(TrainingPlanImporter.CSV_MAX_INPUT_CHARS + 1)
+        val error = runCatching { TrainingPlanImporter.import(ImportInput.CsvDocument(csv)) }.exceptionOrNull()
+        assertNotNull(error)
+        assertTrue(error!!.message.orEmpty().contains("大小硬上限"))
+    }
+
+    @Test
+    fun csvHardLimitRejectsDeepGroupPath() {
+        val deepPath = (1..(TrainingPlanImporter.CSV_MAX_GROUP_DEPTH + 1)).joinToString("/")
+        val csv = "group_path,kind,required_credits,course_code,course_name,offering,prerequisites\n" +
+            deepPath + ",required,1,C1,课程,,"
+        val error = runCatching { TrainingPlanImporter.import(ImportInput.CsvDocument(csv)) }.exceptionOrNull()
+        assertNotNull(error)
+        assertTrue(error!!.message.orEmpty().contains("深度超过硬上限"))
+    }
+
+    @Test
+    fun csvHardLimitRejectsUnclosedQuote() {
+        val error = runCatching { TrainingPlanImporter.import(ImportInput.CsvDocument("\"unclosed")) }.exceptionOrNull()
+        assertNotNull(error)
+        assertTrue(error!!.message.orEmpty().contains("引号字段未闭合"))
+    }
+
+    @Test
+    fun csvHardLimitRejectsOversizedQuotedField() {
+        val oversized = "\"" + "a".repeat(TrainingPlanImporter.CSV_MAX_FIELD_CHARS + 1) + "\""
+        val csv = oversized + ",required,1,C1,课程,,"
+        val error = runCatching { TrainingPlanImporter.import(ImportInput.CsvDocument(csv)) }.exceptionOrNull()
+        assertNotNull(error)
+        assertTrue(error!!.message.orEmpty().contains("字段超过硬上限"))
+    }
+
+    @Test
+    fun csvQuotedCommaFieldStillParses() {
+        val csv = "group_path,kind,required_credits,course_code,course_name,offering,prerequisites\n" +
+            "Core,required,1,C1,\"课程,含逗号\",,"
+        val result = TrainingPlanImporter.import(ImportInput.CsvDocument(csv))
+        val core = result.plan.allGroups().first { it.title == "Core" }
+        assertEquals("课程,含逗号", core.courses.single().name)
+    }
+
 }
