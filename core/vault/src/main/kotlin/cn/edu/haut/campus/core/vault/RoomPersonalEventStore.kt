@@ -99,7 +99,12 @@ class RoomPersonalEventStore(
         delete(id = id, actor = actor, writeGroupId = null)
     }
 
-    suspend fun delete(id: TimelineEventId, actor: Actor, writeGroupId: String?) {
+    suspend fun delete(
+        id: TimelineEventId,
+        actor: Actor,
+        writeGroupId: String?,
+        source: SourceRef? = null
+    ) {
         require(id.sourceId == PersonalEventDraft.PERSONAL_TIMELINE_SOURCE) {
             "个人日程 TimelineEventId source 必须是 personal"
         }
@@ -108,6 +113,7 @@ class RoomPersonalEventStore(
             ref = ref,
             actor = actor,
             actorDetail = "personal-event-delete",
+            source = source,
             writeGroupId = writeGroupId
         ) {
             dao.deletePersonalEventById(id.value)

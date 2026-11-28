@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SnapshotCompleteness
+import cn.edu.haut.campus.core.model.SourceRef
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.textextract.ExtractionConfirmationState
@@ -334,7 +335,12 @@ class VaultKnowledgeRepository internal constructor(
             val staleEventId = oldMaterial?.assignment?.timelineEventId
                 ?: oldMaterial?.assignment?.let { assignmentEventId(material.id) }
             if (staleEventId != null) {
-                personalEventStore.delete(staleEventId, actor, writeGroupId)
+                personalEventStore.delete(
+                    id = staleEventId,
+                    actor = actor,
+                    writeGroupId = writeGroupId,
+                    source = SourceRef(material.ref, material.provenance)
+                )
             }
             return
         }
