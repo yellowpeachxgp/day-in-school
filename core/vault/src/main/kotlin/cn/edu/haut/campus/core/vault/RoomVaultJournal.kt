@@ -178,6 +178,7 @@ class RoomVaultJournal(
             writeGroupId = original.writeGroupId
         )
         updateSearchProjection(ref, store)
+        revertCausalChildren(rootRef = ref, parentOriginal = original, actor = actor)
         val marked = dao.markJournalReverted(changeId, reversal.changeId)
         if (marked != 1) {
             throw JournalRevertInvariantException("撤销标记写入失败: changeId=" + changeId)
@@ -189,6 +190,62 @@ class RoomVaultJournal(
             )
         }
         return outcome
+    }
+
+    /**
+     * 撤销因果子实体。子写入必须与根写入共享 writeGroupId，且 journal source 指向根实体；
+     * 例如课程资料归档派生作业截止，撤销资料创建/更新时同一事务恢复或删除对应 personal_event，
+     * 不留下 Timeline 孤儿。普通 batch 中无 source 指向的兄弟实体不受牵连。
+     */
+    private suspend fun revertCausalChildren(rootRef: EntityRef, parentOriginal: EntityJournalEntity, actor: Actor) {
+        val childRows = dao.getJournalGroup(parentOriginal.writeGroupId)
+            .filter { it.changeId != parentOriginal.changeId }
+            .filter { it.revertedByChangeId == null }
+            .filter { row ->
+                row.sourceJson?.let { sourceJson ->
+                    runCatching {
+                        decodeSourceRef(cn.edu.haut.campus.core.model.json.Json.parse(sourceJson)).entity
+                    }.getOrNull()
+                } == rootRef
+            }
+        childRows.forEach { childRow ->
+            val childRef = entityRefOf(childRow)
+            val childStore = snapshotStores[childRef.type] ?: throw UnsupportedVaultEntityException(childRef.type)
+            val current = childStore.read(childRef)
+            val target = childRow.beforeJson?.let(CanonicalJson::of)
+            validateSnapshotSafety(target)
+
+            childStore.apply(childRef, target)
+            val restored = childStore.read(childRef)
+            if ((restored?.text) != target?.text) {
+                throw JournalRevertInvariantException(
+                    "因果子实体撤销后快照与 journal before 不一致: changeId=" + childRow.changeId +
+                        ", entity=" + childRef.type + "/" + childRef.id
+                )
+            }
+            val inverseOp = when {
+                target == null -> ChangeKind.DELETED
+                ChangeKind.valueOf(childRow.op) == ChangeKind.DELETED || current == null -> ChangeKind.RESTORED
+                current?.text == target?.text -> ChangeKind.RESTORED
+                else -> ChangeKind.UPDATED
+            }
+            val reversal = recordChange(
+                ref = childRef,
+                op = inverseOp,
+                before = current,
+                after = restored,
+                actor = actor,
+                actorDetail = "causal-revert:" + parentOriginal.changeId + ":" + childRow.changeId,
+                at = clock(),
+                source = null,
+                writeGroupId = parentOriginal.writeGroupId
+            )
+            updateSearchProjection(childRef, childStore)
+            val marked = dao.markJournalReverted(childRow.changeId, reversal.changeId)
+            if (marked != 1) {
+                throw JournalRevertInvariantException("因果子实体撤销标记写入失败: changeId=" + childRow.changeId)
+            }
+        }
     }
 
     internal suspend fun recordChange(

@@ -252,8 +252,8 @@ class RoomSearchIndex(
             "(" + unitConditions.joinToString(" AND ") + ")"
         }
         fromWhere.append(" AND ").append(fieldConditions.joinToString(" OR ", "(", ")"))
-        args += conditionArgs
-        countArgs += conditionArgs
+        args.addAll(conditionArgs)
+        countArgs.addAll(conditionArgs)
     }
 
     private fun structuredQueryUnits(normalizedQuery: String): List<FieldQueryUnit> {

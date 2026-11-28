@@ -246,6 +246,54 @@ class VaultKnowledgeRepositoryTest {
     }
 
     @Test
+    fun revertAssignmentMaterialCreationRemovesDerivedDeadlineFromTimeline() = runBlocking {
+        val due = Instant.parse("2026-03-09T12:00:00Z")
+        val material = repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.ASSIGNMENT,
+                title = "撤销作业截止",
+                note = null,
+                fileName = "undo-assignment.txt",
+                mimeType = "text/plain",
+                contentBytes = "撤销后不能留下时间流孤儿".toByteArray(Charsets.UTF_8),
+                assignmentDueAt = due,
+                deadlineZone = ZoneId.of("Asia/Shanghai")
+            )
+        )
+        val eventId = VaultKnowledgeRepository.assignmentEventId(material.id)
+        assertNotNull(database.vaultDao().getPersonalEvent(eventId.value))
+
+        val journal = createKnowledgeJournal()
+        val materialRef = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            material.id,
+            scope
+        )
+        val history = journal.history(materialRef).first()
+        assertEquals(1, history.size)
+        journal.revert(history[0].changeId, Actor.USER)
+
+        assertNull(repository.getMaterial(scope, material.id))
+        assertNull("撤销资料创建必须删除派生 personal_event", database.vaultDao().getPersonalEvent(eventId.value))
+        val window = TimeWindow(Instant.parse("2026-03-09T00:00:00Z"), Instant.parse("2026-03-10T00:00:00Z"))
+        val timelineEvents = PersonalTimelineSource(
+            cn.edu.haut.campus.core.vault.RoomPersonalEventStore(
+                database = database,
+                scope = scope,
+                writer = knowledgeJournalForTimeline(database),
+                searchIndex = cn.edu.haut.campus.core.vault.RoomSearchIndex(database)
+            )
+        ).observe(scope, window).first()
+        assertTrue("撤销后 Timeline 不得出现孤儿作业截止", timelineEvents.none { it.id == eventId })
+
+        val groupRows = database.vaultDao().getJournalGroup(history[0].writeGroupId)
+        assertTrue(groupRows.any { it.entityType == "PERSONAL_EVENT" && it.op == "CREATED" })
+        assertTrue(groupRows.any { it.entityType == "PERSONAL_EVENT" && it.actorDetail?.startsWith("causal-revert:") == true })
+    }
+
+    @Test
     fun materialsAndSearchAreInvisibleAcrossProfileScopes() = runBlocking {
         repository.archiveMaterial(
             ArchiveMaterialRequest(

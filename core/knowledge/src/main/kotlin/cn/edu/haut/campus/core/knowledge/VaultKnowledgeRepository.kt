@@ -14,11 +14,11 @@ import cn.edu.haut.campus.core.textextract.TextExtractPort
 import cn.edu.haut.campus.core.timeline.BusyLevel
 import cn.edu.haut.campus.core.timeline.EventStatus
 import cn.edu.haut.campus.core.timeline.PersonalEventDraft
-import cn.edu.haut.campus.core.timeline.PersonalEventStore
 import cn.edu.haut.campus.core.timeline.TimelineEventId
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import cn.edu.haut.campus.core.vault.EntityWriter
+import cn.edu.haut.campus.core.vault.RoomPersonalEventStore
 import cn.edu.haut.campus.core.vault.RoomSearchIndex
 import cn.edu.haut.campus.core.vault.SearchHitChannel
 import cn.edu.haut.campus.core.vault.SearchQuery
@@ -27,6 +27,7 @@ import cn.edu.haut.campus.core.vault.VaultBlobStore
 import java.io.BufferedOutputStream
 import java.io.OutputStream
 import java.time.Instant
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -39,9 +40,10 @@ class VaultKnowledgeRepository internal constructor(
     private val writer: EntityWriter,
     private val materialDocuments: VersionedBlobDocumentStore,
     private val reviewDocuments: VersionedBlobDocumentStore,
-    private val personalEventStore: PersonalEventStore,
+    private val personalEventStore: RoomPersonalEventStore,
     private val textExtractor: TextExtractPort,
     private val clock: () -> Instant = Instant::now,
+    private val writeGroupIdGenerator: () -> String = { UUID.randomUUID().toString() },
     private val ownedCloseables: List<AutoCloseable> = emptyList()
 ) : KnowledgeRepository {
 
@@ -72,10 +74,12 @@ class VaultKnowledgeRepository internal constructor(
         val now = clock()
         val eventId = request.assignmentDueAt?.let { assignmentEventId(materialId) }
         val ref = EntityRef(EntityType.COURSE_MATERIAL, materialId, scope)
+        val writeGroupId = "knowledge-material-" + writeGroupIdGenerator()
         return writer.write(
             ref = ref,
             actor = actor,
-            actorDetail = "knowledge-material-archive"
+            actorDetail = "knowledge-material-archive",
+            writeGroupId = writeGroupId
         ) {
             val rawRef = blobStore.put(
                 content = request.contentBytes.copyOf(),
@@ -141,7 +145,7 @@ class VaultKnowledgeRepository internal constructor(
             )
             materialDocuments.writeDocument(materialId, encodeCourseMaterialDocument(material))
             searchProjector.replace(existing, material, extraction?.payload?.lines)
-            reconcileDeadline(existing, material, actor)
+            reconcileDeadline(existing, material, actor, writeGroupId)
             material
         }
     }
@@ -324,13 +328,13 @@ class VaultKnowledgeRepository internal constructor(
         )
     }
 
-    private suspend fun reconcileDeadline(oldMaterial: CourseMaterial?, material: CourseMaterial, actor: Actor) {
+    private suspend fun reconcileDeadline(oldMaterial: CourseMaterial?, material: CourseMaterial, actor: Actor, writeGroupId: String) {
         val assignment = material.assignment
         if (assignment == null) {
             val staleEventId = oldMaterial?.assignment?.timelineEventId
                 ?: oldMaterial?.assignment?.let { assignmentEventId(material.id) }
             if (staleEventId != null) {
-                personalEventStore.delete(staleEventId, actor)
+                personalEventStore.delete(staleEventId, actor, writeGroupId)
             }
             return
         }
@@ -355,7 +359,8 @@ class VaultKnowledgeRepository internal constructor(
                 sourceEntity = materialRef,
                 links = listOf(materialRef, courseRef).distinct()
             ),
-            actor = actor
+            actor = actor,
+            writeGroupId = writeGroupId
         )
     }
 
