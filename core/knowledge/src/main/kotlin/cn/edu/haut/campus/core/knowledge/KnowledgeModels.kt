@@ -171,7 +171,76 @@ enum class ReviewTaskState {
     ARCHIVED
 }
 
-/** W3-05 复习排程复用的最小任务模型；W3-04 只负责持久化与审计，不做排程决策。 */
+enum class ReviewBlockState {
+    /** 未来的排程块；会作为 REVIEW_BLOCK 占用 Timeline。 */
+    PLANNED,
+
+    /** 用户已完成；仍保留在历史时间流中。 */
+    DONE,
+
+    /** 排程块已过期但仍未完成；重排时必须保留该历史并生成替代块，不得静默丢任务。 */
+    MISSED
+}
+
+/** 一次具体的复习块。targetStart 是间隔重复算法给出的理想时间，start/end 是求解器实际选择。 */
+data class ReviewBlock(
+    val id: String,
+    val repetitionIndex: Int,
+    val targetStart: Instant,
+    val start: Instant,
+    val end: Instant,
+    val state: ReviewBlockState,
+    val timelineEventId: TimelineEventId
+) {
+    init {
+        requireStableKnowledgeId(id, "review block id")
+        require(repetitionIndex in 1..ReviewSchedule.MAX_PLANNED_REVIEW_BLOCKS) { "复习块序号超出范围" }
+        require(end.isAfter(start)) { "复习块 end 必须晚于 start" }
+    }
+}
+
+/** 一个复习任务的完整本地排程快照；历史 DONE/MISSED 块会随重排继续保留，且不占未来排程块配额。 */
+data class ReviewSchedule(
+    val algorithm: String,
+    val planRevision: Long,
+    val generatedAt: Instant,
+    val zone: ZoneId,
+    val deadlineAt: Instant?,
+    val blocks: List<ReviewBlock>
+) {
+    init {
+        require(algorithm.isNotBlank() && algorithm.length <= 128 && algorithm.none { it.isISOControl() || it.isWhitespace() }) {
+            "复习排程算法标识非法"
+        }
+        require(planRevision > 0) { "复习排程 planRevision 必须大于 0" }
+        val plannedCount = blocks.count { it.state == ReviewBlockState.PLANNED }
+        require(plannedCount <= MAX_PLANNED_REVIEW_BLOCKS) { "单个复习任务的未来排程块数量超出上限" }
+        require(blocks.map { it.id }.distinct().size == blocks.size) { "复习块 ID 不能重复" }
+        val plannedIndices = blocks.filter { it.state == ReviewBlockState.PLANNED }.map { it.repetitionIndex }
+        require(plannedIndices.distinct().size == plannedIndices.size) { "未来复习块 repetitionIndex 不能重复" }
+        require(blocks.map { it.timelineEventId }.distinct().size == blocks.size) { "复习块 TimelineEventId 不能重复" }
+        val ordered = blocks.sortedWith(compareBy<ReviewBlock> { it.start }.thenBy { it.repetitionIndex })
+        for (index in 1 until ordered.size) {
+            require(ordered[index].start >= ordered[index - 1].end) { "同一复习任务的排程块不能重叠" }
+        }
+    }
+
+    companion object {
+        /** 配额只限制未来 PLANNED 块；DONE/MISSED 历史是审计事实，不能因达到配额而让任务无法重排。 */
+        const val MAX_PLANNED_REVIEW_BLOCKS: Int = 32
+
+        /** 兼容首轮 W3-05 引用；语义等同 MAX_PLANNED_REVIEW_BLOCKS。 */
+        const val MAX_REVIEW_BLOCKS: Int = MAX_PLANNED_REVIEW_BLOCKS
+    }
+}
+
+/**
+ * W3-05 复习排程复用的任务模型。
+ *
+ * masteryPercent 是用户或完成记录给出的当前掌握度（0..100）；successfulReviewCount、
+ * lapseCount 与 lastReviewedAt 是间隔重复算法的本地记忆状态。新增字段都有默认值，
+ * W3-04 已写入 blob_store 的 review-task/v1 文档可以继续解码，不需要 Room 迁移。
+ */
 data class ReviewTask(
     val id: String,
     val scope: SchoolAccountScope,
@@ -184,7 +253,12 @@ data class ReviewTask(
     val estimatedMinutes: Int?,
     val revision: Long,
     val createdAt: Instant,
-    val updatedAt: Instant
+    val updatedAt: Instant,
+    val masteryPercent: Int = 0,
+    val successfulReviewCount: Int = 0,
+    val lapseCount: Int = 0,
+    val lastReviewedAt: Instant? = null,
+    val schedule: ReviewSchedule? = null
 ) {
     init {
         requireStableKnowledgeId(id, "review task id")
@@ -193,6 +267,9 @@ data class ReviewTask(
         require(materialId == null || materialId.isNotBlank()) { "materialId 不能为空白" }
         require(estimatedMinutes == null || estimatedMinutes in 1..24 * 60) { "估时必须在 1 分钟到 24 小时" }
         require(revision > 0) { "revision 必须大于 0" }
+        require(masteryPercent in 0..100) { "掌握度必须在 0..100" }
+        require(successfulReviewCount >= 0) { "成功复习次数不能为负" }
+        require(lapseCount >= 0) { "漏复习次数不能为负" }
     }
 
     val ref: EntityRef
