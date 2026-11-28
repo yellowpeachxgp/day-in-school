@@ -13,12 +13,15 @@ import cn.edu.haut.campus.feature.automation.state.AutomationScreenMode
 import cn.edu.haut.campus.feature.automation.state.AutomationScreenStatus
 import cn.edu.haut.campus.feature.automation.state.AutomationTemplateUiItem
 import cn.edu.haut.campus.feature.automation.state.AutomationUiAction
+import cn.edu.haut.campus.feature.automation.state.AutomationUiEffect
 import cn.edu.haut.campus.feature.automation.state.AutomationUiState
 import cn.edu.haut.campus.feature.automation.state.AutomationTriggerChoice
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -31,6 +34,8 @@ class AutomationViewModel(
         AutomationUiState(templates = BuiltinAutomationTemplates.all.map(::toUiItem))
     )
     val uiState: StateFlow<AutomationUiState> = mutableState.asStateFlow()
+    private val mutableEffects = MutableSharedFlow<AutomationUiEffect>(extraBufferCapacity = 16)
+    val effects = mutableEffects.asSharedFlow()
     private var runsJob: Job? = null
 
     init {
@@ -51,7 +56,7 @@ class AutomationViewModel(
 
     fun dispatch(action: AutomationUiAction) {
         when (action) {
-            AutomationUiAction.Back -> Unit // Route 拥有导航返回，ViewModel 不产生副作用。
+            AutomationUiAction.Back -> emit(AutomationUiEffect.NavigateBack)
             AutomationUiAction.BackToList -> backToList()
             AutomationUiAction.NewRule -> openNewEditor()
             AutomationUiAction.SaveDraft -> saveDraft()
@@ -65,6 +70,10 @@ class AutomationViewModel(
             is AutomationUiAction.SetEnabled -> setEnabled(action.rule, action.enabled)
             is AutomationUiAction.UpdateDraft -> updateDraft(action.transform)
         }
+    }
+
+    private fun emit(effect: AutomationUiEffect) {
+        viewModelScope.launch { mutableEffects.emit(effect) }
     }
 
     private fun openNewEditor() {

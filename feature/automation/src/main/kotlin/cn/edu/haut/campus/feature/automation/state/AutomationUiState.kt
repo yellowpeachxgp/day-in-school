@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.feature.automation.state
 
+import androidx.compose.runtime.Immutable
 import cn.edu.haut.campus.core.automation.ActionSpec
 import cn.edu.haut.campus.core.automation.AutomationRule
 import cn.edu.haut.campus.core.automation.AutomationRun
@@ -42,6 +43,7 @@ enum class AutomationScreenStatus {
     UNSUPPORTED
 }
 
+@Immutable
 data class AutomationTemplateUiItem(
     val id: String,
     val title: String,
@@ -50,6 +52,7 @@ data class AutomationTemplateUiItem(
 )
 
 /** 表单式编辑器草稿。无法被骨架表单表达的高级条件/动作放入 preserved*，保存时绝不静默丢弃。 */
+@Immutable
 data class AutomationEditorDraft(
     val id: String = "rule-" + UUID.randomUUID().toString(),
     val name: String = "新的自动化",
@@ -300,6 +303,7 @@ enum class AutomationScreenMode {
     RUNS
 }
 
+@Immutable
 data class AutomationUiState(
     val loading: Boolean = true,
     val status: AutomationScreenStatus = AutomationScreenStatus.LOADING,
