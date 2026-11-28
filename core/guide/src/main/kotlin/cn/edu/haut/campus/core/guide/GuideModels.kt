@@ -197,7 +197,7 @@ data class OpportunityProgressSnapshot(
     val artifactSha256: String,
     val facts: Map<String, OpportunityRequirementFact> = emptyMap(),
     val completedMaterials: Map<Int, Instant> = emptyMap(),
-    val override: ManualEligibilityOverride? = null,
+    val eligibilityOverride: ManualEligibilityOverride? = null,
     val applicationStatus: OpportunityApplicationStatus = OpportunityApplicationStatus.TRACKING,
     val createdAt: Instant,
     val updatedAt: Instant,
