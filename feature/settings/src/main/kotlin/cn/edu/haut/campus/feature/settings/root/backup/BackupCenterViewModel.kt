@@ -528,7 +528,7 @@ class BackupCenterViewModel(
                     syncClient = E2eeSyncClientFactory.create(context.applicationContext, repository),
                     cloudSessionProvider = { repository.snapshotCloudIdentitySession() != null },
                     syncWorkProfileId = repository.profileId,
-                    syncWorkGeneration = repository.sessionGeneration,
+                    syncWorkGeneration = repository.sessionGeneration ?: -1L,
                     postRestoreHooks = {
                         runCatching { repository.rescheduleActiveLocalBookingPlans() }
                         runCatching {
