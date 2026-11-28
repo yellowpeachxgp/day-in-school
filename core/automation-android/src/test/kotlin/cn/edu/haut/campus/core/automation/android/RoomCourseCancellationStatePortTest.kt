@@ -39,37 +39,39 @@ class RoomCourseCancellationStatePortTest {
         database = Room.inMemoryDatabaseBuilder(RuntimeEnvironment.getApplication(), HautDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        database.campusDao().upsertCourse(
-            CourseEntity(
-                id = courseRef.id,
-                externalId = null,
-                name = "高等数学",
-                teacher = "测试教师",
-                colorArgb = 0xFF053968,
-                creditPlain = null,
-                source = "MANUAL",
-                userModified = true,
-                lastSyncEpochMilli = null
-            )
-        )
-        database.campusDao().upsertRules(
-            listOf(
-                CourseScheduleRuleEntity(
-                    id = "rule-1",
-                    courseId = courseRef.id,
-                    termId = "2026-2027-1",
-                    weekdayIso = 1,
-                    startPeriod = 1,
-                    endPeriod = 2,
-                    weeksCsv = "1,2",
-                    rawRoom = "W111",
-                    buildingId = null,
-                    customStartTimeIso = null,
-                    customEndTimeIso = null,
-                    userModified = false
+        runBlocking {
+            database.campusDao().upsertCourse(
+                CourseEntity(
+                    id = courseRef.id,
+                    externalId = null,
+                    name = "高等数学",
+                    teacher = "测试教师",
+                    colorArgb = 0xFF053968,
+                    creditPlain = null,
+                    source = "MANUAL",
+                    userModified = true,
+                    lastSyncEpochMilli = null
                 )
             )
-        )
+            database.campusDao().upsertRules(
+                listOf(
+                    CourseScheduleRuleEntity(
+                        id = "rule-1",
+                        courseId = courseRef.id,
+                        termId = "2026-2027-1",
+                        weekdayIso = 1,
+                        startPeriod = 1,
+                        endPeriod = 2,
+                        weeksCsv = "1,2",
+                        rawRoom = "W111",
+                        buildingId = null,
+                        customStartTimeIso = null,
+                        customEndTimeIso = null,
+                        userModified = false
+                    )
+                )
+            )
+        }
     }
 
     @After
