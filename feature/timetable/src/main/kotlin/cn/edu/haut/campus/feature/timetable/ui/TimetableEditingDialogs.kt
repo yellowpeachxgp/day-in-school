@@ -51,7 +51,6 @@ import cn.edu.haut.campus.core.designsystem.XPeachTheme
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.WeeksSetParser
 import cn.edu.haut.campus.core.model.AcademicTermResolver
-import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import java.time.LocalDate
@@ -62,7 +61,7 @@ import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiMo
 
 @Composable
 internal fun TimetableEditingDialogs(
-    editingOccurrence: ClassOccurrence?,
+    editingOccurrence: TimetableEditingOccurrence?,
     onEditingOccurrenceDismiss: () -> Unit,
     editingMasterRule: CourseScheduleRule?,
     onEditingMasterRuleDismiss: () -> Unit,
@@ -84,8 +83,10 @@ internal fun TimetableEditingDialogs(
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
 ) {
-    val occToEdit = editingOccurrence
-    if (occToEdit != null) {
+    val editingOccurrenceTarget = editingOccurrence
+    if (editingOccurrenceTarget != null) {
+        val occToEdit = editingOccurrenceTarget.occurrence
+        val ownerTermId = editingOccurrenceTarget.ownerTermId
         val targetCourse = courses.firstOrNull { it.id == occToEdit.courseId }
         val targetRule = rules.firstOrNull { it.id == occToEdit.ruleId }
 
@@ -365,9 +366,8 @@ internal fun TimetableEditingDialogs(
                         }
                         OutlinedButton(
                             onClick = {
-                                val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                                 val writeToken = writeLifecycle.begin(TimetableWriteKind.CancelClassOccurrence)
-                                onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, activeTermId, writeToken = writeToken))
+                                onAction(TimetableUiAction.CancelClassOccurrence(occToEdit, ownerTermId, writeToken = writeToken))
                             },
                             enabled = !writePending,
                             shape = RoundedCornerShape(12.dp),
@@ -422,13 +422,12 @@ internal fun TimetableEditingDialogs(
                                 singleDateError = "请输入有效日期 (YYYY-MM-DD)"
                                 return@Button
                             }
-                            val activeTermId = term?.id ?: AcademicTermResolver.defaultTermId()
                             val cleanRoom = editedRoom.trim().ifEmpty { occToEdit.rawRoom }
                             val writeToken = writeLifecycle.begin(TimetableWriteKind.SaveSingleDayOccurrenceEdit)
                             onAction(
                                 TimetableUiAction.SaveSingleDayOccurrenceEdit(
                                     occurrence = occToEdit,
-                                    termId = activeTermId,
+                                    termId = ownerTermId,
                                     targetDate = parsedTargetDate,
                                     newStartPeriod = sp,
                                     newEndPeriod = ep,

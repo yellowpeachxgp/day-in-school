@@ -124,7 +124,7 @@ object TimetablePreviewFixtures {
      * periodTimes 为空的状态必须重新投影为 UNCERTAIN，不能复用精确时间事件。
      */
     private fun TimetableUiState.withPreviewTimelineEvents(): TimetableUiState {
-        val activeTerm = currentTerm ?: return copy(timelineEvents = emptyList())
+        val activeTerm = currentTerm ?: return copy(timelineEvents = emptyList(), timelineEventsTerm = null)
         val snapshot = CourseScheduleTimelineSnapshot(
             zone = HAUT_ZONE_ID,
             provenance = DataProvenance(
@@ -142,6 +142,7 @@ object TimetablePreviewFixtures {
             occurrenceOverrides = occurrenceOverrides
         )
         return copy(
+            timelineEventsTerm = activeTerm,
             timelineEvents = CourseTimelineProjection.projectAll(
                 snapshot = snapshot,
                 scope = previewScope,

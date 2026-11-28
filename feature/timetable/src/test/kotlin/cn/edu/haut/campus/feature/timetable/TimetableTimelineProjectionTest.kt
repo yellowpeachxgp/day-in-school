@@ -16,6 +16,8 @@ import cn.edu.haut.campus.core.timeline.CourseOccurrenceTimelineMetadata
 import cn.edu.haut.campus.core.timeline.CourseScheduleTimelineSnapshot
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
+import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
+import cn.edu.haut.campus.feature.timetable.state.timelineEventsForTerm
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalTime
@@ -108,25 +110,28 @@ class TimetableTimelineProjectionTest {
     private fun courseSnapshot(
         revision: Long,
         periodRows: List<PeriodTime> = periodTimes,
-        courseRows: List<Course> = courses
+        courseRows: List<Course> = courses,
+        termRow: Term = term,
+        ruleRows: List<CourseScheduleRule> = rules
     ): CourseScheduleTimelineSnapshot = CourseScheduleTimelineSnapshot(
         zone = zone,
         provenance = provenance(),
         revision = revision,
-        terms = listOf(term),
+        terms = listOf(termRow),
         courses = courseRows,
-        rules = rules,
+        rules = ruleRows,
         periodTimes = periodRows,
         calendarOverrides = emptyList(),
         occurrenceOverrides = emptyList()
     )
 
     private fun projection(
-        courseSnapshots: MutableStateFlow<CourseScheduleTimelineSnapshot>
+        courseSnapshots: MutableStateFlow<CourseScheduleTimelineSnapshot>,
+        currentTermFlow: MutableStateFlow<Term?> = MutableStateFlow(term)
     ): RepositoryTimetableTimelineProjection = RepositoryTimetableTimelineProjection(
         accountScope = scope,
         zone = zone,
-        currentTermFlow = MutableStateFlow(term),
+        currentTermFlow = currentTermFlow,
         courseSnapshots = courseSnapshots,
         nowDate = { fixedNowDate }
     )
@@ -135,7 +140,8 @@ class TimetableTimelineProjectionTest {
     fun courseAndPracticeEventsAreProjectedThroughReactiveTimeline() = runTest {
         val events = projection(MutableStateFlow(courseSnapshot(revision = 1L)))
             .observeEvents()
-            .first()
+            .first { it.events.isNotEmpty() }
+            .events
 
         val normal = events.single { it.kind == TimelineKind.COURSE && it.title == normalCourse.name }
         val practice = events.single { it.kind == TimelineKind.PRACTICE && it.title == practiceCourse.name }
@@ -159,7 +165,8 @@ class TimetableTimelineProjectionTest {
     fun uncertainEventsKeepNullEndAndRestoreAnchorOnlyTimetableOccurrences() = runTest {
         val events = projection(MutableStateFlow(courseSnapshot(revision = 1L, periodRows = emptyList())))
             .observeEvents()
-            .first()
+            .first { it.events.isNotEmpty() }
+            .events
 
         val uncertain = events.single { it.kind == TimelineKind.COURSE && it.title == normalCourse.name }
         assertEquals(TimelineTimeSemantics.UNCERTAIN, uncertain.timeSemantics)
@@ -190,7 +197,7 @@ class TimetableTimelineProjectionTest {
     @Test
     fun snapshotRevisionUpdatesAreEmittedReactively() = runTest {
         val snapshots = MutableStateFlow(courseSnapshot(revision = 1L))
-        val received = mutableListOf<List<cn.edu.haut.campus.core.timeline.TimelineEvent>>()
+        val received = mutableListOf<TimetableTimelineEventSnapshot>()
         val collectJob = backgroundScope.launch {
             projection(snapshots).observeEvents().collect { received += it }
         }
@@ -206,8 +213,65 @@ class TimetableTimelineProjectionTest {
 
         assertTrue("输入快照 revision 更新必须产生新 Timeline emission", received.size > emissionCountBeforeUpdate)
         assertTrue(
-            received.last().any { it.kind == TimelineKind.COURSE && it.title == "高等数学（更新）" }
+            received.last().events.any { it.kind == TimelineKind.COURSE && it.title == "高等数学（更新）" }
         )
         collectJob.cancel()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun overlappingTermSwitchWithheldSnapshotNeverPublishesPreviousTermEventsForNewTerm() = runTest {
+        val overlappingTerm = term.copy(id = "2026-2027-2", termNumber = 2)
+        val overlappingRules = rules.map { it.copy(id = it.id + "-term-b", termId = overlappingTerm.id) }
+        val snapshots = MutableStateFlow(courseSnapshot(revision = 1L))
+        val currentTermFlow = MutableStateFlow<Term?>(term)
+        val received = mutableListOf<TimetableTimelineEventSnapshot>()
+        val collectJob = backgroundScope.launch {
+            projection(snapshots, currentTermFlow).observeEvents().collect { received += it }
+        }
+        runCurrent()
+        assertTrue(received.last().events.isNotEmpty())
+
+        currentTermFlow.value = overlappingTerm
+        runCurrent()
+
+        assertEquals(overlappingTerm, received.last().term)
+        assertTrue("新学期匹配快照未到前必须清空，不得继续展示旧学期课程", received.last().events.isEmpty())
+        assertTrue(
+            "旧学期事件绝不能贴着新学期身份发布",
+            received.none { it.term == overlappingTerm && it.events.isNotEmpty() }
+        )
+
+        snapshots.value = courseSnapshot(
+            revision = 2L,
+            termRow = overlappingTerm,
+            ruleRows = overlappingRules
+        )
+        runCurrent()
+
+        assertEquals(overlappingTerm, received.last().term)
+        assertTrue(received.last().events.isNotEmpty())
+        collectJob.cancel()
+    }
+
+    @Test
+    fun uiStateConsumesTimelineEventsOnlyForExactSameTermSnapshot() = runTest {
+        val projected = projection(MutableStateFlow(courseSnapshot(revision = 1L)))
+            .observeEvents()
+            .first { it.events.isNotEmpty() }
+        val state = TimetableUiState(
+            currentTerm = term,
+            timelineEvents = projected.events,
+            timelineEventsTerm = projected.term
+        )
+
+        assertEquals(projected.events, state.timelineEventsForTerm(term))
+        assertTrue(
+            "同学期 id 但开学日期等内容不同也不能消费旧投影",
+            state.timelineEventsForTerm(term.copy(startDate = term.startDate.plusDays(1))).isEmpty()
+        )
+        assertTrue(
+            state.timelineEventsForTerm(term.copy(id = "2026-2027-2", termNumber = 2)).isEmpty()
+        )
     }
 }

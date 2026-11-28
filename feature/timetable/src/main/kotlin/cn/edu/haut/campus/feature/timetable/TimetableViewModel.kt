@@ -49,7 +49,12 @@ class TimetableViewModel internal constructor(
 
     init {
         collect(timelineProjectionFactory(scope).observeEvents()) { value ->
-            _uiState.update { it.copy(timelineEvents = value) }
+            _uiState.update {
+                it.copy(
+                    timelineEvents = value.events,
+                    timelineEventsTerm = value.term
+                )
+            }
         }
         collect(repository.termRepository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
         collect(repository.termRepository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }

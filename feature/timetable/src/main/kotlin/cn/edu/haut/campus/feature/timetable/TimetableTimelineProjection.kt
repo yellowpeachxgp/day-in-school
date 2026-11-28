@@ -26,14 +26,22 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.shareIn
+
+/** 带有所属学期快照的 Timeline emission；UI 只在学期完全同版时允许渲染，避免重叠学期串数据。 */
+internal data class TimetableTimelineEventSnapshot(
+    val term: Term?,
+    val events: List<TimelineEvent>
+)
 
 /** Timetable 的统一 Timeline 读取路径；UI 只消费投影结果，不再自行展开课程规则。 */
 internal fun interface TimetableTimelineProjection {
-    fun observeEvents(): Flow<List<TimelineEvent>>
+    fun observeEvents(): Flow<TimetableTimelineEventSnapshot>
 }
 
 private data class CourseTimelineInputs(
@@ -130,22 +138,30 @@ internal class RepositoryTimetableTimelineProjection(
 ) : TimetableTimelineProjection {
     private val currentTermFlow = currentTermFlow.distinctUntilChanged()
 
-    private val courseInputProvider = CourseScheduleTimelineInputProvider { requestScope, _ ->
+    private fun courseInputProviderFor(term: Term?) = CourseScheduleTimelineInputProvider { requestScope, _ ->
         require(requestScope == accountScope) { "课程 Timeline 输入 scope 不一致" }
-        courseSnapshots
+        // currentTermFlow 与快照输入是两条独立 Room Flow。重叠学期切换时必须扣住旧快照，
+        // 否则旧学期事件可能被贴上新学期窗口并在编辑写回时串 termId。
+        courseSnapshots.filter { snapshot -> snapshot.terms.singleOrNull() == term }
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
-    override fun observeEvents(): Flow<List<TimelineEvent>> = currentTermFlow.flatMapLatest { term ->
+    override fun observeEvents(): Flow<TimetableTimelineEventSnapshot> = currentTermFlow.flatMapLatest { term ->
+        val inputProvider = courseInputProviderFor(term)
         val timelineService = DefaultTimelineService(
-            CourseTimelineSource(courseInputProvider),
-            PracticeTimelineSource(courseInputProvider)
+            CourseTimelineSource(inputProvider),
+            PracticeTimelineSource(inputProvider)
         )
         timelineService.observe(
             scope = accountScope,
             window = windowFor(term),
             filter = TimelineFilter.ALL
-        )
+        ).map { events ->
+            TimetableTimelineEventSnapshot(term = term, events = events)
+        }.onStart {
+            // 学期或学期内容变化先清空旧投影，绝不在等待匹配快照期间继续展示上一学期课程。
+            emit(TimetableTimelineEventSnapshot(term = term, events = emptyList()))
+        }
     }
 
     private fun windowFor(term: Term?): TimeWindow {

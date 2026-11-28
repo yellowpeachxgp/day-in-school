@@ -71,6 +71,7 @@ import cn.edu.haut.campus.feature.timetable.state.TimetableScreenStatus
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.timelineEventsForTerm
 
 @Composable
 fun TimetableScreen(
@@ -114,7 +115,7 @@ private fun TimetableLegacyContent(
     val periodTimeSchemes = state.periodTimeSchemes
     val calendarOverrides = state.calendarOverrides
     val occurrenceOverrides = state.occurrenceOverrides
-    val timelineEvents = state.timelineEvents
+    val timelineEvents = state.timelineEventsForTerm(term)
     val buildings = state.buildings
     val unscheduledCourses = state.unscheduledCourses
     val pendingLegacyReviewTargets = state.pendingLegacyReviewTargets
@@ -153,6 +154,14 @@ private fun TimetableLegacyContent(
     var confirmDeleteMasterRule by interactionState.confirmDeleteMasterRule
     var viewMode by interactionState.viewMode // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
+    val openOccurrenceEditor: (ClassOccurrence) -> Unit = { occurrence ->
+        term?.id?.let { ownerTermId ->
+            editingOccurrence = TimetableEditingOccurrence(
+                occurrence = occurrence,
+                ownerTermId = ownerTermId
+            )
+        }
+    }
 
     // 已取消分组语义（与恢复一致）：
     // - 新版跨日调课（moveId != null）按 moveId 折叠为一个原子恢复动作；
@@ -770,7 +779,7 @@ private fun TimetableLegacyContent(
                         weekDates = activeWeekDates,
                         today = today,
                         weekOccurrencesMap = activeWeekOccurrencesMap,
-                        onEditOccurrence = { editingOccurrence = it },
+                        onEditOccurrence = openOccurrenceEditor,
                         onNavigateToMapWithRoom = onNavigateToMapWithRoom
                     )
                 }
@@ -1040,7 +1049,7 @@ private fun TimetableLegacyContent(
                                                     blockBorder,
                                                     RoundedCornerShape(if (showSevenDays) 10.dp else 12.dp)
                                                 )
-                                                .clickable { editingOccurrence = occ }
+                                                .clickable { openOccurrenceEditor(occ) }
                                         ) {
                                             Column(modifier = Modifier.fillMaxSize()) {
                                                 Box(

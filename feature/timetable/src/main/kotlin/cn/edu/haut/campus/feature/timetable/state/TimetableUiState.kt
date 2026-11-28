@@ -95,6 +95,8 @@ data class TimetableUiState(
     val occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
     /** 课程/实践课的统一 Timeline 投影；周网格与日清单只从该读取路径还原课程。 */
     val timelineEvents: List<TimelineEvent> = emptyList(),
+    /** 产生 [timelineEvents] 的精确学期快照；重叠学期/开学日期变化时不能用旧事件冒充当前学期。 */
+    val timelineEventsTerm: Term? = null,
     val buildings: List<Building> = emptyList(),
     val unscheduledCourses: List<UnscheduledPracticalCourseUiModel> = emptyList(),
 
@@ -104,3 +106,7 @@ data class TimetableUiState(
     val pendingWrites: List<TimetableWriteOperation> = emptyList(),
     val writeCompletions: Map<String, TimetableWriteCompletion> = emptyMap()
 )
+
+/** 只有 projection 携带的学期快照与当前渲染学期完全一致时才允许消费事件。 */
+internal fun TimetableUiState.timelineEventsForTerm(term: Term?): List<TimelineEvent> =
+    if (timelineEventsTerm == term) timelineEvents else emptyList()
