@@ -115,8 +115,16 @@ class VaultDegreeRepository internal constructor(
                 ?: throw IllegalArgumentException("培养方案导入不存在: " + importId)
             require(!isDeletedDocument(current)) { "培养方案导入已删除: " + importId }
             val revision = current.nullableLong("revision") ?: 0L
+            // 确认适用时把 UNKNOWN 升级为 USER_CONFIRMED：文件导入本身没有官方来源背书，
+            // 用户的确认行为就是来源升级的唯一通道；取消确认不回退来源，信任级别由 confirmedForStudent 控制。
+            val upgradedSource = if (confirmed && current.str("source") == PlanSource.UNKNOWN.name) {
+                PlanSource.USER_CONFIRMED.name
+            } else {
+                current.str("source") ?: PlanSource.UNKNOWN.name
+            }
             val updated = current.copy(
                 fields = current.fields + ("confirmedForStudent" to jsonBool(confirmed)) +
+                    ("source" to JsonValue.Str(upgradedSource)) +
                     ("revision" to JsonValue.Num((revision + 1L).toString())) +
                     ("updatedAt" to JsonValue.Str(clock().toString()))
             )
