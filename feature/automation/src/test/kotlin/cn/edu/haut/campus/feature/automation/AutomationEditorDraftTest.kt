@@ -24,7 +24,7 @@ class AutomationEditorDraftTest {
     fun utilityThresholdConvertsYuanToCents() {
         val draft = AutomationEditorDraft(
             triggerChoice = AutomationTriggerChoice.THRESHOLD,
-            thresholdYuanText = "12.34"
+            thresholdValueText = "12.34"
         )
 
         val trigger = draft.toRule(AutomationPreviewFixtures.scope).trigger as TriggerSpec.Threshold

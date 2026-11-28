@@ -48,6 +48,7 @@ class AutomationOutboxConsumptionException(eventId: String, cause: Throwable? = 
 
 data class AutomationWakeSummary(
     val geofenceEventsPublished: Int,
+    val utilityEventsPublished: Int,
     val outboxEventsConsumed: Int,
     val scheduledTriggersFired: Int,
     val nextWakeAt: Instant?
@@ -70,6 +71,7 @@ class AutomationRuntime private constructor(
     private val checkpointStore = RoomAutomationActionCheckpointStore(database)
     private val outbox = RoomEventOutbox(database)
     private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope)
+    private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope)
 
     private val personalEventStore: RoomPersonalEventStore? =
         (repository.automationEntityWritePort as? EntityWriter)?.let { writer ->
@@ -160,6 +162,7 @@ class AutomationRuntime private constructor(
     suspend fun processWake(reason: String): AutomationWakeSummary {
         val now = clock.instant()
         val publishedGeofence = runCatching { geofenceMonitor.sampleAndPublish() }.getOrDefault(0)
+        val publishedUtility = runCatching { utilityBalanceProjector.publishChangedBalances() }.getOrDefault(0)
         val consumed = consumeOutboxOnce()
         val planned = planEnabledRules(now)
         val due = planned.filter { !it.second.fireAt.isAfter(now) }
@@ -181,6 +184,7 @@ class AutomationRuntime private constructor(
         AutomationAlarmScheduler.synchronize(appContext, accountScope(), next)
         return AutomationWakeSummary(
             geofenceEventsPublished = publishedGeofence,
+            utilityEventsPublished = publishedUtility,
             outboxEventsConsumed = consumed,
             scheduledTriggersFired = fired,
             nextWakeAt = next?.fireAt

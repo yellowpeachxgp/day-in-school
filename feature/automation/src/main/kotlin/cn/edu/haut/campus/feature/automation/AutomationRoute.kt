@@ -358,8 +358,8 @@ private fun TriggerEditorFields(
         AutomationTriggerChoice.ON_EVENT -> AutomationTextField(draft.eventTypeText, "DomainEvent 类型") { value ->
             onDraftChange { it.copy(eventTypeText = value.filter { ch -> !ch.isWhitespace() }.take(128)) }
         }
-        AutomationTriggerChoice.THRESHOLD -> AutomationTextField(draft.thresholdYuanText, "水电余额低于（元）") { value ->
-            onDraftChange { it.copy(thresholdYuanText = value.filter { ch -> ch.isDigit() || ch == '.' }.take(10)) }
+        AutomationTriggerChoice.THRESHOLD -> AutomationTextField(draft.thresholdValueText, "水电剩余量低于（表计单位）") { value ->
+            onDraftChange { it.copy(thresholdValueText = value.filter { ch -> ch.isDigit() || ch == '.' }.take(10)) }
         }
         AutomationTriggerChoice.GEOFENCE -> ToggleRow("进入校区时触发（关闭则离开时）", draft.geofenceEnter) { value ->
             onDraftChange { it.copy(geofenceEnter = value) }

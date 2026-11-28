@@ -36,7 +36,7 @@ data class AutomationEditorDraft(
     val days: Set<DayOfWeek> = DayOfWeek.entries.toSet(),
     val beforeMinutesText: String = "20",
     val eventTypeText: String = "data.stale",
-    val thresholdYuanText: String = "15",
+    val thresholdValueText: String = "15",
     val campusIdText: String = "haut-lianhuajie",
     val geofenceEnter: Boolean = true,
     val hasClassToday: Boolean = true,
@@ -66,7 +66,7 @@ data class AutomationEditorDraft(
             return "课前提前分钟必须是 1..720"
         }
         if (triggerChoice == AutomationTriggerChoice.ON_EVENT && eventTypeText.isBlank()) return "请填写事件类型"
-        if (triggerChoice == AutomationTriggerChoice.THRESHOLD && thresholdYuanText.toBigDecimalOrNull() == null) {
+        if (triggerChoice == AutomationTriggerChoice.THRESHOLD && thresholdValueText.toBigDecimalOrNull() == null) {
             return "水电阈值必须是数字"
         }
         if (campusIdText.isBlank() && (triggerChoice == AutomationTriggerChoice.GEOFENCE || onCampus)) return "请填写校区 ID"
@@ -105,9 +105,9 @@ data class AutomationEditorDraft(
         )
         AutomationTriggerChoice.ON_EVENT -> TriggerSpec.OnEvent(eventType = eventTypeText.trim())
         AutomationTriggerChoice.THRESHOLD -> TriggerSpec.Threshold(
-            metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTS),
+            metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS),
             op = CompareOp.LESS_THAN,
-            value = BigDecimal(thresholdYuanText).movePointRight(2)
+            value = BigDecimal(thresholdValueText).movePointRight(2)
         )
         AutomationTriggerChoice.GEOFENCE -> TriggerSpec.Geofence(
             campusId = CampusId(campusIdText.trim()),
