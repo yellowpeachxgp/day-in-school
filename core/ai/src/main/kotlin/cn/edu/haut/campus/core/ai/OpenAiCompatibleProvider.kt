@@ -4,6 +4,7 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.StoredBlobRef
 import kotlinx.coroutines.CancellationException
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.Base64
 
 /**
@@ -156,6 +157,17 @@ class OpenAiCompatibleProvider(
                 bytes.fill(0)
                 throw AiLocalFailure(AiResult.Failure(AiError.ATTACHMENT_TOO_LARGE, retryable = false))
             }
+            val actualSha256 = sha256Hex(bytes)
+            if (actualSha256 != ref.sha256) {
+                bytes.fill(0)
+                throw AiLocalFailure(
+                    AiResult.Failure(
+                        AiError.ATTACHMENT_MISSING,
+                        retryable = false,
+                        detail = "附件内容摘要与预览不一致"
+                    )
+                )
+            }
             try {
                 AiVisionPayload(ref = ref, base64Data = Base64.getEncoder().encodeToString(bytes))
             } finally {
@@ -163,6 +175,9 @@ class OpenAiCompatibleProvider(
             }
         }
     }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     private suspend fun executeHttp(endpoint: AiEndpoint, key: CharArray, body: String): AiResult {
         val response = try {

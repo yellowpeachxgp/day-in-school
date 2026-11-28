@@ -110,7 +110,10 @@ class OpenAiCompatibleProviderTest {
     @Test
     fun visionRequestReadsAttachmentAfterConsentAndEncodesImage() = runTest {
         val imageBytes = byteArrayOf(9, 8, 7, 6)
-        val blob = AiTestFixtures.blobRef(byteCount = imageBytes.size.toLong())
+        val blob = AiTestFixtures.blobRef(
+            sha256 = "63d987d1c6d69751c17297f410f5b3547a65d096a8993b35bcb4f9cad054f176",
+            byteCount = imageBytes.size.toLong()
+        )
         val attachmentReader = object : AiAttachmentReader {
             var calls = 0
             override suspend fun read(scope: SchoolAccountScope, ref: StoredBlobRef): ByteArray {
@@ -131,6 +134,27 @@ class OpenAiCompatibleProviderTest {
         assertTrue(result is AiResult.Success)
         assertEquals(1, attachmentReader.calls)
         assertTrue(transport.lastBody.orEmpty().contains("data:image/png;base64,"))
+    }
+
+    @Test
+    fun attachmentHashMismatchStopsBeforeTransportAndKeyMaterial() = runTest {
+        val imageBytes = byteArrayOf(9, 8, 7, 6)
+        val attachmentReader = object : AiAttachmentReader {
+            override suspend fun read(scope: SchoolAccountScope, ref: StoredBlobRef): ByteArray = imageBytes.copyOf()
+        }
+        val transport = RecordingTransport(AiTransportResponse(200, "{}"))
+        val harness = Harness(transport = transport, attachmentReader = attachmentReader)
+        val req = AiTestFixtures.request("描述图片").copy(
+            attachments = listOf(AiTestFixtures.blobRef(byteCount = imageBytes.size.toLong()))
+        )
+        val preview = harness.provider.preview(AiTestFixtures.scope, req)
+        val token = harness.consentCenter.issue(AiTestFixtures.scope, AiTestFixtures.endpoint, preview)
+
+        val result = harness.provider.send(AiTestFixtures.scope, req, token)
+
+        assertEquals(AiError.ATTACHMENT_MISSING, (result as AiResult.Failure).error)
+        assertEquals(0, transport.calls)
+        assertEquals(0, harness.keyAccess.calls)
     }
 
     @Test
