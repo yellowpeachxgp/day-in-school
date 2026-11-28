@@ -241,6 +241,10 @@ object BuiltinAutomationTypes {
     const val CONDITION_FOCUS_PERIOD: String = "core.focus-period"
     const val CONDITION_COMMUTE_TIME: String = "core.commute-time"
     const val CONDITION_DATA_FRESHNESS: String = "core.data-freshness"
+    const val CONDITION_WEATHER_PRECIPITATION: String = "core.weather-precipitation"
+    const val CONDITION_DAY_OF_WEEK: String = "core.day-of-week"
+    const val CONDITION_UTILITY_BALANCE: String = "core.utility-balance"
+    const val CONDITION_COURSE_CANCELLATION: String = "core.course-cancellation"
 
     const val ACTION_LOCAL_NOTIFICATION: String = "core.local-notification"
     const val ACTION_CREATE_PERSONAL_EVENT: String = "core.create-personal-event"

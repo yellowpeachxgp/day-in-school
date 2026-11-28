@@ -1,12 +1,11 @@
 package cn.edu.haut.campus.core.domain
 
 import cn.edu.haut.campus.core.model.CalendarOverride
-import cn.edu.haut.campus.core.model.CalendarOverrideType
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.TermDateStatus
+import cn.edu.haut.campus.core.timeline.ScheduleOccurrenceExpander
 import java.time.DayOfWeek
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 
 data class EffectiveScheduleDate(
     val actualDate: LocalDate,
@@ -27,87 +26,21 @@ object TeachingWeekCalculator {
         term: Term,
         overrides: List<CalendarOverride> = emptyList()
     ): EffectiveScheduleDate {
-        val override = overrides.firstOrNull { it.termId == term.id && it.date == date }
-        if (override != null) {
-            when (override.overrideType) {
-                CalendarOverrideType.HOLIDAY_NO_CLASS -> {
-                    val rawWeek = calculateRawTeachingWeek(date, term)
-                    return EffectiveScheduleDate(
-                        actualDate = date,
-                        scheduleDateUsed = date,
-                        teachingWeek = rawWeek,
-                        weekdayUsed = date.dayOfWeek,
-                        status = TermDateStatus.HOLIDAY_NO_CLASS,
-                        calendarNotice = override.title
-                    )
-                }
-                CalendarOverrideType.MAKEUP_FOLLOW_DATE -> {
-                    val follow = override.followDate ?: date
-                    val followWeek = calculateRawTeachingWeek(follow, term)
-                    return EffectiveScheduleDate(
-                        actualDate = date,
-                        scheduleDateUsed = follow,
-                        teachingWeek = followWeek,
-                        weekdayUsed = follow.dayOfWeek,
-                        status = TermDateStatus.MAKEUP_RESCHEDULED,
-                        calendarNotice = override.title
-                    )
-                }
-                CalendarOverrideType.CUSTOM_TEACHING_WEEK -> {
-                    val week = override.customTeachingWeek ?: calculateRawTeachingWeek(date, term)
-                    return EffectiveScheduleDate(
-                        actualDate = date,
-                        scheduleDateUsed = date,
-                        teachingWeek = week,
-                        weekdayUsed = date.dayOfWeek,
-                        status = TermDateStatus.IN_TERM,
-                        calendarNotice = override.title
-                    )
-                }
-            }
-        }
-
-        val alignedStart = alignToWeekStart(term.startDate, term.weekStartDay)
-        val daysBetween = ChronoUnit.DAYS.between(alignedStart, date)
-        if (daysBetween < 0) {
-            return EffectiveScheduleDate(
-                actualDate = date,
-                scheduleDateUsed = date,
-                teachingWeek = null,
-                weekdayUsed = date.dayOfWeek,
-                status = TermDateStatus.BEFORE_TERM,
-                calendarNotice = "距开学还有 ${ChronoUnit.DAYS.between(date, term.startDate).coerceAtLeast(1)} 天"
-            )
-        }
-
-        val weekNo = (daysBetween / 7).toInt() + 1
-        if (weekNo > term.weekCount) {
-            return EffectiveScheduleDate(
-                actualDate = date,
-                scheduleDateUsed = date,
-                teachingWeek = null,
-                weekdayUsed = date.dayOfWeek,
-                status = TermDateStatus.AFTER_TERM,
-                calendarNotice = "本学期课程已结束"
-            )
-        }
-
+        // W1-05 收敛：教学周对齐/调休解析的唯一实现是 core:timeline 的 ScheduleOccurrenceExpander；
+        // 此处只做类型映射，保持 domain 公开类型与既有行为稳定。
+        val resolved = ScheduleOccurrenceExpander.resolveDate(date, term, overrides)
         return EffectiveScheduleDate(
-            actualDate = date,
-            scheduleDateUsed = date,
-            teachingWeek = weekNo,
-            weekdayUsed = date.dayOfWeek,
-            status = TermDateStatus.IN_TERM
+            actualDate = resolved.actualDate,
+            scheduleDateUsed = resolved.scheduleDateUsed,
+            teachingWeek = resolved.teachingWeek,
+            weekdayUsed = resolved.weekdayUsed,
+            status = resolved.status,
+            calendarNotice = resolved.calendarNotice
         )
     }
 
-    fun calculateRawTeachingWeek(date: LocalDate, term: Term): Int? {
-        val alignedStart = alignToWeekStart(term.startDate, term.weekStartDay)
-        val daysBetween = ChronoUnit.DAYS.between(alignedStart, date)
-        if (daysBetween < 0) return null
-        val weekNo = (daysBetween / 7).toInt() + 1
-        return if (weekNo in 1..term.weekCount) weekNo else null
-    }
+    fun calculateRawTeachingWeek(date: LocalDate, term: Term): Int? =
+        ScheduleOccurrenceExpander.calculateRawTeachingWeek(date, term)
 
     fun datesOfTeachingWeek(term: Term, teachingWeek: Int): List<LocalDate> {
         require(teachingWeek >= 1) { "teachingWeek must be >= 1" }
@@ -116,10 +49,8 @@ object TeachingWeekCalculator {
         return (0L..6L).map { weekMonday.plusDays(it) }
     }
 
-    private fun alignToWeekStart(startDate: LocalDate, weekStartDay: DayOfWeek): LocalDate {
-        val diff = (startDate.dayOfWeek.value - weekStartDay.value + 7) % 7
-        return startDate.minusDays(diff.toLong())
-    }
+    private fun alignToWeekStart(startDate: LocalDate, weekStartDay: DayOfWeek): LocalDate =
+        ScheduleOccurrenceExpander.alignToWeekStart(startDate, weekStartDay)
 }
 
 object WeeksSetParser {

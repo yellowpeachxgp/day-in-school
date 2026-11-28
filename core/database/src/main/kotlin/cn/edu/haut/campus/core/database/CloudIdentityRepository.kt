@@ -14,6 +14,23 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
+
+/** W4-12 窄令牌端口：仅供 E2EE 同步 HTTPS client 当前请求使用；不得持久化、写日志或暴露给插件。 */
+fun interface CloudIdentityE2eeAccessTokenProvider {
+    suspend fun resolve(forceRefresh: Boolean, failedAccessToken: String?): String
+}
+
+/** 按 Profile 隔离的进程内令牌端口注册表；由 CloudIdentityRepository 构造时自注册，避免扩大 CampusRepository 外观。 */
+object CloudIdentityE2eeAccessTokenProviderRegistry {
+    private val providers = ConcurrentHashMap<String, CloudIdentityE2eeAccessTokenProvider>()
+
+    internal fun register(profileId: String, provider: CloudIdentityE2eeAccessTokenProvider) {
+        providers[profileId] = provider
+    }
+
+    fun forProfile(profileId: String): CloudIdentityE2eeAccessTokenProvider? = providers[profileId]
+}
 
 /**
  * CloudIdentity 拆分期运行时端口。
@@ -31,6 +48,12 @@ internal interface CloudIdentityRuntimePort {
 
     /** 测试传输钩子逐次现读（生产恒 null），语义与门面 @Volatile var 一致。 */
     fun cloudHttpTransportForTest(): CloudHttpTransportForTest?
+
+    /**
+     * 云身份登录、切号、同号重登或解绑提交前清理 community 群组快照缓存。
+     * 该钩子必须 fail-closed：清理抛错时身份变更不得继续生效。
+     */
+    suspend fun wipeCommunityCacheForCloudIdentityChange()
 }
 
 /**
@@ -70,6 +93,15 @@ class CloudIdentityRepository internal constructor(
     /** 逐次现读门面测试传输钩子；生产恒 null。 */
     private val cloudHttpTransportForTest: CloudHttpTransportForTest?
         get() = runtimePort.cloudHttpTransportForTest()
+
+    init {
+        CloudIdentityE2eeAccessTokenProviderRegistry.register(profileId) { forceRefresh, failedAccessToken ->
+            resolveValidCloudAccessToken(
+                forceRefresh = forceRefresh,
+                failedAccessToken = failedAccessToken
+            )
+        }
+    }
 
     private fun academicCredentialScope(accountId: String) = AcademicCredentialScope(
         schoolId = schoolId,
@@ -415,6 +447,8 @@ class CloudIdentityRepository internal constructor(
     ): CloudIdentityBindingEntity {
         val now = System.currentTimeMillis()
         val previousBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+        // 在任何本地 token/binding 变化前完成缓存清理；失败则登录/切号/同号重登整体不生效。
+        runtimePort.wipeCommunityCacheForCloudIdentityChange()
         val isSwitchingIdentity =
             previousBinding == null || previousBinding.cloudUserId != profile.cloudUserId
         val tokenBeforeSwitch = if (previousBinding != null && previousBinding.cloudUserId != profile.cloudUserId) {
@@ -635,6 +669,8 @@ class CloudIdentityRepository internal constructor(
 
     suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
         val now = System.currentTimeMillis()
+        // 在远端登出与本地解绑之前先清理 community 快照；失败时不得继续宣称解绑/擦除完成。
+        runtimePort.wipeCommunityCacheForCloudIdentityChange()
         val bindingBeforeUnlink = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
         val prevCloudUserId = bindingBeforeUnlink?.cloudUserId
         val tokenBeforeUnlink = resolveValidCloudAccessToken(forceRefresh = false)

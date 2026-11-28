@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ProfileDataWiper internal constructor(
     private val appContext: Context,
+    private val accountProfileId: String,
     private val database: HautDatabase,
     private val preferences: DataStore<Preferences>,
     private val dao: CampusDao,
@@ -38,6 +39,7 @@ class ProfileDataWiper internal constructor(
 ) {
     private val vaultDao = database.vaultDao()
     private val automationDao = database.automationDao()
+    private val inboxDao = database.inboxDao()
     private val beforeWipeHooks = ConcurrentHashMap<String, suspend () -> Unit>()
 
     var onBeforeWipePersonalDataHook: (suspend () -> Unit)?
@@ -166,6 +168,8 @@ class ProfileDataWiper internal constructor(
                 it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
         }
+        // community 文件缓存属于个人云快照：删除失败必须向外传播，绝不能在 runCatching 后宣称完成伪擦除。
+        CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfileId)
         for (hook in beforeWipeHooks.values) {
             runCatching { hook.invoke() }
         }
@@ -236,6 +240,8 @@ class ProfileDataWiper internal constructor(
                 automationDao.clearDedupe()
                 automationDao.clearRuns()
                 automationDao.clearRules()
+                inboxDao.clearProposals()
+                inboxDao.clearItems()
             }
         }
         cloudTokenMutex.withLock {

@@ -13,6 +13,7 @@ import cn.edu.haut.campus.core.automation.DataFreshnessPort
 import cn.edu.haut.campus.core.automation.DefaultAutomationEngine
 import cn.edu.haut.campus.core.automation.FocusStatePort
 import cn.edu.haut.campus.core.automation.HomeRefreshActionPort
+import cn.edu.haut.campus.core.automation.MetNorwayWeatherProvider
 import cn.edu.haut.campus.core.automation.PlannedTriggerInstance
 import cn.edu.haut.campus.core.automation.TriggerExecutionResult
 import cn.edu.haut.campus.core.automation.TriggerInstance
@@ -73,6 +74,12 @@ class AutomationRuntime private constructor(
     private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope, outbox = outbox)
     private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope, outbox = outbox)
     private val utilityBalanceHistoryProvider = RoomUtilityBalanceHistoryProvider(database, scope)
+    private val utilityBalanceReadPort = RoomUtilityBalanceReadPort(database, scope)
+    private val weatherLocationPort = RepositoryWeatherLocationPort(repository)
+    private val courseCancellationStatePort = RoomCourseCancellationStatePort(database, scope)
+    private val weatherProvider = MetNorwayWeatherProvider(
+        cacheStore = FileWeatherResponseCacheStore(appContext, scope)
+    )
     private val wakeRunner = ExclusiveWakeRunner()
 
     private val personalEventStore: RoomPersonalEventStore? =
@@ -107,7 +114,11 @@ class AutomationRuntime private constructor(
             campusPresencePort = geofenceMonitor,
             focusStatePort = RepositoryFocusStatePort(repository),
             commuteDurationPort = InsufficientEvidenceCommuteDurationPort,
-            dataFreshnessPort = RepositoryDataFreshnessPort(repository)
+            dataFreshnessPort = RepositoryDataFreshnessPort(repository),
+            weatherProvider = weatherProvider,
+            weatherLocationPort = weatherLocationPort,
+            utilityBalanceReadPort = utilityBalanceReadPort,
+            courseCancellationStatePort = courseCancellationStatePort
         ).all().forEach(registry::registerConditionEvaluator)
         BuiltinActionExecutors(
             notificationPort = AutomationNotificationPoster(appContext),
