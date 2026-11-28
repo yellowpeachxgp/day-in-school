@@ -70,8 +70,8 @@ internal object CourseCancellationEventProjector {
         val items = root?.arr("occurrenceOverrides") ?: return emptyMap()
         val out = LinkedHashMap<String, JsonValue.Obj>()
         items.forEach { value ->
-            val obj = value as? JsonValue.Obj ?: return@forEachIndexed
-            val id = obj.str("id")?.takeIf { it.isNotBlank() } ?: return@forEachIndexed
+            val obj = value as? JsonValue.Obj ?: return@forEach
+            val id = obj.str("id")?.takeIf { it.isNotBlank() } ?: return@forEach
             out[id] = obj
         }
         return out
