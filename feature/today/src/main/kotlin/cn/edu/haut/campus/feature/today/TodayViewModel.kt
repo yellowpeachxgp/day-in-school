@@ -4,7 +4,6 @@ import androidx.lifecycle.ViewModel
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.domain.ReminderPlanner
 import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
-import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ReminderKind
 import cn.edu.haut.campus.core.model.SnoozeOutcome
@@ -37,16 +36,6 @@ private val TODAY_FEEDBACK_TIME_FMT: DateTimeFormatter = DateTimeFormatter.ofPat
 
 internal fun todayClassEventKey(termId: String, occurrenceId: String): String =
     "CLASS:" + termId + ":" + occurrenceId
-
-private fun mergeLegacyRestoreTargets(
-    current: List<OccurrenceOverride>,
-    incoming: List<OccurrenceOverride>
-): List<OccurrenceOverride> {
-    val merged = linkedMapOf<String, OccurrenceOverride>()
-    for (target in current) merged[target.id] = target
-    for (target in incoming) merged[target.id] = target
-    return merged.values.toList()
-}
 
 /** 聚合今日页 Repository Flow，并把仓库/提醒写操作集中在一个可测试边界。 */
 class TodayViewModel internal constructor(
@@ -409,18 +398,7 @@ class TodayViewModel internal constructor(
                 restoreResult
             },
             onSuccess = { restoreResult ->
-                if (restoreResult.status == CampusRepository.OccurrenceCommandStatus.APPLIED &&
-                    restoreResult.legacyReviewRequired
-                ) {
-                    _uiState.update { state ->
-                        state.copy(
-                            pendingLegacyRestoreTargets = mergeLegacyRestoreTargets(
-                                current = state.pendingLegacyRestoreTargets,
-                                incoming = restoreResult.legacyAmbiguousTargets
-                            )
-                        )
-                    }
-                }
+                // 核对列表只以持久 journal + Room 当前行的组合 flow 为真源，避免并发改动后展示陈旧候选。
                 val banner = when (restoreResult.status) {
                     CampusRepository.OccurrenceCommandStatus.APPLIED ->
                         if (restoreResult.legacyReviewRequired) {
