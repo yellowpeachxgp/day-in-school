@@ -98,7 +98,7 @@ enum class VerificationLevel {
 
     /** D1 数据包/代理整理数据的默认态：有来源线索但尚未完成独立核验，绝不能渲染为校方确认。新增枚举值必须追加，保持既有 ordinal 稳定。 */
     UNVERIFIED
-
+}
 
 enum class CapabilityState {
     ENABLED,
