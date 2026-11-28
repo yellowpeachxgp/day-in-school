@@ -66,12 +66,16 @@ class HautCampusApplication : Application() {
                         reason: String
                     ): Boolean {
                         // 首页卡片由 Room Flow 驱动；这里执行既有自节流的教务/水电刷新，成功后广播小组件。
-                        val academicHealthy = runCatching {
-                            when (val result = active.repository.performDynamicAcademicSync(force = false)) {
-                                null -> true // 频率限制/功能关闭意味着本轮无需刷新
-                                else -> result.isSuccess
-                            }
-                        }.getOrDefault(false)
+                        val academicHealthy = if (!active.repository.supportsHautServices) {
+                            true // 离线学校没有远程学业刷新；本地 Room Flow + 小组件刷新本身就是有效路径
+                        } else {
+                            runCatching {
+                                when (val result = active.repository.performDynamicAcademicSync(force = false)) {
+                                    null -> true // 频率限制/功能关闭意味着本轮无需刷新
+                                    else -> result.isSuccess
+                                }
+                            }.getOrDefault(false)
+                        }
                         val utilitySampled = runCatching {
                             active.repository.performPeriodicUtilitySampleIfEligible()
                         }.getOrDefault(false)

@@ -296,10 +296,24 @@ private class RepositoryDataFreshnessPort(
         val epochMs = when (capability) {
             CapabilityKind.TIMETABLE_READ,
             CapabilityKind.ACADEMIC_CALENDAR_READ,
-            CapabilityKind.ACADEMIC_TERMS_READ -> prefs.lastAcademicDataSyncEpochMillis
+            CapabilityKind.ACADEMIC_TERMS_READ -> academicDataFreshnessEpochMillis(prefs)
             CapabilityKind.UTILITIES -> prefs.lastUtilitySampleEpochMillis
             else -> null
         }
         return epochMs?.let(Instant::ofEpochMilli)
+    }
+
+    /** 专用键缺失时只允许用“当前学期”的 import audit 升级回填；跨学期历史不得冒充当前课表新鲜度。 */
+    private suspend fun academicDataFreshnessEpochMillis(
+        prefs: cn.edu.haut.campus.core.database.AppPreferencesState
+    ): Long? {
+        val currentTermId = repository.currentTermFlow.first()?.id ?: return null
+        if (prefs.lastAcademicDataSyncTermId == currentTermId && prefs.lastAcademicDataSyncEpochMillis != null) {
+            return prefs.lastAcademicDataSyncEpochMillis
+        }
+        return repository.importAuditsFlow.first()
+            .firstOrNull { it.termId == currentTermId }
+            ?.importedAt
+            ?.toEpochMilli()
     }
 }
