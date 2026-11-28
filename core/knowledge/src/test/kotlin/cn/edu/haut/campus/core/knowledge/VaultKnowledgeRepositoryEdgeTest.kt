@@ -9,6 +9,7 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.textextract.ExtractionConfirmationState
 import cn.edu.haut.campus.core.textextract.ExtractionEngineInfo
 import cn.edu.haut.campus.core.textextract.ExtractionMetadata
@@ -329,6 +330,74 @@ class VaultKnowledgeRepositoryEdgeTest {
     }
 
     @Test
+    fun photoOcrArchivesIndexesAndKeepsImageCoordinates() = runBlocking {
+        extractor.imageLines = listOf(
+            extractedLine(0, 0, "黑板：缓存一致性", coordinateSpace = TextCoordinateSpace.IMAGE_PIXEL_TOP_LEFT)
+        )
+        val pngBytes = java.util.Base64.getDecoder().decode(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+        )
+        val material = repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.PHOTO,
+                title = "黑板照片",
+                note = null,
+                fileName = "board.png",
+                mimeType = "image/png",
+                contentBytes = pngBytes
+            )
+        )
+
+        assertEquals(1, extractor.imageExtractionCalls)
+        assertEquals(ExtractionSourceKind.IMAGE_OCR, material.extraction?.sourceKind)
+        val hits = repository.searchMaterials(scope, "缓存一致性")
+        assertEquals(1, hits.size)
+        assertEquals(material.id, hits[0].materialId)
+        assertEquals(0, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+        assertEquals(KnowledgeCoordinateSpace.IMAGE_PIXEL_TOP_LEFT, hits[0].coordinateSpace)
+        assertNotNull("OCR 命中必须保留图片坐标", hits[0].bounds)
+    }
+
+    @Test
+    fun maliciousFileNameStaysInsideExportAndManifestMatchesBytes() = runBlocking {
+        val bytes = "导出完整性".toByteArray(Charsets.UTF_8)
+        val material = repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.SLIDES,
+                title = "恶意文件名课件",
+                note = null,
+                fileName = "../../evil\\payload\"'.txt",
+                mimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                contentBytes = bytes
+            )
+        )
+        val output = ByteArrayOutputStream()
+        val summary = repository.exportCoursePackage(scope, course.courseId, output)
+        val entries = zipEntries(output.toByteArray())
+
+        assertEquals(2, summary.fileCount)
+        assertEquals(2, entries.size)
+        val materialEntryName = entries.keys.single { it.startsWith("materials/") }
+        val exportFileName = materialEntryName.removePrefix("materials/" + material.id + "/")
+        assertTrue(exportFileName.none { it == '/' || it == '\\' })
+        assertTrue(!exportFileName.startsWith(".."))
+
+        val manifest = Json.parse(entries.getValue("manifest.json").toString(Charsets.UTF_8)).asObjOrNull
+        assertNotNull(manifest)
+        val manifestMaterials = manifest!!.requiredArray("materials")
+        assertEquals(1, manifestMaterials.size)
+        val manifestMaterial = manifestMaterials[0].asObjOrNull!!
+        assertEquals(material.contentSha256, manifestMaterial.requiredString("contentSha256"))
+        assertEquals(material.byteCount, manifestMaterial.requiredLong("byteCount"))
+        assertEquals(material.contentSha256, sha256Hex(entries.getValue(materialEntryName)))
+    }
+
+    @Test
     fun courseIdRejectsQuoteAndBackslashAlignedWithSearchQueryFacets() {
         listOf("bad\"course", "bad\\course").forEach { badCourseId ->
             assertTrue(
@@ -438,13 +507,18 @@ class VaultKnowledgeRepositoryEdgeTest {
             contentBytes = bytes
         )
 
-    private fun extractedLine(index: Int, page: Int, text: String): ExtractedTextLine = ExtractedTextLine(
+    private fun extractedLine(
+        index: Int,
+        page: Int,
+        text: String,
+        coordinateSpace: TextCoordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
+    ): ExtractedTextLine = ExtractedTextLine(
         lineIndex = index,
         pageIndex = page,
         text = text,
         confidence = null,
         box = TextBoundingBox.axisAligned(0f, 0f, 100f, 10f),
-        coordinateSpace = TextCoordinateSpace.PDF_POINT_TOP_LEFT
+        coordinateSpace = coordinateSpace
     )
 
     private fun zipEntries(bytes: ByteArray): Map<String, ByteArray> {
@@ -461,7 +535,38 @@ class VaultKnowledgeRepositoryEdgeTest {
 
     private class EdgeFakeTextExtractPort(private val scope: SchoolAccountScope) : TextExtractPort {
         var pdfLines: List<ExtractedTextLine> = emptyList()
-        override suspend fun extractImage(request: ImageExtractionRequest): ExtractedText = throw UnsupportedOperationException()
+        var imageLines: List<ExtractedTextLine> = emptyList()
+        var imageExtractionCalls = 0
+
+        override suspend fun extractImage(request: ImageExtractionRequest): ExtractedText {
+            imageExtractionCalls++
+            val provenance = DataProvenance(
+                providerId = "fake-textextract",
+                schoolId = scope.schoolId,
+                accountId = scope.accountId,
+                sourceSystem = "fake-image-ocr",
+                sourceRecordId = "fixture",
+                completeness = SnapshotCompleteness.COMPLETE,
+                trust = VerificationLevel.MOCK_TESTED
+            )
+            return ExtractedText(
+                sourceKind = ExtractionSourceKind.IMAGE_OCR,
+                sourceHashSha256 = request.sourceHashSha256 ?: "0".repeat(64),
+                lines = imageLines,
+                plainText = imageLines.joinToString(" ") { it.text },
+                provenance = provenance,
+                metadata = ExtractionMetadata(
+                    engine = ExtractionEngineInfo("fake-ocr", "1"),
+                    extractedAt = Instant.parse("2026-03-01T08:00:00Z"),
+                    durationMs = 1,
+                    sourceWidth = request.image.width.toFloat(),
+                    sourceHeight = request.image.height.toFloat(),
+                    pageCount = 1
+                ),
+                confirmationState = ExtractionConfirmationState.UNCONFIRMED
+            )
+        }
+
         override suspend fun extractPdf(request: PdfExtractionRequest): ExtractedText {
             val provenance = DataProvenance(
                 providerId = "fake-textextract",

@@ -41,7 +41,7 @@ class RoomPersonalEventStore(
     override suspend fun upsert(event: PersonalEventDraft, actor: Actor): TimelineEventId =
         upsert(event = event, actor = actor, writeGroupId = null)
 
-    internal suspend fun upsert(event: PersonalEventDraft, actor: Actor, writeGroupId: String?): TimelineEventId {
+    suspend fun upsert(event: PersonalEventDraft, actor: Actor, writeGroupId: String?): TimelineEventId {
         require(event.scope == scope) { "PersonalEventStore 只能写入本 profile scope" }
         val timelineId = event.id ?: TimelineEventId(
             PersonalEventDraft.PERSONAL_TIMELINE_SOURCE + ":" + idGenerator()
@@ -99,7 +99,7 @@ class RoomPersonalEventStore(
         delete(id = id, actor = actor, writeGroupId = null)
     }
 
-    internal suspend fun delete(id: TimelineEventId, actor: Actor, writeGroupId: String?) {
+    suspend fun delete(id: TimelineEventId, actor: Actor, writeGroupId: String?) {
         require(id.sourceId == PersonalEventDraft.PERSONAL_TIMELINE_SOURCE) {
             "个人日程 TimelineEventId source 必须是 personal"
         }
