@@ -1,0 +1,308 @@
+package cn.edu.haut.campus.core.automation
+
+import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.model.CampusId
+import cn.edu.haut.campus.core.model.DataProvenance
+import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.json.JsonValue
+import java.math.BigDecimal
+import java.time.DayOfWeek
+import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+
+/** 最新水电读数。metric 值复用 TriggerSpec.Threshold 的 centiunits 口径，绝不把表计单位伪造成货币金额。 */
+data class UtilityBalanceReading(
+    val meterId: String,
+    val balanceCents: Long,
+    val sampledAt: Instant,
+    val provenance: DataProvenance
+) {
+    init {
+        requireAutomationToken(meterId, "meterId", 256)
+        require(balanceCents >= 0L) { "水电读数不能为负" }
+    }
+}
+
+interface UtilityBalanceReadPort {
+    suspend fun latestSamples(scope: SchoolAccountScope): List<UtilityBalanceReading>
+}
+
+/** 天气降水条件。任何 Provider、位置、条款、过期或字段证据缺口都必须是 UNKNOWN，不得误触发。 */
+class WeatherPrecipitationConditionEvaluator(
+    private val weatherProvider: WeatherProvider?,
+    private val weatherLocationPort: WeatherLocationPort?
+) : ConditionEvaluator {
+    override val type: String = BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION
+    override val configSchema: JsonSchema = JsonSchema.parse(
+        """{"type":"object","additionalProperties":false,"properties":{"horizonMinutes":{"type":"integer","minimum":30,"maximum":720},"minProbabilityPercent":{"type":"integer","minimum":0,"maximum":100},"minPrecipitationMillimeters":{"type":"number","minimum":0,"maximum":100},"termsAccepted":{"type":"boolean"},"campusId":{"type":"string","minLength":1,"maxLength":128}}}"""
+    )
+
+    override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
+        val provider = weatherProvider ?: return unknown(type, "缺少 WeatherProvider，无法判断降水")
+        val locationPort = weatherLocationPort ?: return unknown(type, "缺少校区参考坐标端口，无法判断降水")
+        val termsAccepted = spec.config.obj("termsAccepted")?.boolOrNull() == true
+        if (!termsAccepted) return unknown(type, "尚未在本规则中确认天气 Provider 条款与署名要求")
+        val horizonMinutes = spec.config.obj("horizonMinutes")?.intOrNull() ?: DEFAULT_HORIZON_MINUTES
+        val horizon = Duration.ofMinutes(horizonMinutes.toLong())
+        val campusId = spec.config.str("campusId")?.takeIf { it.isNotBlank() }?.let(::CampusId) ?: ctx.scope.campusId
+        val location = try {
+            locationPort.referencePoint(ctx.scope, campusId)
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException || error is Error) throw error
+            return unknown(type, "校区参考坐标读取失败")
+        } ?: return unknown(type, "缺少校区参考坐标，天气条件不猜测位置")
+
+        val result = try {
+            provider.forecast(
+                WeatherForecastRequest(
+                    scope = ctx.scope,
+                    location = location,
+                    at = ctx.now,
+                    horizon = horizon,
+                    termsAccepted = termsAccepted,
+                    campusId = campusId
+                )
+            )
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException || error is Error) throw error
+            return unknown(type, "天气 Provider 调用异常（" + (error::class.simpleName ?: "Throwable") + "）")
+        }
+        val snapshot = when (result) {
+            is WeatherProviderResult.Success -> result.snapshot
+            is WeatherProviderResult.Unavailable -> return ConditionResult(
+                conditionType = type,
+                passed = false,
+                certainty = Certainty.UNKNOWN,
+                reason = "天气不可用：" + result.detail,
+                evidence = listOf(
+                    Evidence(
+                        source = "weather-provider",
+                        detail = "provider=" + result.providerId + ",reason=" + result.reason.name,
+                        at = ctx.now
+                    )
+                )
+            )
+        }
+        if (snapshot.isExpiredAt(ctx.now)) {
+            return unknownWithAttribution(
+                snapshot = snapshot,
+                reason = "天气数据已超过本地可信缓存时间，不能触发确定性结论",
+                at = ctx.now
+            )
+        }
+        val windowEnd = ctx.now.plus(horizon)
+        val relevant = snapshot.periods.filter { it.end.isAfter(ctx.now) && it.start.isBefore(windowEnd) }
+        if (relevant.isEmpty()) {
+            return unknownWithAttribution(snapshot, "天气快照没有覆盖未来 " + horizonMinutes + " 分钟", ctx.now)
+        }
+        val missingPrecipitationEvidence = relevant.any {
+            it.precipitationProbabilityPercent == null && it.precipitationAmountMillimeters == null && it.weatherSymbol == null
+        }
+        if (missingPrecipitationEvidence) {
+            return unknownWithAttribution(snapshot, "天气快照缺少降水概率/降水量/天气现象字段", ctx.now)
+        }
+
+        val probabilityThreshold = spec.config.obj("minProbabilityPercent")?.intOrNull() ?: DEFAULT_PROBABILITY_PERCENT
+        val amountThreshold = spec.config.obj("minPrecipitationMillimeters")?.decimalOrNull() ?: BigDecimal.ZERO
+        val matched = relevant.filter { period ->
+            val probabilityMatches = period.precipitationProbabilityPercent?.let { it >= probabilityThreshold } == true
+            val amountMatches = period.precipitationAmountMillimeters?.let { amount ->
+                if (amountThreshold > BigDecimal.ZERO) amount >= amountThreshold else amount > BigDecimal.ZERO
+            } == true
+            val symbolMatches = period.weatherSymbol?.lowercase()?.let { symbol ->
+                PRECIPITATION_SYMBOL_MARKERS.any { marker -> symbol.contains(marker) }
+            } == true
+            probabilityMatches || amountMatches || symbolMatches
+        }
+        val passed = matched.isNotEmpty()
+        val baseEvidence = weatherEvidence(snapshot, ctx.now)
+        return ConditionResult(
+            conditionType = type,
+            passed = passed,
+            certainty = Certainty.CERTAIN,
+            reason = if (passed) null else "未来 " + horizonMinutes + " 分钟降水证据未达到阈值",
+            evidence = baseEvidence + Evidence(
+                source = "weather-precipitation",
+                detail = "periods=" + relevant.size + ",matched=" + matched.size +
+                    ",probabilityThreshold=" + probabilityThreshold +
+                    ",amountThresholdMm=" + amountThreshold.stripTrailingZeros().toPlainString(),
+                at = ctx.now
+            )
+        )
+    }
+
+    private fun unknownWithAttribution(
+        snapshot: WeatherSnapshot,
+        reason: String,
+        at: Instant
+    ): ConditionResult = ConditionResult(
+        conditionType = type,
+        passed = false,
+        certainty = Certainty.UNKNOWN,
+        reason = reason,
+        evidence = weatherEvidence(snapshot, at)
+    )
+
+    private fun weatherEvidence(snapshot: WeatherSnapshot, at: Instant): List<Evidence> = listOf(
+        Evidence(
+            source = "weather-provider",
+            detail = "provider=" + snapshot.providerId + ",fetchedAt=" + snapshot.fetchedAt +
+                ",cacheExpiresAt=" + snapshot.cacheExpiresAt + ",validUntil=" + snapshot.validUntil,
+            at = at
+        ),
+        Evidence(
+            source = "weather-attribution",
+            detail = (snapshot.attributionLines + snapshot.licenseUrl).joinToString(" · ").take(500),
+            at = snapshot.fetchedAt
+        )
+    )
+
+    private companion object {
+        const val DEFAULT_HORIZON_MINUTES: Int = 180
+        const val DEFAULT_PROBABILITY_PERCENT: Int = 35
+        val PRECIPITATION_SYMBOL_MARKERS: List<String> = listOf(
+            "rain", "drizzle", "shower", "sleet", "snow", "thunder"
+        )
+    }
+}
+
+/** 周五等星期条件使用触发逻辑时间，补处理延迟不会把周五提醒误判到周六。 */
+class DayOfWeekConditionEvaluator(
+    private val zoneProvider: (RunContext) -> ZoneId
+) : ConditionEvaluator {
+    override val type: String = BuiltinAutomationTypes.CONDITION_DAY_OF_WEEK
+    override val configSchema: JsonSchema = JsonSchema.parse(
+        """{"type":"object","additionalProperties":false,"required":["days"],"properties":{"days":{"type":"array","minItems":1,"maxItems":7,"items":{"type":"string","enum":["MONDAY","TUESDAY","WEDNESDAY","THURSDAY","FRIDAY","SATURDAY","SUNDAY"]}}}}"""
+    )
+
+    override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
+        val names = spec.config.arr("days")?.mapNotNull { it.stringOrNull() }?.toSet().orEmpty()
+        if (names.isEmpty()) return unknown(type, "缺少 days 配置")
+        val days = names.mapNotNull { name -> runCatching { DayOfWeek.valueOf(name) }.getOrNull() }.toSet()
+        if (days.size != names.size) return unknown(type, "days 配置包含不支持的星期")
+        val actual = ctx.firedAt.atZone(zoneProvider(ctx)).dayOfWeek
+        val passed = actual in days
+        return ConditionResult(
+            conditionType = type,
+            passed = passed,
+            certainty = Certainty.CERTAIN,
+            reason = if (passed) null else "触发日不是模板要求的星期",
+            evidence = listOf(Evidence(source = "local-clock", detail = "dayOfWeek=" + actual.name, at = ctx.firedAt))
+        )
+    }
+}
+
+/** 水电低余额状态条件；只读最新采样，不触发任何外部充值/写操作。 */
+class UtilityBalanceConditionEvaluator(
+    private val utilityBalanceReadPort: UtilityBalanceReadPort?
+) : ConditionEvaluator {
+    override val type: String = BuiltinAutomationTypes.CONDITION_UTILITY_BALANCE
+    override val configSchema: JsonSchema = JsonSchema.parse(
+        """{"type":"object","additionalProperties":false,"required":["metric","op","value","maxAgeSeconds"],"properties":{"metric":{"type":"string","enum":["core.utility.electricity-centiunits","core.utility.water-centiunits"]},"op":{"type":"string","enum":["LESS_THAN","LESS_OR_EQUAL","EQUAL","GREATER_OR_EQUAL","GREATER_THAN","NOT_EQUAL"]},"value":{"type":"number","minimum":0,"maximum":100000000},"maxAgeSeconds":{"type":"integer","minimum":60,"maximum":1209600},"meterId":{"type":"string","minLength":1,"maxLength":256}}}"""
+    )
+
+    override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
+        val port = utilityBalanceReadPort ?: return unknown(type, "缺少水电读数端口")
+        val metric = spec.config.str("metric") ?: return unknown(type, "缺少 metric 配置")
+        val op = runCatching { CompareOp.valueOf(spec.config.str("op").orEmpty()) }.getOrElse {
+            return unknown(type, "op 配置不受支持")
+        }
+        val threshold = spec.config.obj("value")?.decimalOrNull() ?: return unknown(type, "缺少 value 配置")
+        val maxAgeSeconds = spec.config.obj("maxAgeSeconds")?.intOrNull() ?: return unknown(type, "缺少 maxAgeSeconds 配置")
+        val meterFilter = spec.config.str("meterId")?.takeIf { it.isNotBlank() }
+        val meterPrefix = when (metric) {
+            BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS -> "online/electricity/"
+            BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS -> "online/water/"
+            else -> return unknown(type, "metric 配置不受支持")
+        }
+        val samples = try {
+            port.latestSamples(ctx.scope)
+        } catch (error: Throwable) {
+            if (error is kotlinx.coroutines.CancellationException || error is Error) throw error
+            return unknown(type, "水电读数读取失败")
+        }.filter { it.meterId.startsWith(meterPrefix) && (meterFilter == null || it.meterId == meterFilter) }
+        if (samples.isEmpty()) return unknown(type, "没有匹配的水电读数证据")
+        val latest = samples.maxByOrNull { it.sampledAt } ?: return unknown(type, "没有匹配的水电读数证据")
+        val age = Duration.between(latest.sampledAt, ctx.now).seconds.coerceAtLeast(0L)
+        if (age > maxAgeSeconds) {
+            return unknown(type, "水电读数已陈旧（" + age + " 秒），不能触发确定性结论")
+        }
+        val actual = BigDecimal.valueOf(latest.balanceCents)
+        val passed = compareDecimal(actual, op, threshold)
+        val meterDigest = AutomationKeys.sha256Hex(latest.meterId).substring(0, 12)
+        return ConditionResult(
+            conditionType = type,
+            passed = passed,
+            certainty = Certainty.CERTAIN,
+            reason = if (passed) null else "最新水电读数不满足阈值条件",
+            evidence = listOf(
+                Evidence(
+                    source = "utility-balance",
+                    detail = "meterDigest=" + meterDigest + ",ageSeconds=" + age + ",metric=" + metric,
+                    at = latest.sampledAt
+                )
+            )
+        )
+    }
+
+    private fun compareDecimal(actual: BigDecimal, op: CompareOp, expected: BigDecimal): Boolean {
+        val cmp = actual.compareTo(expected)
+        return when (op) {
+            CompareOp.LESS_THAN -> cmp < 0
+            CompareOp.LESS_OR_EQUAL -> cmp <= 0
+            CompareOp.EQUAL -> cmp == 0
+            CompareOp.GREATER_OR_EQUAL -> cmp >= 0
+            CompareOp.GREATER_THAN -> cmp > 0
+            CompareOp.NOT_EQUAL -> cmp != 0
+        }
+    }
+}
+
+/**
+ * 临时停课事实条件。只有 CourseChanged.diff 明确出现取消语义才通过；
+ * 没有事件、事件类型不符或差异不含取消证据时绝不把普通调课/更新误报成停课。
+ */
+class CourseCancellationConditionEvaluator : ConditionEvaluator {
+    override val type: String = BuiltinAutomationTypes.CONDITION_COURSE_CANCELLATION
+    override val configSchema: JsonSchema = JsonSchema.EMPTY_OBJECT
+
+    override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
+        val event = ctx.triggerEvent as? DomainEvent.CourseChanged
+            ?: return unknown(type, "触发上下文缺少 CourseChanged 事件，无法确认临时停课")
+        val cancellationSignals = event.diff.changes.count { change ->
+            val path = change.path.lowercase()
+            val cancellationPath = path.contains("cancel") || path.endsWith("/status") || path.contains("occurrenceoverride")
+            val explicitValue = when (val value = change.after) {
+                is JsonValue.Bool -> value.value && path.contains("cancel")
+                is JsonValue.Str -> {
+                    val normalized = value.value.lowercase()
+                    normalized.contains("cancelled") || normalized.contains("canceled") || normalized.contains("停课")
+                }
+                else -> false
+            }
+            cancellationPath && explicitValue
+        }
+        val passed = cancellationSignals > 0
+        return ConditionResult(
+            conditionType = type,
+            passed = passed,
+            certainty = Certainty.CERTAIN,
+            reason = if (passed) null else "课程变更差异中没有明确停课证据",
+            evidence = listOf(
+                Evidence(
+                    source = "course-change-diff",
+                    detail = "event=course.changed,cancellationSignals=" + cancellationSignals,
+                    at = event.occurredAt
+                )
+            )
+        )
+    }
+}
+
+private fun unknown(type: String, reason: String): ConditionResult = ConditionResult(
+    conditionType = type,
+    passed = false,
+    certainty = Certainty.UNKNOWN,
+    reason = reason
+)

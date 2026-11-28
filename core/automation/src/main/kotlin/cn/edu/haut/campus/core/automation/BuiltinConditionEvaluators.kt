@@ -150,23 +150,26 @@ class CommuteTimeConditionEvaluator(
 ) : ConditionEvaluator {
     override val type: String = BuiltinAutomationTypes.CONDITION_COMMUTE_TIME
     override val configSchema: JsonSchema = JsonSchema.parse(
-        """{"type":"object","additionalProperties":false,"required":["maxMinutes"],"properties":{"maxMinutes":{"type":"integer","minimum":0,"maximum":1440},"fromCampus":{"type":"string","minLength":1,"maxLength":128},"toCampus":{"type":"string","minLength":1,"maxLength":128}}}"""
+        """{"type":"object","additionalProperties":false,"required":["maxMinutes"],"properties":{"minMinutes":{"type":"integer","minimum":0,"maximum":1440},"maxMinutes":{"type":"integer","minimum":0,"maximum":1440},"fromCampus":{"type":"string","minLength":1,"maxLength":128},"toCampus":{"type":"string","minLength":1,"maxLength":128}}}"""
     )
 
     override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
         val port = commuteDurationPort ?: return unknown(type, "缺少通勤时长端口")
         val maxMinutes = spec.config.obj("maxMinutes")?.intOrNull()
             ?: return unknown(type, "缺少 maxMinutes 配置")
+        val minMinutes = spec.config.obj("minMinutes")?.intOrNull() ?: 0
+        if (minMinutes > maxMinutes) return unknown(type, "minMinutes 不能大于 maxMinutes")
         val from = spec.config.str("fromCampus")?.takeIf { it.isNotBlank() }?.let(::CampusId)
         val to = spec.config.str("toCampus")?.takeIf { it.isNotBlank() }?.let(::CampusId)
         val estimate = port.estimateMinutes(ctx.scope, from, to, ctx.now)
             ?: return unknown(type, "通勤时长证据不足")
+        val passed = estimate in minMinutes..maxMinutes
         return ConditionResult(
             conditionType = type,
-            passed = estimate <= maxMinutes,
+            passed = passed,
             certainty = Certainty.CERTAIN,
-            reason = if (estimate <= maxMinutes) null else "预计通勤 " + estimate + " 分钟，超过上限 " + maxMinutes + " 分钟",
-            evidence = listOf(Evidence(source = "commute-estimate", detail = "minutes=" + estimate, at = ctx.now))
+            reason = if (passed) null else "预计通勤 " + estimate + " 分钟，不在 " + minMinutes + ".." + maxMinutes + " 分钟范围内",
+            evidence = listOf(Evidence(source = "commute-estimate", detail = "minutes=" + estimate + ",min=" + minMinutes + ",max=" + maxMinutes, at = ctx.now))
         )
     }
 }
@@ -207,14 +210,21 @@ class BuiltinConditionEvaluators(
     campusPresencePort: CampusPresencePort?,
     focusStatePort: FocusStatePort?,
     commuteDurationPort: CommuteDurationPort?,
-    dataFreshnessPort: DataFreshnessPort?
+    dataFreshnessPort: DataFreshnessPort?,
+    weatherProvider: WeatherProvider? = null,
+    weatherLocationPort: WeatherLocationPort? = null,
+    utilityBalanceReadPort: UtilityBalanceReadPort? = null
 ) {
     private val evaluators = listOf(
         HasClassTodayConditionEvaluator(zoneProvider),
         OnCampusConditionEvaluator(campusPresencePort),
         FocusPeriodConditionEvaluator(focusStatePort),
         CommuteTimeConditionEvaluator(commuteDurationPort),
-        DataFreshnessConditionEvaluator(dataFreshnessPort)
+        DataFreshnessConditionEvaluator(dataFreshnessPort),
+        WeatherPrecipitationConditionEvaluator(weatherProvider, weatherLocationPort),
+        DayOfWeekConditionEvaluator(zoneProvider),
+        UtilityBalanceConditionEvaluator(utilityBalanceReadPort),
+        CourseCancellationConditionEvaluator()
     )
 
     fun all(): List<ConditionEvaluator> = evaluators
