@@ -56,7 +56,7 @@ class WeatherProviderTest {
 
     @Test
     fun malformedWeatherResponseIsUnavailableRatherThanEvidence() = runTest {
-        val transport = RecordingTransport(body = "{"properties":{"meta":{}}}")
+        val transport = RecordingTransport(body = "{\"properties\":{\"meta\":{}}}")
         val provider = MetNorwayWeatherProvider(
             transport = transport,
             clock = Clock.fixed(now, ZoneOffset.UTC)
