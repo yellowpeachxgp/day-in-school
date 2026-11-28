@@ -163,7 +163,7 @@ class BuiltinAutomationTemplatesTest {
         assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
         val weather = run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION }
         assertEquals(Certainty.UNKNOWN, weather.certainty)
-        assertTrue(weather.reason?.contains("过期") == true)
+        assertTrue("过期天气必须给出可审计原因，实际=" + weather.reason, weather.reason?.contains("可信缓存") == true)
         assertTrue(run.outcomes.isEmpty())
     }
 

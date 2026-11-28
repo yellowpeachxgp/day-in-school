@@ -30,7 +30,7 @@ class FileWeatherResponseCacheStoreTest {
         val store = FileWeatherResponseCacheStore(context, scope)
         val key = "a".repeat(64)
         val value = WeatherCachedResponse(
-            body = "{"properties":{"meta":{}}}",
+            body = "{\"properties\":{\"meta\":{}}}",
             fetchedAt = Instant.ofEpochMilli(1_777_000_000_000L),
             cacheExpiresAt = Instant.ofEpochMilli(1_777_000_600_000L),
             nextRequestAt = Instant.ofEpochMilli(1_777_001_200_000L),
