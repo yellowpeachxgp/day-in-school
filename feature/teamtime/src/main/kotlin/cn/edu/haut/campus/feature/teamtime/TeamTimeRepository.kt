@@ -186,9 +186,9 @@ class CommunityTeamTimeRepository(
                     cacheFallbackReason = cloudResult.cacheFallbackReason,
                 )
             }
-            is CommunityResult.Failure -> cloudResult
-            is CommunityResult.Disabled -> cloudResult
-            CommunityResult.AuthenticationRequired -> cloudResult
+            is CommunityResult.Failure -> CommunityResult.Failure(cloudResult.error)
+            is CommunityResult.Disabled -> CommunityResult.Disabled(cloudResult.feature, cloudResult.reason)
+            CommunityResult.AuthenticationRequired -> CommunityResult.AuthenticationRequired
         }
     }
 
@@ -257,7 +257,7 @@ private inline fun <T> CommunityResult<CommunityEnvelope>.mapEnvelopeData(
             ),
         )
     }
-    is CommunityResult.Failure -> this
-    is CommunityResult.Disabled -> this
-    CommunityResult.AuthenticationRequired -> this
+    is CommunityResult.Failure -> CommunityResult.Failure(error)
+    is CommunityResult.Disabled -> CommunityResult.Disabled(feature, reason)
+    CommunityResult.AuthenticationRequired -> CommunityResult.AuthenticationRequired
 }
