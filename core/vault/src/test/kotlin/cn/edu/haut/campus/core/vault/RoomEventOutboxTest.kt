@@ -329,6 +329,48 @@ class RoomEventOutboxTest {
         assertEquals(emptyList<String>(), received)
     }
 
+    @Test
+    fun closeIsIdempotentAndOperationsFailClosedAfterClose() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        outbox.append(envelope("event-before-close"))
+
+        outbox.close()
+        outbox.close()
+
+        assertTrue(runCatching { outbox.append(envelope("event-after-close")) }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { outbox.pendingUnacked("automation") }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { outbox.acknowledge("automation", "event-before-close") }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { outbox.isAcked("automation", "event-before-close") }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { outbox.unackedCount("automation") }.exceptionOrNull() is IllegalStateException)
+        assertTrue(runCatching { outbox.addLiveListener { } }.exceptionOrNull() is IllegalStateException)
+        assertEquals(1, database.vaultDao().countDomainOutbox())
+    }
+
+    @Test
+    fun closedOutboxStopsLiveNotificationsWhileReopenedInstanceKeepsWorking() = runBlocking {
+        val abandoned = RoomEventOutbox(database)
+        val abandonedEvents = Channel<String>(capacity = Channel.UNLIMITED)
+        val unregisterAbandoned = abandoned.addLiveListener { record -> abandonedEvents.trySend(record.envelope.eventId) }
+
+        abandoned.close()
+        unregisterAbandoned()
+
+        val reopened = RoomEventOutbox(database)
+        val reopenedEvents = Channel<String>(capacity = Channel.UNLIMITED)
+        val unregisterReopened = reopened.addLiveListener { record -> reopenedEvents.trySend(record.envelope.eventId) }
+        try {
+            reopened.append(envelope("event-after-reopen"))
+
+            assertEquals("event-after-reopen", withTimeout(2_000) { reopenedEvents.receive() })
+            assertNull(withTimeoutOrNull(300) { abandonedEvents.receive() })
+        } finally {
+            unregisterReopened()
+            reopened.close()
+            reopenedEvents.cancel()
+            abandonedEvents.cancel()
+        }
+    }
+
     private fun envelope(eventId: String, changeId: Long = 1L): EventEnvelope {
         val scope = SchoolAccountScope(
             schoolId = SchoolId("haut"),
