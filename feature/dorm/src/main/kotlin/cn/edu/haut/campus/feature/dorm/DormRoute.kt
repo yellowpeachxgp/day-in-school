@@ -7,6 +7,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import cn.edu.haut.campus.core.database.ActiveSession
+import cn.edu.haut.campus.core.model.NetworkProxyConfig
 import cn.edu.haut.campus.feature.dorm.state.DormScreenStatus
 import cn.edu.haut.campus.feature.dorm.state.DormUiAction
 import cn.edu.haut.campus.feature.dorm.state.DormUiState
@@ -23,7 +24,9 @@ fun DormRoute(
     val repository = activeSession.repository
     val sessionKey = dormSessionKey(activeSession.profileId, activeSession.generation)
     val viewModelStoreOwner = rememberDormViewModelStoreOwner(sessionKey)
-    val runtimeResult by produceState<Result<DormCollaborationRuntime>?>(initialValue = null, sessionKey) {
+    val prefs by repository.preferencesFlow.collectAsStateWithLifecycle(initialValue = null)
+    val cloudBaseKey = NetworkProxyConfig.normalizeCloudApiBaseUrl(prefs?.networkProxyConfig?.customCloudApiBaseUrl)
+    val runtimeResult by produceState<Result<DormCollaborationRuntime>?>(initialValue = null, sessionKey, cloudBaseKey) {
         value = runCatching {
             DormCollaborationAssembly.create(
                 repository = repository,
