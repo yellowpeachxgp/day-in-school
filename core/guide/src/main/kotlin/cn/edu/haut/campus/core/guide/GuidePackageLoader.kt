@@ -16,8 +16,9 @@ import java.time.format.DateTimeParseException
  * 把 W5-01 已验签数据包转换为 guide 可执行目录。
  *
  * 本对象故意不提供 unsigned/overrideTrust 入口：调用方不能把仅 decode 的包当作可执行包。
- * VerifiedDataPack 是 Kotlin 类型边界，这里仍复查 artifact/payload/signature 摘要链，防止
- * 调用方手工构造类型后绕过 W5-01 验签语义。guide 只解释固定字段，不反射、不 eval、不加载代码。
+ * VerifiedDataPack 是 Kotlin 类型边界但不是充分证明；这里用其携带的 trust-root 材料重新执行
+ * artifact/payload/Ed25519 验签链，防止调用方手工构造类型后绕过 W5-01 验签语义。
+ * guide 只解释固定字段，不反射、不 eval、不加载代码。
  */
 object GuidePackageLoader {
 

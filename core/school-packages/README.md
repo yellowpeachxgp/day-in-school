@@ -17,7 +17,7 @@
 dis-datapack/v1\n<canonical sha256 lowercase hex>\n
 ```
 
-其中 canonical sha256 是 exact artifact bytes 的 SHA-256（exact-byte 链成立后二者相同）。detached signature 使用 CT-06 的 `algorithm/scheme/public_key_fingerprint/value/signed_payload_sha256` 形状；`public_key_fingerprint` 是 raw Ed25519 public key 的 SHA-256 lowercase hex。验签方只能使用宿主/发布流水线固定的信任根，不能把 catalog 或 artifact 自带数据当信任根。
+其中 canonical sha256 是 exact artifact bytes 的 SHA-256（exact-byte 链成立后二者相同）。detached signature 使用 CT-06 的 `algorithm/scheme/public_key_fingerprint/value/signed_payload_sha256` 形状；`public_key_fingerprint` 是 raw Ed25519 public key 的 SHA-256 lowercase hex。验签方只能使用宿主/发布流水线固定的信任根，不能把 catalog 或 artifact 自带数据当信任根。`DisDatapackLoader.verify` 返回的 `VerifiedDataPack` 除 decoded 与签名结果外还携带该 trust-root 公钥材料，下游安全敏感消费方必须重新执行完整验签链，不得只信任 Kotlin 类型或摘要字段。
 
 ## 状态边界
 
