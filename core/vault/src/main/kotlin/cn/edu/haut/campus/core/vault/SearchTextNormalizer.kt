@@ -115,7 +115,8 @@ object SearchTextNormalizer {
         return QueryRewrite(
             normalizedQuery = normalized.normalizedText,
             tokens = normalized.tokens,
-            ftsQuery = fragments.takeIf { it.isNotEmpty() }?.joinToString(" AND "),
+            // FTS 空白连接即隐式 AND；比显式 AND 在 Android FTS4 各版本间更稳定。
+            ftsQuery = fragments.takeIf { it.isNotEmpty() }?.joinToString(" "),
             singleCharFallbacks = fallbacks.distinct()
         )
     }
