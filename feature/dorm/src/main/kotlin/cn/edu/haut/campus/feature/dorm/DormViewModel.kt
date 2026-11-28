@@ -59,13 +59,13 @@ class DormViewModel(
             DormUiAction.CreateDutyRota -> createDutyRota()
             is DormUiAction.CompleteDutyTask -> completeDutyTask(action.taskId)
             is DormUiAction.ConfirmDutyTask -> confirmDutyTask(action.taskId)
-            is DormUiAction.SkipDutyTask -> skipDutyTask(action.taskId)
+            is DormUiAction.SkipDutyTask -> skipDutyTask(action.taskId, action.reason)
             is DormUiAction.RequestDutySwap -> requestDutySwap(action.taskId, action.targetMemberId)
             is DormUiAction.ResolveDutySwap -> resolveDutySwap(action.swapId, action.action)
             is DormUiAction.UpdateRepairDraft -> mutableState.update { it.copy(repairDraft = action.draft) }
             DormUiAction.SubmitRepairTicket -> submitRepairTicket()
             is DormUiAction.TransitionRepair -> transitionRepair(action.repairId, action.toStatus)
-            is DormUiAction.ReviewRepair -> reviewRepair(action.repairId)
+            is DormUiAction.ReviewRepair -> reviewRepair(action.repairId, action.rating)
             DormUiAction.OpenElectricity -> Unit // Route 消费导航。
             DormUiAction.ConsumeNotice -> mutableState.update { it.copy(notice = null) }
         }
@@ -124,6 +124,7 @@ class DormViewModel(
         )
         val status = when (dormError.kind) {
             DormErrorKind.AUTHENTICATION_REQUIRED -> DormScreenStatus.NEEDS_LOGIN
+            DormErrorKind.PERMISSION_DENIED -> DormScreenStatus.NEEDS_PERMISSION
             DormErrorKind.FEATURE_DISABLED, DormErrorKind.UNSUPPORTED -> DormScreenStatus.UNSUPPORTED
             DormErrorKind.NETWORK -> DormScreenStatus.OFFLINE
             DormErrorKind.SERVER -> if (dormError.retryable) DormScreenStatus.ERROR_RETRYABLE else DormScreenStatus.ERROR_NON_RETRYABLE
@@ -267,8 +268,10 @@ class DormViewModel(
         port.confirmDutyTask(taskId, "骨架 UI 复核确认", newKey("duty-confirm"))
     }
 
-    private fun skipDutyTask(taskId: String) = runMutation("已记录请假/跳过原因") {
-        port.skipDutyTask(taskId, "请假且暂无 accepted 代值（骨架 UI 记录）", newKey("duty-skip"))
+    private fun skipDutyTask(taskId: String, reason: String) = runMutation("已记录请假/跳过原因") {
+        val cleanReason = reason.trim()
+        require(cleanReason.isNotEmpty() && cleanReason.length <= 240) { "请假/跳过原因必须为 1..240 字" }
+        port.skipDutyTask(taskId, cleanReason, newKey("duty-skip"))
     }
 
     private fun requestDutySwap(taskId: String, targetMemberId: String) {
@@ -318,8 +321,9 @@ class DormViewModel(
         port.transitionRepairStatus(repairId, toStatus, "骨架 UI 状态流转", null, newKey("repair-transition"))
     }
 
-    private fun reviewRepair(repairId: String) = runMutation("已提交报修协调评价") {
-        port.submitRepairReview(repairId, 5, "骨架 UI 默认满意评价", newKey("repair-review"))
+    private fun reviewRepair(repairId: String, rating: Int) = runMutation("已提交报修协调评价") {
+        require(rating in 1..5) { "报修评价必须在 1..5 分" }
+        port.submitRepairReview(repairId, rating, "骨架 UI 用户显式提交 " + rating + " 分评价", newKey("repair-review"))
     }
 
     private fun buildLedgerInput(draft: LedgerEntryDraft, members: List<DormMember>): DormLedgerEntryInput {

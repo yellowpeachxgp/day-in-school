@@ -59,6 +59,14 @@ internal fun DutyTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (Dor
             )
         }
         Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = state.dutyRotaDraft.leaveReason,
+            onValueChange = { onAction(DormUiAction.UpdateDutyRotaDraft(state.dutyRotaDraft.copy(leaveReason = it.take(240)))) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("请假/跳过审计原因") },
+            minLines = 2,
+        )
+        Spacer(Modifier.height(8.dp))
         Button(
             onClick = { onAction(DormUiAction.CreateDutyRota) },
             enabled = !state.actionInFlight && (snapshot?.members?.count { it.isActive } ?: 0) >= 2,
@@ -80,6 +88,7 @@ internal fun DutyTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (Dor
                 currentMember = currentMember,
                 hasOpenSwap = swaps.any { it.dutyTaskId == task.taskId && it.status == "PENDING" },
                 hasAcceptedSwap = swaps.any { it.dutyTaskId == task.taskId && it.status == "ACCEPTED" },
+                leaveReason = state.dutyRotaDraft.leaveReason,
                 actionInFlight = state.actionInFlight,
                 onAction = onAction,
             )
@@ -103,6 +112,7 @@ private fun DutyTaskRow(
     currentMember: DormMember?,
     hasOpenSwap: Boolean,
     hasAcceptedSwap: Boolean,
+    leaveReason: String,
     actionInFlight: Boolean,
     onAction: (DormUiAction) -> Unit,
 ) {
@@ -133,7 +143,7 @@ private fun DutyTaskRow(
                 }
                 TextButton(
                     enabled = !actionInFlight && canManage && !hasAcceptedSwap,
-                    onClick = { onAction(DormUiAction.SkipDutyTask(task.taskId)) },
+                    onClick = { onAction(DormUiAction.SkipDutyTask(task.taskId, leaveReason)) },
                 ) { Text("请假") }
             } else if (task.status == DormDutyTaskStatus.COMPLETED) {
                 val canConfirm = currentMember != null && currentMember.memberId != task.assignedMemberId
@@ -251,10 +261,16 @@ private fun RepairRow(repair: DormRepairTicket, members: List<DormMember>, curre
             }
             if (repair.status == "RESOLVED" && repair.reviewId == null) {
                 val canReview = currentMember?.memberId == repair.reporterMemberId
-                TextButton(
-                    enabled = !actionInFlight && canReview,
-                    onClick = { onAction(DormUiAction.ReviewRepair(repair.repairId)) },
-                ) { Text(if (canReview) "评价" else "待报告人评价") }
+                if (canReview) {
+                    (1..5).forEach { rating ->
+                        TextButton(
+                            enabled = !actionInFlight,
+                            onClick = { onAction(DormUiAction.ReviewRepair(repair.repairId, rating)) },
+                        ) { Text(rating.toString() + "分") }
+                    }
+                } else {
+                    TextButton(enabled = false, onClick = {}) { Text("待报告人评价") }
+                }
             }
         }
     }

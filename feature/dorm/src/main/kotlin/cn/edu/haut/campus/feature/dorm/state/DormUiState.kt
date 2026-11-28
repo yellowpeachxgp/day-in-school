@@ -39,6 +39,7 @@ data class LedgerEntryDraft(
 data class DutyRotaDraft(
     val title: String = "宿舍值日",
     val weekly: Boolean = true,
+    val leaveReason: String = "请假且暂无 accepted 代值",
 )
 
 data class RepairDraft(
@@ -84,14 +85,14 @@ sealed interface DormUiAction {
     data object CreateDutyRota : DormUiAction
     data class CompleteDutyTask(val taskId: String) : DormUiAction
     data class ConfirmDutyTask(val taskId: String) : DormUiAction
-    data class SkipDutyTask(val taskId: String) : DormUiAction
+    data class SkipDutyTask(val taskId: String, val reason: String) : DormUiAction
     data class RequestDutySwap(val taskId: String, val targetMemberId: String) : DormUiAction
     data class ResolveDutySwap(val swapId: String, val action: String) : DormUiAction
 
     data class UpdateRepairDraft(val draft: RepairDraft) : DormUiAction
     data object SubmitRepairTicket : DormUiAction
     data class TransitionRepair(val repairId: String, val toStatus: String) : DormUiAction
-    data class ReviewRepair(val repairId: String) : DormUiAction
+    data class ReviewRepair(val repairId: String, val rating: Int) : DormUiAction
 
     data object OpenElectricity : DormUiAction
     data object ConsumeNotice : DormUiAction

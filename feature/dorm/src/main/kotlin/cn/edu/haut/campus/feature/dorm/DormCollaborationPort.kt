@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 
 enum class DormErrorKind {
     AUTHENTICATION_REQUIRED,
+    PERMISSION_DENIED,
     FEATURE_DISABLED,
     NETWORK,
     SERVER,

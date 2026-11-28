@@ -386,9 +386,10 @@ class CommunityDormCollaborationAdapter(
     }
 
     private fun CommunityError.toDormException(operation: String): DormCollaborationException {
-        val unsupported = statusCode == 501 || code == "FEATURE_NOT_ENABLED" || statusCode == 404
+        val unsupported = statusCode == 501 || code == "FEATURE_NOT_ENABLED"
         val kind = when {
             unsupported -> DormErrorKind.UNSUPPORTED
+            statusCode == 403 -> DormErrorKind.PERMISSION_DENIED
             this.kind == CommunityErrorKind.NETWORK -> DormErrorKind.NETWORK
             this.kind == CommunityErrorKind.CONTRACT -> DormErrorKind.CONTRACT
             else -> DormErrorKind.SERVER

@@ -67,6 +67,14 @@ class DormViewModelTest {
         val networkVm = DormViewModel(networkPort, FakeUtilityPort, "haut")
         advanceUntilIdle()
         assertEquals(DormScreenStatus.OFFLINE, networkVm.uiState.value.status)
+
+        val permissionPort = FakeDormCollaborationPort(
+            DormPreviewFixtures.contentSnapshot,
+            loadError = DormCollaborationException(DormErrorKind.PERMISSION_DENIED, "forbidden"),
+        )
+        val permissionVm = DormViewModel(permissionPort, FakeUtilityPort, "haut")
+        advanceUntilIdle()
+        assertEquals(DormScreenStatus.NEEDS_PERMISSION, permissionVm.uiState.value.status)
     }
 
     @Test
