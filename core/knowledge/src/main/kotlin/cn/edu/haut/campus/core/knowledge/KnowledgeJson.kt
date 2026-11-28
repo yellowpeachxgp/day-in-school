@@ -12,6 +12,7 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.textextract.ExtractionConfirmationState
 import cn.edu.haut.campus.core.textextract.ExtractionSourceKind
+import cn.edu.haut.campus.core.timeline.TimelineEventId
 import java.time.Instant
 import java.time.ZoneId
 
@@ -153,7 +154,7 @@ internal fun decodeAssignment(value: JsonValue): AssignmentDeadline? {
     return AssignmentDeadline(
         dueAt = Instant.parse(obj.requiredString("dueAt")),
         zone = ZoneId.of(obj.requiredString("zone")),
-        timelineEventId = obj.nullableString("timelineEventId")?.let(::cn.edu.haut.campus.core.timeline.TimelineEventId)
+        timelineEventId = obj.nullableString("timelineEventId")?.let(::TimelineEventId)
     )
 }
 

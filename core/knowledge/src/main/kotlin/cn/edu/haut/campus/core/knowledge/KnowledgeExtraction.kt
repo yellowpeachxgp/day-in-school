@@ -137,8 +137,7 @@ internal fun chunkLinesForSearch(lines: List<KnowledgeTextLine>, maxChars: Int =
             }
             val extra = if (current.isEmpty()) text.length else text.length + 1
             if (current.length + extra > maxChars) flush()
-            if (current.isNotEmpty()) current.append('
-')
+            if (current.isNotEmpty()) current.append(10.toChar())
             current.append(text)
         }
         flush()
@@ -158,6 +157,7 @@ internal fun sha256Hex(bytes: ByteArray): String {
 }
 
 internal fun safeExportFileName(raw: String, fallback: String): String {
-    val cleaned = raw.replace(Regex("[\\/:*?"<>|]"), "_").trim().trim('.')
+    val forbidden = charArrayOf('\\', '/', ':', '*', '?', '"', '<', '>', '|')
+    val cleaned = raw.map { ch -> if (ch in forbidden) '_' else ch }.joinToString("").trim().trim('.')
     return cleaned.ifBlank { fallback }.take(120)
 }

@@ -331,8 +331,7 @@ class VaultKnowledgeRepository internal constructor(
 
     private fun projectionDocuments(material: CourseMaterial, lines: List<KnowledgeTextLine>?): List<SearchDocument> {
         val chunks = if (lines.isNullOrEmpty()) {
-            listOf(SearchTextChunk(pageIndex = 0, partIndex = 0, text = listOfNotNull(material.title, material.note, material.course.courseName).joinToString("
-")))
+            listOf(SearchTextChunk(pageIndex = 0, partIndex = 0, text = listOfNotNull(material.title, material.note, material.course.courseName).joinToString(10.toChar().toString())))
         } else {
             chunkLinesForSearch(lines)
         }
@@ -382,10 +381,10 @@ class VaultKnowledgeRepository internal constructor(
         val normalizedText = SearchTextNormalizer.normalizePlain(text)
         val firstUnit = SearchTextNormalizer.normalizePlain(query).split(' ').firstOrNull { it.isNotBlank() }.orEmpty()
         val index = if (firstUnit.isEmpty()) -1 else normalizedText.indexOf(firstUnit)
-        if (text.length <= 180 || index < 0) return text.replace(Regex("\s+"), " ").take(180)
+        if (text.length <= 180 || index < 0) return text.replace(Regex("""\s+"""), " ").take(180)
         val ratio = index.toDouble() / normalizedText.length.coerceAtLeast(1)
         val start = (text.length * ratio).toInt().coerceIn(0, (text.length - 120).coerceAtLeast(0))
-        return text.substring(start, (start + 180).coerceAtMost(text.length)).replace(Regex("\s+"), " ")
+        return text.substring(start, (start + 180).coerceAtMost(text.length)).replace(Regex("""\s+"""), " ")
     }
 
     private fun requireScope(candidate: SchoolAccountScope) {
