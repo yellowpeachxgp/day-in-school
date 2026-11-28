@@ -34,7 +34,7 @@
 - cursor 只在页面全部解密、校验并持久应用后保存；cursor 不跨设备复制。SYNC_CURSOR_EXPIRED/INVALID 只丢弃 cursor 并 cursorless resync，不删除本地 dirty 或从未确认的对象。
 - version vector 只排序服务端写，不证明 plaintext freshness。payload logicalClock/rowSha256 是客户端回滚检测事实源：远端 logicalClock 倒退、同 clock 不同内容、本地 dirty 与远端并发、同逻辑键双 blob identity、删除遇上本地 dirty，全部进入 pending conflict。
 - 冲突永不静默覆盖。UI 同时展示本机版本与远端版本（表、row key、logicalClock、内容摘要/canonical row），用户显式选择保留本机或使用远端；删除冲突提供「保留本机」与「接受远端删除」。
-- 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。`personal_events` 恢复生成列使用 `dis-sync-e2ee/v1` / `E2EE_CLOUD_SYNC` provenance，绝不写成 `dis-backup/v1` / `LOCAL_BACKUP_RESTORE`。每张可同步表都有受控 EntityType 的行级 journal ref；非 search-indexed 表也记录精确 before/after typed-cell 快照，blob 内容仍只按摘要引用。
+- 无冲突且远端按 logicalClock 前进时，客户端在 Room 事务中应用行 upsert/delete，并以 `Actor.SYNC` / `e2ee-cloud-sync` 写 vault journal；不伪装成用户手动编辑或 RESTORE。`personal_events` 恢复生成列使用 `dis-sync-e2ee/v1` / `E2EE_CLOUD_SYNC` provenance，绝不写成 `dis-backup/v1` / `LOCAL_BACKUP_RESTORE`。每张可同步表都有受控 EntityType 的行级 journal ref；已注册 SnapshotStore 的实体保持原生快照语义，其他表记录精确 before/after typed-cell 快照，blob 内容仍只按摘要引用。
 
 ## 6. 云身份、设备与本地擦除
 

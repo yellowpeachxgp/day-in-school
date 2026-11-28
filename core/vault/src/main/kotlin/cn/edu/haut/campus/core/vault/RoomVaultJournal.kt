@@ -139,9 +139,11 @@ class RoomVaultJournal(
         return database.withTransaction {
             val refs = refsProvider().distinct()
             val beforeByRef = LinkedHashMap<EntityRef, CanonicalJson?>(refs.size)
+            suspend fun readSnapshot(ref: EntityRef): CanonicalJson? =
+                snapshotStores[ref.type]?.read(ref) ?: snapshotReader(ref)
             refs.forEach { ref ->
                 validateSourceScope(ref, source)
-                val before = snapshotReader(ref)
+                val before = readSnapshot(ref)
                 validateSnapshotSafety(before)
                 beforeByRef[ref] = before
             }
@@ -149,7 +151,7 @@ class RoomVaultJournal(
             val occurredAt = clock()
             refs.forEach { ref ->
                 val before = beforeByRef[ref]
-                val after = snapshotReader(ref)
+                val after = readSnapshot(ref)
                 validateSnapshotSafety(after)
                 val op = inferChangeKind(before, after)
                 if (op != null) {
