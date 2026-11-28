@@ -197,6 +197,23 @@ class ProfileDataWiper internal constructor(
                 dao.clearUnscheduledCourses()
                 dao.clearImportAudits()
                 dao.clearWidgetConfigs()
+                // W0-04：period_times 历来存在用户可写路径，无法把 v10 旧行可靠分成
+                // “纯 reference”与“用户覆盖”。擦除按更保守口径重置全部默认作息行；
+                // 对可识别的公开/离线参考表，在同一事务内恢复为干净的 reference 模板。
+                // 自定义 timeTableId 不伪造模板，用户后续重新导入/配置。
+                val basePeriodTables = dao.getPeriodTimesSnapshot()
+                    .filter { it.schemeId == null }
+                    .map { it.timeTableId }
+                    .toSet()
+                dao.clearPeriodTimeSchemes()
+                dao.clearSchemePeriodTimes()
+                dao.clearBasePeriodTimes()
+                for (timeTableId in basePeriodTables) {
+                    val referenceRows = ReferencePeriodTimes.forTimeTableId(timeTableId)
+                    if (referenceRows.isNotEmpty()) {
+                        dao.upsertPeriodTimes(referenceRows.map { it.toEntity() })
+                    }
+                }
                 reminderDao.clearAllTasks()
                 reminderDao.clearAllEventPrefs()
                 utilityAndFocusDao.clearAllDailySamples()

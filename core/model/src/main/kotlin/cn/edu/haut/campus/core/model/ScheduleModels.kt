@@ -42,7 +42,46 @@ data class PeriodTime(
         periodNo <= 4 -> "上午"
         periodNo <= 8 -> "下午"
         else -> "晚间"
-    }
+    },
+    /** 非空时表示该行属于某个按日期区间生效的用户作息方案；空值为学期默认参考作息。 */
+    val schemeId: String? = null,
+    val termId: String? = null,
+    val validStartDate: LocalDate? = null,
+    val validEndDate: LocalDate? = null,
+    val userModified: Boolean = false,
+    val updatedAtEpochMillis: Long = 0L
+)
+
+/**
+ * 同一学期内按日期区间生效的一套节次作息方案。
+ * 具体节次行仍保存在 period_times（以 schemeId 关联），使课表展开、提醒与小组件
+ * 继续消费同一条 PeriodTime 数据链；本类型提供方案命名、学期边界和切换语义。
+ */
+data class PeriodTimeScheme(
+    val id: String,
+    val termId: String,
+    val timeTableId: String,
+    val name: String,
+    val startDate: LocalDate,
+    val endDate: LocalDate,
+    val userModified: Boolean = true,
+    val createdAtEpochMillis: Long = 0L,
+    val updatedAtEpochMillis: Long = 0L
+)
+
+/**
+ * 实践课/集中课的一条排课输入规则：周次集合 × 星期 × 节次（可带精确自定义起止时间）× 地点。
+ * startPeriod/endPeriod 仍是周课表网格定位锚点；customStartTime/customEndTime 同时存在且合法时
+ * 是提醒与展示使用的更强时间证据。多条 OccurrenceRule 组成实践课多日排课。
+ */
+data class OccurrenceRule(
+    val weekday: DayOfWeek,
+    val startPeriod: Int,
+    val endPeriod: Int,
+    val weeks: Set<Int>,
+    val rawRoom: String,
+    val customStartTime: LocalTime? = null,
+    val customEndTime: LocalTime? = null
 )
 
 enum class CalendarOverrideType {

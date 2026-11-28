@@ -36,7 +36,7 @@ class UniversalDatabaseMigrationTest {
         val before = createVersionFourDatabase()
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(10, sqlite.version)
+            assertEquals(11, sqlite.version)
             assertEquals(before, snapshot(sqlite))
             for (tableName in listOf(
                 "unscheduled_academic_courses",
@@ -82,7 +82,7 @@ class UniversalDatabaseMigrationTest {
         }
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(10, sqlite.version)
+            assertEquals(11, sqlite.version)
             val cols = mutableSetOf<String>()
             sqlite.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
                 val idx = cursor.getColumnIndex("name")
@@ -164,7 +164,7 @@ class UniversalDatabaseMigrationTest {
 
         assertEquals(4, source.oldVersion)
         assertEquals(4, evidence.oldVersion)
-        assertEquals(10, evidence.newVersion)
+        assertEquals(11, evidence.newVersion)
         assertEquals(before.keys, source.tableCounts.keys)
         assertEquals(source.serializedTableCounts, evidence.serializedTableCounts)
         factory.open(profile).databaseForAdoption().close()
@@ -173,7 +173,7 @@ class UniversalDatabaseMigrationTest {
             null,
             SQLiteDatabase.OPEN_READONLY
         ).use { database ->
-            assertEquals(10, database.version)
+            assertEquals(11, database.version)
             assertEquals(before, snapshot(database))
         }
     }
@@ -185,7 +185,7 @@ class UniversalDatabaseMigrationTest {
 
     private fun openRoom(): HautDatabase =
         Room.databaseBuilder(context, HautDatabase::class.java, databaseName)
-            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
             .allowMainThreadQueries()
             .build()
 
@@ -287,7 +287,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedProvable = Room.databaseBuilder(context, HautDatabase::class.java, dbProvable)
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -314,7 +314,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedUnprovable = Room.databaseBuilder(context, HautDatabase::class.java, dbUnprovable)
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -365,12 +365,12 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(10, sqlite.version)
+                assertEquals(11, sqlite.version)
                 // 新列存在且旧行保持 NULL
                 val cols = mutableSetOf<String>()
                 sqlite.query("PRAGMA table_info(`occurrence_overrides`)").use { cursor ->
@@ -403,6 +403,155 @@ class UniversalDatabaseMigrationTest {
                 }
             } finally {
                 migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    @Test
+    fun migration10To11PreservesPeriodRowsAndCreatesSchemeStructures() {
+        val dbName = "migration_v10_schedule_scheme.db"
+        try {
+            createVersionedDatabase(dbName, 10) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO period_times
+                    (id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel)
+                    VALUES
+                    ('pt_1', 'haut_lianhuajie_default', 1, '08:30', '09:15', '上午'),
+                    ('pt_user_custom', 'haut_lianhuajie_default', 2, '09:21', '10:06', '上午'),
+                    ('manual_period_1', 'manual_default', 1, '08:00', '08:45', '上午')
+                    """.trimIndent()
+                )
+            }
+            val expectedSemantics = mutableMapOf<String, List<String?>>()
+            SQLiteDatabase.openDatabase(context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READONLY).use { pre ->
+                pre.rawQuery("SELECT id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel FROM period_times ORDER BY id", null).use { cursor ->
+                    while (cursor.moveToNext()) {
+                        expectedSemantics[cursor.getString(0)] = (1 until cursor.columnCount).map {
+                            if (cursor.isNull(it)) null else cursor.getString(it)
+                        }
+                    }
+                }
+            }
+
+            val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_10_11)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = migrated.openHelper.writableDatabase
+                assertEquals(11, sqlite.version)
+                val cols = mutableSetOf<String>()
+                sqlite.query("PRAGMA table_info(period_times)").use { cursor ->
+                    val idx = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) cols += cursor.getString(idx)
+                }
+                assertTrue(cols.containsAll(listOf("schemeId", "termId", "validStartDateIso", "validEndDateIso", "userModified", "updatedAtEpochMillis")))
+
+                sqlite.query("SELECT id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel, schemeId, termId, validStartDateIso, validEndDateIso, userModified, updatedAtEpochMillis FROM period_times ORDER BY id").use { cursor ->
+                    var count = 0
+                    while (cursor.moveToNext()) {
+                        count++
+                        val actual = (1..5).map { if (cursor.isNull(it)) null else cursor.getString(it) }
+                        assertEquals("旧 period_times 语义字段必须原样保留", expectedSemantics[cursor.getString(0)], actual)
+                        assertTrue(cursor.isNull(6))
+                        assertTrue(cursor.isNull(7))
+                        assertTrue(cursor.isNull(8))
+                        assertTrue(cursor.isNull(9))
+                        assertEquals(0, cursor.getInt(10))
+                        assertEquals(0, cursor.getLong(11))
+                    }
+                    assertEquals(expectedSemantics.size, count)
+                }
+                sqlite.query("SELECT COUNT(*) FROM period_time_schemes").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(0, cursor.getInt(0))
+                }
+                sqlite.query("SELECT name FROM sqlite_master WHERE type='index' AND name IN ('index_period_times_schemeId','index_period_times_termId','index_period_time_schemes_termId','index_period_time_schemes_timeTableId')").use { cursor ->
+                    var count = 0
+                    while (cursor.moveToNext()) count++
+                    assertEquals(4, count)
+                }
+            } finally {
+                migrated.close()
+            }
+
+            val reopened = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_10_11)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                assertEquals(11, reopened.openHelper.writableDatabase.version)
+            } finally {
+                reopened.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    @Test
+    fun migration10To11RollbackKeepsV10RowsAndAllowsRetry() {
+        val dbName = "migration_v10_schedule_scheme_rollback.db"
+        try {
+            createVersionedDatabase(dbName, 10) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO period_times
+                    (id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel)
+                    VALUES ('pt_keep', 'tt', 1, '08:00', '08:45', '上午')
+                    """.trimIndent()
+                )
+            }
+            val failing = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(object : Migration(10, 11) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        MIGRATION_10_11.migrate(db)
+                        error("合成 v11 迁移中断")
+                    }
+                })
+                .allowMainThreadQueries()
+                .build()
+            try {
+                assertTrue(runCatching { failing.openHelper.writableDatabase }.isFailure)
+            } finally {
+                failing.close()
+            }
+            SQLiteDatabase.openDatabase(context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READONLY).use { sqlite ->
+                assertEquals(10, sqlite.version)
+                sqlite.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='period_time_schemes'", null).use { cursor ->
+                    assertFalse("失败事务不得遗留 period_time_schemes", cursor.moveToFirst())
+                }
+                sqlite.rawQuery("PRAGMA table_info(period_times)", null).use { cursor ->
+                    val idx = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) {
+                        assertFalse("失败事务不得遗留 schemeId 列", cursor.getString(idx) == "schemeId")
+                    }
+                }
+                sqlite.rawQuery("SELECT startLocalTimeIso, endLocalTimeIso FROM period_times WHERE id='pt_keep'", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                    assertEquals("08:45", cursor.getString(1))
+                }
+            }
+
+            val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_10_11)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = retried.openHelper.writableDatabase
+                assertEquals(11, sqlite.version)
+                sqlite.query("SELECT startLocalTimeIso, endLocalTimeIso, schemeId FROM period_times WHERE id='pt_keep'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                    assertEquals("08:45", cursor.getString(1))
+                    assertTrue(cursor.isNull(2))
+                }
+            } finally {
+                retried.close()
             }
         } finally {
             context.deleteDatabase(dbName)
@@ -454,12 +603,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_9_10)
+                .addMigrations(MIGRATION_9_10, MIGRATION_10_11)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(10, sqlite.version)
+                assertEquals(11, sqlite.version)
                 // 结构校验：mutationToken 非空列已建立
                 val cols = mutableSetOf<String>()
                 sqlite.query("PRAGMA table_info(occurrence_overrides)").use { cursor ->

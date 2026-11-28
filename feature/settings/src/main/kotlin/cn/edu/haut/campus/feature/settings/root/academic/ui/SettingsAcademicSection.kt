@@ -1209,6 +1209,7 @@ internal fun SettingsAcademicSectionContent(
     if (ptToEdit != null) {
         var startIso by remember(ptToEdit) { mutableStateOf(ptToEdit.startLocalTime.toString()) }
         var endIso by remember(ptToEdit) { mutableStateOf(ptToEdit.endLocalTime.toString()) }
+        var periodEditError by remember(ptToEdit) { mutableStateOf<String?>(null) }
 
         XPeachAlertDialog(
             onDismissRequest = { editingPeriod = null },
@@ -1229,6 +1230,13 @@ internal fun SettingsAcademicSectionContent(
                         singleLine = true,
                         shape = RoundedCornerShape(12.dp)
                     )
+                    periodEditError?.let { message ->
+                        Text(
+                            text = message,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             },
             confirmButton = {
@@ -1236,19 +1244,28 @@ internal fun SettingsAcademicSectionContent(
                     onClick = {
                         val parsedStart = runCatching { LocalTime.parse(startIso.trim()) }.getOrNull()
                         val parsedEnd = runCatching { LocalTime.parse(endIso.trim()) }.getOrNull()
-                        if (parsedStart != null && parsedEnd != null && parsedStart.isBefore(parsedEnd)) {
-                            scope.launch {
+                        if (parsedStart == null || parsedEnd == null || !parsedStart.isBefore(parsedEnd)) {
+                            periodEditError = "请输入合法且结束晚于开始的 HH:mm 时间"
+                            return@Button
+                        }
+                        periodEditError = null
+                        scope.launch {
+                            val result = runCatching {
                                 actions.updatePeriodTime(
                                     ptToEdit.copy(
                                         startLocalTime = parsedStart,
                                         endLocalTime = parsedEnd
                                     )
                                 )
+                            }
+                            if (result.isSuccess) {
                                 onRefreshWidgets()
                                 onFeedback("已更新第 ${ptToEdit.periodNo} 节时间。")
+                                editingPeriod = null
+                            } else {
+                                periodEditError = result.exceptionOrNull()?.message ?: "节次时间与其他节次重叠或无效"
                             }
                         }
-                        editingPeriod = null
                     },
                     shape = RoundedCornerShape(12.dp)
                 ) {
