@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.automation.android
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -88,6 +89,8 @@ class CoarseGeofenceMonitor(
             }.getOrNull()
         }.filter { it.scope == scope }
 
+    // 先显式检查 COARSE/FINE 任一授权；lint 无法沿 getProviders/getLastKnownLocation 的控制流识别。
+    @SuppressLint("MissingPermission")
     private fun bestCoarseLocation(): Location? {
         val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
         val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION)

@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.automation.android
 
+import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -16,6 +17,8 @@ import cn.edu.haut.campus.core.model.SchoolAccountScope
 class AutomationNotificationPoster(
     private val context: Context
 ) : LocalNotificationActionPort {
+    // areNotificationsEnabled/channelEnabled 是先决门禁；lint 无法识别 NotificationManagerCompat 的运行时检查。
+    @SuppressLint("MissingPermission")
     override suspend fun post(
         scope: SchoolAccountScope,
         actionExecutionKey: String,
