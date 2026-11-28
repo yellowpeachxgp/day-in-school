@@ -33,7 +33,7 @@
 | R06 | Room v10 现状、迁移链和擦除链路清单（`ProfileDataWiper` 注册点） | — | — | — | — | 已合并 | s4-r06 | docs/cis-r06-room-wipe | PR#50 | — | a44017b | — |
 | W0-02 | #24 实况进度条 | Android | INF-00 | — | C01 | 已合并 | s6b-w002finish | feat/cis-w0-02-live-progress | PR#65 | — | 0e83b78 | — |
 | W0-03 | #12 学期上下文与提示条 | Android | W0-05 | — | C02 | 未开始 | — | — | — | — | — | 依赖 W0-05 收口 |
-| W0-04 | #22 / #8 / #15 节次与作息方案、实践课多日排课 | Android | W0-05 | Room v11 | C03 | 未开始 | — | — | — | — | — | 依赖 W0-05 收口 |
+| W0-04 | #22 / #8 / #15 节次与作息方案、实践课多日排课 | Android | W0-05 | Room v11 | C03 | PR 待审（quick/android/secrets 已通过） | m-w004 | feat/cis-w0-04-schedule-schemes | PR#130 | 2c1094e4 | — | 迁移+擦除需 2 独立审阅；v11 必须先于 v12 |
 | W0-05 | 拆分 `CampusRepository`（行为不变，调用方不改）；AUTO-019 分批 | Android | INF-00、R05 | — | C25 | 进行中：a/b/c1/c2/c3/c4/c5 已合并（PR#69/#82/#93/#100/#106/#112/#117）；c6 booking 执行中；现 3862 行 | m-w005c6b | feat/cis-w0-05c6-repository-split | 待创建 | — | — | 目标 facade <800 行 |
 | W0-06a/b/c/d | 拆分 Grades/Map/Settings/Today·Timetable 为 Route·State·UI | Android | W0-07、R05 | — | C25 | a/b/c 已合并（PR#89/#94/#92）；d PR#104 修复中（写完成时序） | m-w006ttfix3 | feat/cis-w0-06d-today-timetable-split | PR#104 | — | — | — |
 | W0-07 | 测试与架构护栏：Roborazzi、依赖方向检查、文件行数门禁 | Android | INF-00 | — | C25 | 已合并：a b754cc4（PR#61）；b 338e5c3（PR#81）；c ba548cb+b1b81b2（PR#76/#79，cloud b3126b8） | s1-w007 等 | feat/cis-w0-07-guardrails 等 | PR#61/#76/#79/#81 | — | 见左 | — |

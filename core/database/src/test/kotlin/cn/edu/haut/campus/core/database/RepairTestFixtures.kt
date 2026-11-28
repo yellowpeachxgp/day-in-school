@@ -7,7 +7,11 @@ import androidx.datastore.core.DataStore
 import androidx.room.Room
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.time.LocalDate
 import java.util.UUID
@@ -26,8 +30,34 @@ internal data class RepairTestFixture(
     val dao: CampusDao get() = database.campusDao()
 
     fun close() {
+        drainRepositoryStartupJobsForTest()
         database.close()
         runCatching { storeFile.delete() }
+    }
+
+    /**
+     * CampusRepository 初始化时会向私有 repoScope 投递一次 null-literal 清洗。
+     * 单测 fixture 生命周期极短，若直接 close Room，清洗协程可能与 close 形成
+     * SQLiteOpenHelper/InvalidationTracker 死锁（devbox quick 已实证）。测试-only
+     * 反射只在销毁前排空该启动子任务；生产 API 与行为不变。
+     */
+    private fun drainRepositoryStartupJobsForTest() {
+        runCatching {
+            val field = CampusRepository::class.java.getDeclaredField("repoScope")
+            field.isAccessible = true
+            val scope = field.get(repository) as CoroutineScope
+            val rootJob = scope.coroutineContext[Job] ?: return@runCatching
+            val children = rootJob.children.toList()
+            runBlocking {
+                withTimeoutOrNull(2_000L) {
+                    children.forEach { it.join() }
+                }
+                children.filter { it.isActive }.forEach { job ->
+                    job.cancel()
+                    withTimeoutOrNull(1_000L) { job.join() }
+                }
+            }
+        }
     }
 
     companion object {

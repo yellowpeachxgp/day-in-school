@@ -4,11 +4,13 @@ import androidx.datastore.preferences.core.edit
 import androidx.room.withTransaction
 import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
+import cn.edu.haut.campus.core.domain.PeriodTimeEditor
 import cn.edu.haut.campus.core.model.AcademicTermResolver
 import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -41,6 +43,9 @@ class TermRepository internal constructor(
 
     val periodTimesFlow: Flow<List<PeriodTime>> =
         dao.observePeriodTimes().map { list -> list.map { it.toDomain() } }
+
+    val periodTimeSchemesFlow: Flow<List<PeriodTimeScheme>> =
+        dao.observePeriodTimeSchemes().map { list -> list.map { it.toDomain() } }
 
     val calendarOverridesFlow: Flow<List<CalendarOverride>> =
         dao.observeCalendarOverrides().map { list -> list.map { it.toDomain() } }
@@ -179,11 +184,17 @@ class TermRepository internal constructor(
     internal suspend fun ensureExtendedPeriodTimes11To12IfNeeded() {
         val prefs = preferences.data.first()
         val existingEntities = dao.observePeriodTimes().first()
-        val byTimetable = existingEntities.map { it.toDomain() }.groupBy { it.timeTableId }
+        // 11–12 节自动补齐只作用于默认参考作息；用户日期方案是完整独立集合，不能被该种子逻辑混入。
+        val byTimetable = existingEntities.map { it.toDomain() }
+            .filter { it.schemeId == null }
+            .groupBy { it.timeTableId }
         val toInsert = mutableListOf<PeriodTimeEntity>()
 
         for ((ttId, list) in byTimetable) {
             if (ttId.isBlank()) continue
+            // 用户显式编辑/删除过的默认作息属于个人覆盖，不能再被升级种子悄悄补回 11–12 节；
+            // 否则“删除节次”会在下次初始化时失效。v10 迁移行无法反证用户编辑，仍保持 false 原样。
+            if (list.any { it.userModified }) continue
             val existingNos = list.map { it.periodNo }.toSet()
             if (11 in existingNos && 12 in existingNos) continue
             val p10End = list.filter { it.periodNo <= 10 }.maxByOrNull { it.periodNo }?.endLocalTime
@@ -350,15 +361,7 @@ class TermRepository internal constructor(
             id = "$year-${year + 1}-$termNo", academicYear = "$year-${year + 1}", termNumber = termNo,
             startDate = monday, weekCount = 20, timeTableId = timetableId, current = true
         ).toEntity()))
-        val starts = listOf(
-            "08:00", "08:55", "10:00", "10:55",
-            "14:00", "14:55", "16:00", "16:55",
-            "19:00", "19:55", "20:50", "21:45"
-        )
-        dao.upsertPeriodTimes(starts.mapIndexed { index, raw ->
-            val start = LocalTime.parse(raw)
-            PeriodTime("manual_period_${index + 1}", timetableId, index + 1, start, start.plusMinutes(45)).toEntity()
-        })
+        dao.upsertPeriodTimes(ReferencePeriodTimes.forTimeTableId(timetableId).map { it.toEntity() })
     }
 
 
@@ -418,8 +421,145 @@ class TermRepository internal constructor(
         notifyScheduleOrPolicyChanged("TERM_START_DATE_CHANGED")
     }
 
+    /**
+     * 单节编辑沿用既有公开入口，但写入前按同一作用域完整校验，拒绝重叠/倒序后局部落库。
+     */
     suspend fun updatePeriodTime(periodTime: PeriodTime) {
-        dao.upsertPeriodTimes(listOf(periodTime.toEntity()))
+        val now = System.currentTimeMillis()
+        val all = dao.getPeriodTimesSnapshot().map { it.toDomain() }
+        val existing = all.firstOrNull { it.id == periodTime.id }
+        val scoped = all.filter { row ->
+            if (periodTime.schemeId == null) {
+                row.timeTableId == periodTime.timeTableId && row.schemeId == null
+            } else {
+                row.schemeId == periodTime.schemeId
+            }
+        }
+        val normalized = periodTime.copy(
+            termId = periodTime.termId ?: existing?.termId,
+            validStartDate = periodTime.validStartDate ?: existing?.validStartDate,
+            validEndDate = periodTime.validEndDate ?: existing?.validEndDate,
+            userModified = true,
+            updatedAtEpochMillis = now
+        )
+        val candidate = (scoped.filterNot { it.id == normalized.id } + normalized)
+        PeriodTimeEditor.requireValidPeriods(candidate)
+        dao.upsertPeriodTimes(listOf(normalized.toEntity()))
+        notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
+    }
+
+    /**
+     * 编辑器整组保存默认作息：增删节次与调整起止在同一事务内完成；
+     * 全组必须先通过单调递增且不重叠校验，任何非法项都不会产生半写入。
+     */
+    suspend fun saveBasePeriodTimes(
+        timeTableId: String,
+        periods: List<PeriodTime>
+    ) {
+        require(timeTableId.isNotBlank()) { "作息表标识不能为空" }
+        val now = System.currentTimeMillis()
+        val normalized = PeriodTimeEditor.requireValidPeriods(periods).map { period ->
+            period.copy(
+                id = period.id.ifBlank { "pt_user_${timeTableId}_${period.periodNo}" },
+                timeTableId = timeTableId,
+                schemeId = null,
+                termId = null,
+                validStartDate = null,
+                validEndDate = null,
+                userModified = true,
+                updatedAtEpochMillis = now
+            )
+        }
+        database.withTransaction {
+            dao.deleteBasePeriodTimesForTimeTable(timeTableId)
+            dao.upsertPeriodTimes(normalized.map { it.toEntity() })
+        }
+        notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
+    }
+
+    /** 删除默认作息或某方案内的单个节次；拒绝删除最后一节造成空作息。 */
+    suspend fun deletePeriodTime(periodTimeId: String) {
+        val all = dao.getPeriodTimesSnapshot().map { it.toDomain() }
+        val target = all.firstOrNull { it.id == periodTimeId } ?: return
+        val scoped = all.filter { row ->
+            if (target.schemeId == null) {
+                row.timeTableId == target.timeTableId && row.schemeId == null
+            } else {
+                row.schemeId == target.schemeId
+            }
+        }
+        val remaining = scoped.filterNot { it.id == periodTimeId }
+        PeriodTimeEditor.requireValidPeriods(remaining, emptyMessage = "不能删除最后一节")
+        val deleted = dao.deletePeriodTimeById(periodTimeId)
+        if (deleted > 0) notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
+    }
+
+    /**
+     * 保存一套按日期区间生效的作息方案。方案元数据与全部节次行同事务写入；
+     * 日期区间与同学期其他方案重叠、节次倒序/重叠/为空时整体拒绝。
+     */
+    suspend fun savePeriodTimeScheme(
+        term: Term,
+        name: String,
+        startDate: LocalDate,
+        endDate: LocalDate,
+        periods: List<PeriodTime>,
+        schemeId: String? = null
+    ): String {
+        require(term.id.isNotBlank()) { "学期不能为空" }
+        require(term.timeTableId.isNotBlank()) { "学期作息表标识不能为空" }
+        val existingSchemes = dao.getPeriodTimeSchemesSnapshot()
+            .map { it.toDomain() }
+            .filter { it.termId == term.id }
+        PeriodTimeEditor.requireValidScheme(
+            name = name,
+            startDate = startDate,
+            endDate = endDate,
+            periods = periods,
+            existingSchemes = existingSchemes,
+            editingSchemeId = schemeId
+        )
+        val now = System.currentTimeMillis()
+        val id = schemeId ?: "pts_${UUID.randomUUID().toString().take(12)}"
+        val previous = existingSchemes.firstOrNull { it.id == id }
+        val scheme = PeriodTimeScheme(
+            id = id,
+            termId = term.id,
+            timeTableId = term.timeTableId,
+            name = name.trim(),
+            startDate = startDate,
+            endDate = endDate,
+            userModified = true,
+            createdAtEpochMillis = previous?.createdAtEpochMillis ?: now,
+            updatedAtEpochMillis = now
+        )
+        val rows = PeriodTimeEditor.requireValidPeriods(periods).map { period ->
+            period.copy(
+                id = "${id}_period_${period.periodNo}",
+                timeTableId = term.timeTableId,
+                schemeId = id,
+                termId = term.id,
+                validStartDate = startDate,
+                validEndDate = endDate,
+                userModified = true,
+                updatedAtEpochMillis = now
+            )
+        }
+        database.withTransaction {
+            dao.upsertPeriodTimeSchemes(listOf(scheme.toEntity()))
+            dao.deletePeriodTimesForScheme(id)
+            dao.upsertPeriodTimes(rows.map { it.toEntity() })
+        }
+        notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
+        return id
+    }
+
+    suspend fun deletePeriodTimeScheme(schemeId: String) {
+        require(schemeId.isNotBlank()) { "作息方案标识不能为空" }
+        database.withTransaction {
+            dao.deletePeriodTimesForScheme(schemeId)
+            dao.deletePeriodTimeSchemeById(schemeId)
+        }
         notifyScheduleOrPolicyChanged("PERIOD_TIME_CHANGED")
     }
 
@@ -456,7 +596,17 @@ class TermRepository internal constructor(
                 }
             }
             if (sectionTimes.isNotEmpty()) {
-                dao.upsertPeriodTimes(sectionTimes.map { it.toEntity() })
+                val normalized = PeriodTimeEditor.requireValidPeriods(sectionTimes).map { period ->
+                    period.copy(
+                        schemeId = null,
+                        termId = null,
+                        validStartDate = null,
+                        validEndDate = null,
+                        userModified = true,
+                        updatedAtEpochMillis = System.currentTimeMillis()
+                    )
+                }
+                dao.upsertPeriodTimes(normalized.map { it.toEntity() })
             }
         }
         notifyScheduleOrPolicyChanged("INTERCHANGE_CALENDAR_APPLIED")

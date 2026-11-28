@@ -207,7 +207,9 @@ object CampusStudyRoomCatalog {
         val activePeriods = if (timeTableId.isNullOrBlank()) {
             emptyList()
         } else {
-            periodTimes.filter { it.timeTableId == timeTableId }
+            // 该入口没有日期/学期上下文，只用默认参考作息估计自习槽位；
+            // 方案行由 ScheduleEngine 在真实日期展开时选择，避免多套方案在同一列表中混排。
+            periodTimes.filter { it.timeTableId == timeTableId && it.schemeId == null }
         }
         val usedFallback = activePeriods.isEmpty()
         val effectivePeriods = if (usedFallback) FALLBACK_STUDY_PERIOD_TIMES else activePeriods
@@ -526,9 +528,7 @@ object CampusStudyRoomCatalog {
         }
         val courseIds = courses.mapTo(HashSet()) { it.id }
         val rulesById = rules.associateBy { it.id }
-        val periodMap = periodTimes
-            .filter { it.timeTableId == term.timeTableId }
-            .associateBy { it.periodNo }
+        val periodMap = ScheduleEngine.periodMapAcrossSchemes(term, periodTimes)
 
         val termRules = rules.filter { it.termId == term.id }
         val termOverrides = occurrenceOverrides.filter { it.termId == term.id }
