@@ -1463,6 +1463,19 @@ class CampusRepository internal constructor(
     suspend fun refreshXpeachWalletBalance(): Double? =
         cloudIdentityRepository.refreshXpeachWalletBalance()
 
+    /**
+     * W4-12 E2EE 同步客户端专用令牌解析缝。返回值是 bearer token 明文，调用方只能放入当前 HTTPS 请求的
+     * Authorization 头；严禁持久化、写入日志、进入备份/诊断或传给插件。令牌刷新与身份世代复核仍由
+     * CloudIdentityRepository 统一执行。
+     */
+    suspend fun resolveCloudAccessTokenForE2eeSync(
+        forceRefresh: Boolean = false,
+        failedAccessToken: String? = null
+    ): String = cloudIdentityRepository.resolveValidCloudAccessToken(
+        forceRefresh = forceRefresh,
+        failedAccessToken = failedAccessToken
+    )
+
 
     /**
      * 与 https://campus.yellowpeachxgp.com 双向同步。实现已迁至 SyncOrchestrator，门面仅立即委托。

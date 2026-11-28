@@ -317,6 +317,47 @@ class VaultBackupService(
         )
     }
 
+    /** W4-12 专用一致性快照入口；仍是 dis-backup 表目录，不改成云同步专用数据模型。 */
+    internal suspend fun captureArchiveForSync(): PreparedBackupArchive = database.withTransaction {
+        captureArchive(BackupTableCatalog.policies)
+    }
+
+    internal fun currentSchemaVersionForSync(): Int = currentSchemaVersion()
+
+    /** 按 typed primary key 精准读取一行；返回值仍含本机 scope，sync 层负责规范化/本地化。 */
+    internal fun readRowForSync(
+        policy: BackupTablePolicy,
+        primaryKeyCells: Map<String, BackupCell>
+    ): Pair<BackupRow, Map<String, ByteArray>>? {
+        if (primaryKeyCells.keys != policy.primaryKeys.toSet()) {
+            throw BackupValidationException("同步读取主键列集合不一致: " + policy.table)
+        }
+        val schema = readTableSchema(policy)
+        val selectColumns = schema.backupColumns.joinToString(",") { quoteIdentifier(it.name) }
+        val where = policy.primaryKeys.joinToString(" AND ") { quoteIdentifier(it) + " = ?" }
+        val args = policy.primaryKeys.map { column ->
+            when (val cell = primaryKeyCells.getValue(column)) {
+                BackupCell.NullValue -> null
+                is BackupCell.LongValue -> cell.value
+                is BackupCell.DoubleValue -> cell.value
+                is BackupCell.TextValue -> cell.value
+                is BackupCell.BlobValue -> throw BackupValidationException("blob 不能作为同步读取主键")
+            }
+        }.toTypedArray()
+        val blobs = LinkedHashMap<String, ByteArray>()
+        sqlite.query(
+            "SELECT " + selectColumns + " FROM " + quoteIdentifier(policy.table) + " WHERE " + where + " LIMIT 1",
+            args
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            val cells = LinkedHashMap<String, BackupCell>()
+            schema.backupColumns.forEachIndexed { index, column ->
+                cells[column.name] = readCell(cursor, index, blobs)
+            }
+            return BackupRow(cells) to blobs
+        }
+    }
+
     private suspend fun collectRestoreRefs(prepared: PreparedBackupArchive): List<EntityRef> {
         val courseIds = linkedSetOf<String>()
         val ruleToCourse = linkedMapOf<String, String>()
@@ -562,6 +603,72 @@ class VaultBackupService(
         return blobs
     }
 
+    /** 应用一批已通过客户端冲突检查的远端同步行；业务行、journal、outbox 与搜索投影保持同事务。 */
+    internal suspend fun writeRowsForE2eeSync(
+        upserts: List<BackupSyncRowUpsert>,
+        deletes: List<BackupSyncRowDelete>
+    ): Int {
+        if (upserts.isEmpty() && deletes.isEmpty()) return 0
+        return journal.writeMany(
+            refsProvider = {
+                (upserts.mapNotNull(::entityRefForUpsert) + deletes.mapNotNull(::entityRefForDelete)).distinct()
+            },
+            actor = Actor.SYNC,
+            actorDetail = "e2ee-cloud-sync",
+            source = null,
+            writeGroupId = null
+        ) {
+            var applied = 0
+            upserts.forEach { input ->
+                val schema = readTableSchema(input.policy)
+                val inputTable = BackupTableData(input.policy, schema.backupColumns, listOf(input.row))
+                val validatedTable = validateTableAgainstCurrentSchema(inputTable)
+                upsertRow(validatedTable, validatedTable.rows.single(), schema, input.blobs)
+                applied++
+            }
+            deletes.forEach { input ->
+                deleteRowInternal(input.policy, input.primaryKeyCells)
+                applied++
+            }
+            applied
+        }
+    }
+
+    private fun entityRefForUpsert(input: BackupSyncRowUpsert): EntityRef? =
+        entityRefForCells(input.policy, input.row.cells)
+
+    private fun entityRefForDelete(input: BackupSyncRowDelete): EntityRef? =
+        entityRefForCells(input.policy, input.primaryKeyCells)
+
+    private fun entityRefForCells(policy: BackupTablePolicy, cells: Map<String, BackupCell>): EntityRef? {
+        val type = policy.entityType ?: return null
+        val primaryKeyColumn = policy.primaryKeys.singleOrNull() ?: return null
+        val id = (cells[primaryKeyColumn] as? BackupCell.TextValue)?.value?.takeIf { it.isNotBlank() } ?: return null
+        return EntityRef(type, id, scope)
+    }
+
+    private fun deleteRowInternal(policy: BackupTablePolicy, primaryKeyCells: Map<String, BackupCell>) {
+        if (primaryKeyCells.keys != policy.primaryKeys.toSet()) {
+            throw BackupValidationException("同步删除主键列集合不一致: " + policy.table)
+        }
+        val where = policy.primaryKeys.joinToString(" AND ") { quoteIdentifier(it) + " = ?" }
+        val statement = sqlite.compileStatement("DELETE FROM " + quoteIdentifier(policy.table) + " WHERE " + where)
+        try {
+            policy.primaryKeys.forEachIndexed { index, column ->
+                when (val cell = primaryKeyCells.getValue(column)) {
+                    BackupCell.NullValue -> statement.bindNull(index + 1)
+                    is BackupCell.LongValue -> statement.bindLong(index + 1, cell.value)
+                    is BackupCell.DoubleValue -> statement.bindDouble(index + 1, cell.value)
+                    is BackupCell.TextValue -> statement.bindString(index + 1, cell.value)
+                    is BackupCell.BlobValue -> throw BackupValidationException("blob 不能作为同步删除主键")
+                }
+            }
+            statement.executeUpdateDelete()
+        } finally {
+            statement.close()
+        }
+    }
+
     private fun upsertRow(
         table: BackupTableData,
         row: BackupRow,
@@ -671,6 +778,17 @@ class VaultBackupService(
     private fun quoteIdentifier(identifier: String): String =
         "\"" + identifier.replace("\"", "\"\"") + "\""
 }
+
+internal data class BackupSyncRowUpsert(
+    val policy: BackupTablePolicy,
+    val row: BackupRow,
+    val blobs: Map<String, ByteArray>
+)
+
+internal data class BackupSyncRowDelete(
+    val policy: BackupTablePolicy,
+    val primaryKeyCells: Map<String, BackupCell>
+)
 
 internal fun backupProfileFingerprint(scope: SchoolAccountScope): String = Digests.sha256Hex(
     "dis-backup-profile/v1",
