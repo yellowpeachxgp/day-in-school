@@ -106,7 +106,9 @@ class DegreeAuditorTest {
         mapToGroupId = mapTo,
         reason = reason,
         actor = Actor.USER,
-        at = at
+        at = at,
+        planId = "demo-plan",
+        planVersion = "2023.1"
     )
 
     @Test
@@ -403,6 +405,19 @@ class DegreeAuditorTest {
         assertEquals("2024-2025", match.academicYear)
         assertEquals(1, match.termNumber)
         assertEquals(cn.edu.haut.campus.core.model.CourseSource.OFFICIAL_JW, match.gradeSource)
+    }
+
+
+    @Test
+    fun completelyUnboundOverrideIsInert() {
+        val plan = planFixture()
+        val attempts = listOf(PlanFixtures.attempt("ART101", name = "艺术鉴赏", credits = "2", id = "ov-unbound"))
+        val unbound = makeOverride("o-unbound", "ov-unbound", OverrideAction.ASSIGN, "open", "缺少方案维度的历史对象")
+            .copy(planImportId = null, planId = null, planVersion = null)
+        val report = DegreeAuditor.audit(plan, attempts, listOf(unbound), now)
+        PlanFixtures.assertAmount("0", report.groupById("open")!!.earnedCredits)
+        assertEquals(1, report.unclassified.size)
+        assertTrue(report.trace.any { it.rule == "override-plan-mismatch" })
     }
 
 }

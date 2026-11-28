@@ -650,7 +650,7 @@ object DegreeAuditor {
 
     private fun overrideApplies(override: AuditOverride, plan: TrainingPlan, planImportId: String?): Boolean {
         val hasBinding = override.planImportId != null || override.planId != null || override.planVersion != null
-        if (!hasBinding) return true
+        if (!hasBinding) return false
         if (override.planId != null && override.planId != plan.id) return false
         if (override.planVersion != null && override.planVersion != plan.version) return false
         if (override.planImportId != null) {

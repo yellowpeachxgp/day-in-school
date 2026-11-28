@@ -93,7 +93,10 @@ class DegreeViewModelTest {
                 mapToGroupId = input.mapToGroupId,
                 reason = input.reason,
                 actor = actor,
-                at = Instant.parse("2026-02-01T00:00:00Z")
+                at = Instant.parse("2026-02-01T00:00:00Z"),
+                planImportId = "tpl-fake",
+                planId = "fake-plan",
+                planVersion = "1"
             )
             overrides += override
             return override
