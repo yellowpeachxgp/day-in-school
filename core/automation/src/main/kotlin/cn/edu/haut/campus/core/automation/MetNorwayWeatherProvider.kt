@@ -98,7 +98,8 @@ data class WeatherCachedResponse(
     val fetchedAt: Instant,
     val cacheExpiresAt: Instant,
     val nextRequestAt: Instant,
-    val contentRevision: String? = null
+    val contentRevision: String? = null,
+    val usableAsEvidence: Boolean = true
 ) {
     init {
         require(body.isNotBlank() && body.length <= MAX_WEATHER_RESPONSE_CHARS) { "天气缓存响应为空或过大" }
@@ -204,7 +205,8 @@ class MetNorwayWeatherProvider(
             fetchedAt = now,
             cacheExpiresAt = cacheExpiresAt,
             nextRequestAt = now.plus(MIN_IDENTICAL_REQUEST_INTERVAL),
-            contentRevision = updatedAt.toString()
+            contentRevision = updatedAt.toString(),
+            usableAsEvidence = headerExpiresAt == null || headerExpiresAt.isAfter(now)
         )
         try {
             cacheStore.write(cacheKey, cachedResponse)
@@ -226,6 +228,9 @@ class MetNorwayWeatherProvider(
         request: WeatherForecastRequest
     ): WeatherProviderResult {
         return try {
+            if (!cached.usableAsEvidence) {
+                return unavailable(WeatherUnavailableReason.INVALID_RESPONSE, "缓存的 MET Norway 响应在获取时已过期，不能作为天气证据")
+            }
             val snapshot = parseLocationForecastSnapshot(
                 body = cached.body,
                 location = location,

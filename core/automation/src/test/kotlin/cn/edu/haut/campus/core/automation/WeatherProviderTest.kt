@@ -86,6 +86,29 @@ class WeatherProviderTest {
     }
 
     @Test
+    fun cacheMarkedNonEvidenceNeverBecomesWeatherEvidenceAgain() = runTest {
+        val transport = RecordingTransport()
+        val poisoned = WeatherCachedResponse(
+            body = COMPACT_FIXTURE,
+            fetchedAt = now.minusSeconds(600),
+            cacheExpiresAt = now.plusSeconds(3600),
+            nextRequestAt = now.plusSeconds(3 * 3600),
+            usableAsEvidence = false
+        )
+        val provider = MetNorwayWeatherProvider(
+            transport = transport,
+            cacheStore = StaticWeatherCacheStore(poisoned),
+            clock = Clock.fixed(now.minusSeconds(300), ZoneOffset.UTC)
+        )
+
+        val result = provider.forecast(request(termsAccepted = true))
+
+        val unavailable = result as WeatherProviderResult.Unavailable
+        assertEquals(WeatherUnavailableReason.INVALID_RESPONSE, unavailable.reason)
+        assertEquals(0, transport.urls.size)
+    }
+
+    @Test
     fun corruptedCachedResponseIsInvalidAndDoesNotNetworkAgain() = runTest {
         val transport = RecordingTransport()
         val corrupted = WeatherCachedResponse(

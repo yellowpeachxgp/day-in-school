@@ -144,7 +144,8 @@ private fun encodeCachedResponse(value: WeatherCachedResponse): String = Json.ca
             "body" to JsonValue.Str(value.body),
             "fetchedAtEpochMs" to JsonValue.Num(value.fetchedAt.toEpochMilli().toString()),
             "cacheExpiresAtEpochMs" to JsonValue.Num(value.cacheExpiresAt.toEpochMilli().toString()),
-            "nextRequestAtEpochMs" to JsonValue.Num(value.nextRequestAt.toEpochMilli().toString())
+            "nextRequestAtEpochMs" to JsonValue.Num(value.nextRequestAt.toEpochMilli().toString()),
+            "usableAsEvidence" to JsonValue.Bool(value.usableAsEvidence)
         ) + (value.contentRevision?.let { mapOf("contentRevision" to JsonValue.Str(it)) } ?: emptyMap())
     )
 )
@@ -160,7 +161,8 @@ private fun decodeCachedResponse(text: String): WeatherCachedResponse? = runCatc
         fetchedAt = fetchedAt,
         cacheExpiresAt = cacheExpiresAt,
         nextRequestAt = nextRequestAt,
-        contentRevision = root.str("contentRevision")
+        contentRevision = root.str("contentRevision"),
+        usableAsEvidence = root.obj("usableAsEvidence")?.boolOrNull() ?: true
     )
 }.getOrNull()
 
