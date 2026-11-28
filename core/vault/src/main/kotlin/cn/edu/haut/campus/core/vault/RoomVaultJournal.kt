@@ -300,12 +300,19 @@ class RoomVaultJournal(
             revertedByChangeId = null,
             eventId = eventId
         )
-        val envelope = toEventEnvelope(change)
+        val envelopes = buildList {
+            add(toEventEnvelope(change))
+            CourseCancellationEventProjector.project(change)?.let { courseEvent ->
+                add(DomainEventCodecRegistry.DEFAULT.encode(courseEvent))
+            }
+        }
         val roomOutbox = outbox as? RoomEventOutbox
-        if (roomOutbox != null) {
-            roomOutbox.appendDeferred(envelope)
-        } else {
-            outbox.append(envelope)
+        for (envelope in envelopes) {
+            if (roomOutbox != null) {
+                roomOutbox.appendDeferred(envelope)
+            } else {
+                outbox.append(envelope)
+            }
         }
         return change
     }

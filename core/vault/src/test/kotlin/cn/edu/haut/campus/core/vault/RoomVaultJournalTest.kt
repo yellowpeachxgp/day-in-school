@@ -9,6 +9,8 @@ import cn.edu.haut.campus.core.database.GradeAttemptEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.database.OccurrenceOverrideEntity
 import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.events.InMemoryEventOutbox
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
@@ -19,6 +21,7 @@ import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import cn.edu.haut.campus.core.model.json.JsonValue
 import java.time.Instant
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -95,6 +98,130 @@ class RoomVaultJournalTest {
         assertTrue(events.all { it.envelope.eventType == "vault.entity.changed" })
         assertTrue(events[0].envelope.payload.text.contains("changeId"))
         assertFalse(events[0].envelope.payload.text.contains("高等数学"))
+    }
+
+    @Test
+    fun cancellationAndRestoreWritesPublishTypedCourseChangedEvents() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(listOf(overrideRow("token-1")))
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(listOf(overrideRow("token-2").copy(canceled = false, reason = null)))
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().deleteOccurrenceOverrideById("ov-1")
+        }
+
+        val courseEvents = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+
+        assertEquals(3, courseEvents.size)
+        assertTrue(courseEvents.all { it.courseRef == courseRef })
+        val cancelChange = courseEvents[0].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.ADDED, cancelChange.kind)
+        assertEquals(JsonValue.Bool(true), cancelChange.after)
+        assertTrue(cancelChange.path.endsWith("/canceled"))
+        val restoreChange = courseEvents[1].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.MODIFIED, restoreChange.kind)
+        assertEquals(JsonValue.Bool(true), restoreChange.before)
+        assertEquals(JsonValue.Bool(false), restoreChange.after)
+        val removeChange = courseEvents[2].diff.changes.single()
+        assertEquals(cn.edu.haut.campus.core.model.FieldChangeKind.REMOVED, removeChange.kind)
+        assertEquals(JsonValue.Bool(false), removeChange.before)
+        assertNull(removeChange.after)
+    }
+
+    @Test
+    fun moveAndMergedSuppressionRowsDoNotPublishCourseChangedButIndependentCancelDoes() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(
+                    overrideRow("token-move-source").copy(
+                        id = "ov_move_source",
+                        canceled = true,
+                        reason = "已调至 2026-10-13",
+                        moveId = "move-1",
+                        moveRole = "SOURCE"
+                    ),
+                    overrideRow("token-move-target").copy(
+                        id = "ov_move_target",
+                        canceled = true,
+                        reason = "暂停调入课",
+                        moveId = "move-1",
+                        moveRole = "TARGET"
+                    ),
+                    overrideRow("token-merged").copy(
+                        id = "ov_merged_suppression",
+                        canceled = true,
+                        reason = "MERGED_INTO:rule-1"
+                    )
+                )
+            )
+        }
+        assertEquals(0, outbox.pendingUnacked("automation").count { it.envelope.eventType == "course.changed" })
+
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-real-cancel").copy(id = "ov_real_cancel", canceled = true, reason = "单次停课"))
+            )
+        }
+
+        val courseEvents = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+        assertEquals(1, courseEvents.size)
+        assertEquals(JsonValue.Bool(true), courseEvents.single().diff.changes.single().after)
+        assertTrue(courseEvents.single().diff.changes.single().path.contains("ov_real_cancel"))
+    }
+
+    @Test
+    fun editThenCancelReplacementUsesStableOverrideIdsAndDoesNotRollback() = runBlocking {
+        val outbox = InMemoryEventOutbox()
+        val journal = newJournal(outbox)
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertCourse(courseRow())
+        }
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-edit").copy(id = "ov_mod", canceled = false, reason = "单次调课"))
+            )
+        }
+
+        // 与真实「先调课后停课」路径一致：同一写事务先删除 ov_mod，再插入 ov_cancel。
+        // 早期用数组下标生成 diff 时二者常同下标，FieldDiff 重复路径会让整个写入回滚。
+        journal.write(courseRef, Actor.USER) {
+            database.campusDao().deleteOccurrenceOverrideById("ov_mod")
+            database.campusDao().upsertOccurrenceOverrides(
+                listOf(overrideRow("token-cancel").copy(id = "ov_cancel", canceled = true, reason = "单次停课"))
+            )
+        }
+
+        val rows = database.campusDao().getOccurrenceOverridesSnapshot()
+        assertEquals(listOf("ov_cancel"), rows.map { it.id })
+        assertEquals(true, rows.single().canceled)
+        val replacementEvent = outbox.pendingUnacked("automation")
+            .filter { it.envelope.eventType == "course.changed" }
+            .map { DomainEventCodecRegistry.DEFAULT.decode(it.envelope) as DomainEvent.CourseChanged }
+            .last()
+        val paths = replacementEvent.diff.changes.map { it.path }
+        assertEquals(2, paths.size)
+        assertEquals(paths.toSet().size, paths.size)
+        assertTrue(paths.any { it.contains("byId/ov_mod/canceled") })
+        assertTrue(paths.any { it.contains("byId/ov_cancel/canceled") })
+        val cancelChange = replacementEvent.diff.changes.single { it.path.contains("ov_cancel") }
+        assertEquals(JsonValue.Bool(true), cancelChange.after)
     }
 
     @Test

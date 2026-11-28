@@ -46,8 +46,8 @@ sealed interface TriggerExecutionResult {
 }
 
 interface AutomationEngine {
-    /** 试运行：求值规则并预览动作，但不调用 ActionExecutor、不写 dedupe/run/checkpoint store。 */
-    suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun
+    /** 试运行：求值规则并预览动作，但不调用 ActionExecutor、不写 dedupe/run/checkpoint store。triggerEvent 用于事件类模板的高保真试运行。 */
+    suspend fun dryRun(rule: AutomationRule, at: Instant, triggerEvent: cn.edu.haut.campus.core.events.DomainEvent? = null): AutomationRun
 
     /**
      * 首期幂等键严格由 ruleId + triggerInstanceKey 派生；同一触发实例只能执行一次。
@@ -103,15 +103,21 @@ class DefaultAutomationEngine(
         }
     }
 
-    override suspend fun dryRun(rule: AutomationRule, at: Instant): AutomationRun {
+    override suspend fun dryRun(
+        rule: AutomationRule,
+        at: Instant,
+        triggerEvent: cn.edu.haut.campus.core.events.DomainEvent?
+    ): AutomationRun {
         val triggerKey = AutomationKeys.dryRunTriggerInstanceKey(rule.id, at)
         val instance = TriggerInstance(
             ruleId = rule.id,
             triggerInstanceKey = triggerKey,
             firedAt = at,
+            event = triggerEvent,
             source = "dry-run"
         )
-        return executeRule(rule, instance, dryRun = true, executionFence = null)
+        val boundInstance = if (triggerEvent != null) bindDomainEventInstance(rule, instance) else instance
+        return executeRule(rule, boundInstance, dryRun = true, executionFence = null)
     }
 
     override suspend fun onTrigger(ruleId: String, triggerInstanceKey: String) {
