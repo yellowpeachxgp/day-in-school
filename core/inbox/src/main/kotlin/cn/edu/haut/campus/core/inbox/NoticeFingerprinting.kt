@@ -122,11 +122,9 @@ object NoticeFingerprintFactory {
     private fun appendField(out: StringBuilder, name: String, value: String?) {
         out.append(name).append('|')
         if (value == null) {
-            out.append('0').append('
-')
+            out.append('0').append('\n')
         } else {
-            out.append('1').append(value.length).append(':').append(value).append('
-')
+            out.append('1').append(value.length).append(':').append(value).append('\n')
         }
     }
 
