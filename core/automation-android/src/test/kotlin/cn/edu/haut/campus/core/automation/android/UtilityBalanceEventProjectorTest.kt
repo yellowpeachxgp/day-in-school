@@ -100,7 +100,7 @@ class UtilityBalanceEventProjectorTest {
         )
     }
 
-    private fun decodeUtilityEvents(): List<DomainEvent.UtilityBalanceSampled> =
+    private suspend fun decodeUtilityEvents(): List<DomainEvent.UtilityBalanceSampled> =
         database.vaultDao().getOutboxSnapshot().mapNotNull { row ->
             if (row.eventType != "utility.balance.sampled") return@mapNotNull null
             runCatching {
