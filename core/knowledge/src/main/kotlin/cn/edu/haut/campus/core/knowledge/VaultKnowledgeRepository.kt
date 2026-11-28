@@ -405,10 +405,27 @@ class VaultKnowledgeRepository internal constructor(
 
     private fun unitMatchesNormalizedText(normalizedText: String, unit: String, isQueryTail: Boolean): Boolean {
         if (unit.any(::isCjkCharacter)) return normalizedText.contains(unit)
-        return normalizedText.split(' ').filter { it.isNotBlank() }.any { token ->
-            token == unit || (isQueryTail && unit.length >= 3 && token.startsWith(unit))
+        var index = normalizedText.indexOf(unit)
+        while (index >= 0) {
+            val end = index + unit.length
+            val leftBoundary = index == 0 ||
+                normalizedText[index - 1].isWhitespace() ||
+                isCjkCharacter(normalizedText[index - 1])
+            val rightBoundary = end == normalizedText.length ||
+                normalizedText[end].isWhitespace() ||
+                isCjkCharacter(normalizedText[end])
+            val tailPrefixContinuation = isQueryTail &&
+                unit.length >= 3 &&
+                end < normalizedText.length &&
+                isAsciiWordCharacter(normalizedText[end])
+            if (leftBoundary && (rightBoundary || tailPrefixContinuation)) return true
+            index = normalizedText.indexOf(unit, index + 1)
         }
+        return false
     }
+
+    private fun isAsciiWordCharacter(char: Char): Boolean =
+        char in 'a'..'z' || char in '0'..'9' || char == '_'
 
     private fun isCjkCharacter(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
         Character.UnicodeScript.HAN,

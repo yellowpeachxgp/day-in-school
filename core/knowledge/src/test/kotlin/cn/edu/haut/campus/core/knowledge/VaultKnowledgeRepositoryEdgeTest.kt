@@ -265,6 +265,28 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertNull(hits[0].lineIndex)
     }
 
+    @Test
+    fun asciiTermAdjacentToCjkKeepsExactLineAndPageLocation() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 1, "缓存CPU指令"))
+        repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.PDF,
+                title = "CPU 指令课件",
+                note = null,
+                fileName = "cpu.pdf",
+                mimeType = "application/pdf",
+                contentBytes = byteArrayOf(7, 8, 9)
+            )
+        )
+        val hits = repository.searchMaterials(scope, "CPU")
+        assertEquals(1, hits.size)
+        assertEquals(1, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+        assertNotNull(hits[0].bounds)
+    }
+
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
         ArchiveMaterialRequest(
             scope = scope,
