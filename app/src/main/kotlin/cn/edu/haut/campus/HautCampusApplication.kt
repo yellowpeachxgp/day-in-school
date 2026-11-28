@@ -31,7 +31,7 @@ class HautCampusApplication : Application() {
             WeekAppWidgetProvider::class.java,
             ParcelAppWidgetProvider::class.java
         )
-        VaultRuntimeInstaller.install()
+        VaultRuntimeInstaller.install(BuildConfig.VERSION_NAME)
         val sessions = AccountSessionCoordinator.getInstance(this)
         sessions.registerLifecycleHook(
             key = "extension_plugin_security_wipe",

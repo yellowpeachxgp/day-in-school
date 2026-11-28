@@ -16,7 +16,12 @@ import cn.edu.haut.campus.core.model.SchoolId
  * database 模块随后通过依赖反转端口拿到 RoomVaultJournal；单元测试仍可直接用本模块构造器。
  */
 object VaultRuntimeInstaller {
-    fun install() {
+    @Volatile
+    private var appVersionName: String = "unknown"
+
+    fun install(appVersionName: String = "unknown") {
+        require(appVersionName.isNotBlank() && appVersionName.length <= 128) { "appVersionName 非法" }
+        this.appVersionName = appVersionName
         AcademicEntityWritePortRegistry.installFactory(VaultAcademicWritePortFactory)
     }
 
@@ -43,7 +48,18 @@ object VaultRuntimeInstaller {
     }
 
     private object VaultAcademicWritePortFactory : AcademicEntityWritePortFactory {
-        override fun create(database: HautDatabase, accountProfile: AccountProfileEntity): AcademicEntityWritePort =
-            createJournal(database)
+        override fun create(database: HautDatabase, accountProfile: AccountProfileEntity): AcademicEntityWritePort {
+            val journal = createJournal(database)
+            VaultBackupServiceRegistry.register(
+                profileId = accountProfile.id,
+                service = VaultBackupService(
+                    database = database,
+                    scope = accountScope(accountProfile),
+                    journal = journal,
+                    appVersion = appVersionName
+                )
+            )
+            return journal
+        }
     }
 }
