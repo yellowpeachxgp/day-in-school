@@ -6,16 +6,17 @@ import cn.edu.haut.campus.core.community.CommunityHttpRequest
 import cn.edu.haut.campus.core.community.CommunityHttpResponse
 import cn.edu.haut.campus.core.community.CommunitySessionSnapshot
 import cn.edu.haut.campus.core.community.CommunityTransport
-import cn.edu.haut.campus.core.model.SchoolAccountScope
-import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.ProfileId
+import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.json.Json
+import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.feature.dorm.data.CommunityDormCollaborationAdapter
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
-import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 class CommunityDormCollaborationAdapterTest {
@@ -50,7 +51,7 @@ class CommunityDormCollaborationAdapterTest {
         assertTrue(create.url.contains("/api/v1/groups/" + groupId + "/ledger/entries"))
         assertEquals("test-idempotency-key", create.headers["Idempotency-Key"])
         val body = Json.parse(create.body.orEmpty()).asObjOrNull ?: error("request body must be object")
-        assertEquals("1000", body.fields["amount_fen"]?.let { (it as? cn.edu.haut.campus.core.model.json.JsonValue.Num)?.literal })
+        assertEquals("1000", (body.fields.getValue("amount_fen") as JsonValue.Num).literal)
         assertEquals("EQUAL", body.obj("split_rule")?.str("type"))
     }
 
@@ -99,16 +100,17 @@ class CommunityDormCollaborationAdapterTest {
         }
     }
 
-    private fun envelope(dataJson: String): String = "{"ok":true,"code":"OK","request_id":"req","data":" + dataJson + ","meta":{"request_id":"req","api_version":"v1","next_cursor":null}}"
+    private fun envelope(dataJson: String): String =
+        """{"ok":true,"code":"OK","request_id":"req","data":""" + dataJson + ""","meta":{"request_id":"req","api_version":"v1","next_cursor":null}}"""
 
     private fun jsonMembers(): String = "[" + listOf(member1, member2, member3).joinToString(",") { id ->
-        "{"member_id":"" + id + "","group_id":"" + groupId + "","school_id":"haut","cloud_user_id":"10000000-0000-4000-8000-000000000001","display_name":"合成成员","role":"MEMBER","sharing_level":"NONE","status":"ACTIVE","joined_at":"2026-11-01T00:00:00Z","left_at":null}"
+        """{"member_id":""" + id + ""","group_id":""" + groupId + ""","school_id":"haut","cloud_user_id":"10000000-0000-4000-8000-000000000001","display_name":"合成成员","role":"MEMBER","sharing_level":"NONE","status":"ACTIVE","joined_at":"2026-11-01T00:00:00Z","left_at":null}"""
     } + "]"
 
     private fun jsonLedgerEntry(shares: List<Long>): String {
         val shareJson = listOf(member1, member2, member3).mapIndexed { index, id ->
-            "{"participant_member_id":"" + id + "","amount_fen":" + shares[index] + "}"
+            """{"participant_member_id":""" + id + ""","amount_fen":""" + shares[index] + """}"""
         }.joinToString(",")
-        return "{"entry_id":"20000000-0000-4000-8000-000000000001","group_id":"" + groupId + "","school_id":"haut","entry_kind":"EXPENSE","corrects_entry_id":null,"correction_reason":null,"title":"公共洗衣液","note":null,"amount_fen":1000,"paid_by_member_id":"" + member1 + "","occurred_at":"2026-11-20T12:00:00Z","split_rule":{"type":"EQUAL"},"shares":[" + shareJson + "],"created_by_member_id":"" + member1 + "","created_at":"2026-11-20T12:00:01Z"}"
+        return """{"entry_id":"20000000-0000-4000-8000-000000000001","group_id":""" + groupId + ""","school_id":"haut","entry_kind":"EXPENSE","corrects_entry_id":null,"correction_reason":null,"title":"公共洗衣液","note":null,"amount_fen":1000,"paid_by_member_id":""" + member1 + ""","occurred_at":"2026-11-20T12:00:00Z","split_rule":{"type":"EQUAL"},"shares":[""" + shareJson + """],"created_by_member_id":""" + member1 + ""","created_at":"2026-11-20T12:00:01Z"}"""
     }
 }
