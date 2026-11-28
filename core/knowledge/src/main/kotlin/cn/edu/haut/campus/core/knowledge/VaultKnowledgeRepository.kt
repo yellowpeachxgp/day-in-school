@@ -73,7 +73,7 @@ class VaultKnowledgeRepository internal constructor(
         ) {
             val rawRef = blobStore.put(
                 content = request.contentBytes.copyOf(),
-                mimeType = request.mimeType,
+                mimeType = RAW_CONTENT_MIME,
                 scope = scope,
                 owner = null
             )
@@ -135,7 +135,7 @@ class VaultKnowledgeRepository internal constructor(
             )
             materialDocuments.writeDocument(materialId, encodeCourseMaterialDocument(material))
             searchProjector.replace(existing, material, extraction?.payload?.lines)
-            upsertDeadlineIfNeeded(material, actor)
+            reconcileDeadline(existing, material, actor)
             material
         }
     }
@@ -164,12 +164,17 @@ class VaultKnowledgeRepository internal constructor(
         requireScope(scope)
         require(limit in 1..50) { "知识搜索 limit 必须在 1..50" }
         if (text.isBlank()) return emptyList()
+        val facetFilters = buildMap {
+            courseId?.let { put("courseId", it) }
+            teachingWeek?.let { put("teachingWeek", it.toString()) }
+        }
         val page = searchIndex.query(
             scope = scope,
             q = SearchQuery(
                 scope = scope,
                 text = text,
                 types = setOf(EntityType.COURSE_MATERIAL_PAGE),
+                facetEquals = facetFilters,
                 limit = (limit * 4).coerceAtMost(100)
             )
         )
@@ -289,8 +294,16 @@ class VaultKnowledgeRepository internal constructor(
         )
     }
 
-    private suspend fun upsertDeadlineIfNeeded(material: CourseMaterial, actor: Actor) {
-        val assignment = material.assignment ?: return
+    private suspend fun reconcileDeadline(oldMaterial: CourseMaterial?, material: CourseMaterial, actor: Actor) {
+        val assignment = material.assignment
+        if (assignment == null) {
+            val staleEventId = oldMaterial?.assignment?.timelineEventId
+                ?: oldMaterial?.assignment?.let { assignmentEventId(material.id) }
+            if (staleEventId != null) {
+                personalEventStore.delete(staleEventId, actor)
+            }
+            return
+        }
         val materialRef = material.ref
         val courseRef = material.course.courseRef(scope)
         val eventId = assignment.timelineEventId ?: assignmentEventId(material.id)
@@ -299,7 +312,7 @@ class VaultKnowledgeRepository internal constructor(
                 id = eventId,
                 scope = scope,
                 kind = TimelineKind.TASK_DUE,
-                title = "作业截止：" + material.title,
+                title = ("作业截止：" + material.title).take(256),
                 note = material.note,
                 start = assignment.dueAt,
                 end = null,
@@ -327,8 +340,6 @@ class VaultKnowledgeRepository internal constructor(
             return units.all { normalized.contains(it) }
         }
         return lines.firstOrNull { (pageIndex == null || it.pageIndex == pageIndex) && matches(it) }
-            ?: lines.firstOrNull { pageIndex == null || it.pageIndex == pageIndex }
-            ?: lines.firstOrNull()
     }
 
     private fun makeSnippet(text: String, query: String): String {
@@ -346,6 +357,7 @@ class VaultKnowledgeRepository internal constructor(
     }
 
     companion object {
+        const val RAW_CONTENT_MIME = "application/octet-stream"
         const val EXTRACTION_MIME = "application/vnd.dis.knowledge-extraction+json"
         const val MAX_EXTRACTION_PAYLOAD_BYTES = 7 * 1024 * 1024
         const val EXPORT_FORMAT = "dis-course-knowledge/v1"

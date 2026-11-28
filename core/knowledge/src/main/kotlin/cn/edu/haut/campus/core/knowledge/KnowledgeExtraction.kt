@@ -58,15 +58,23 @@ internal suspend fun prepareExtraction(
 
 internal fun prepareNoteExtraction(bytes: ByteArray): PreparedExtraction {
     val text = bytes.toString(Charsets.UTF_8)
-    val rows = text.split(10.toChar()).mapIndexed { index, raw ->
-        KnowledgeTextLine(
-            lineIndex = index,
-            pageIndex = 0,
-            text = raw.removeSuffix(13.toChar().toString()),
-            confidence = null,
-            bounds = null,
-            coordinateSpace = KnowledgeCoordinateSpace.TEXT_LINE
-        )
+    var extractionLineIndex = 0
+    val rows = buildList {
+        text.split(10.toChar()).forEach { raw ->
+            val logicalLine = raw.removeSuffix(13.toChar().toString())
+            logicalLine.chunked(16 * 1024).forEach { segment ->
+                add(
+                    KnowledgeTextLine(
+                        lineIndex = extractionLineIndex++,
+                        pageIndex = 0,
+                        text = segment,
+                        confidence = null,
+                        bounds = null,
+                        coordinateSpace = KnowledgeCoordinateSpace.TEXT_LINE
+                    )
+                )
+            }
+        }
     }.filter { it.text.isNotBlank() }
     val payload = KnowledgeExtractionPayload(plainText = text, lines = rows)
     return PreparedExtraction(

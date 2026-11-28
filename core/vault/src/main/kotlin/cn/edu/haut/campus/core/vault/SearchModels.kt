@@ -57,6 +57,7 @@ data class SearchQuery(
     val scope: SchoolAccountScope,
     val text: String,
     val types: Set<EntityType> = emptySet(),
+    val facetEquals: Map<String, String> = emptyMap(),
     val limit: Int = 20,
     val offset: Int = 0
 ) {
@@ -64,6 +65,10 @@ data class SearchQuery(
         require(text.length <= 512) { "搜索查询过长" }
         require(limit in 1..100) { "搜索 limit 必须在 1..100" }
         require(offset >= 0) { "搜索 offset 不能为负" }
+        require(facetEquals.keys.all { it.matches(Regex("[A-Za-z0-9_.-]{1,64}")) }) { "搜索 facet 键非法" }
+        require(facetEquals.values.all { it.length <= 256 && it.none { ch -> ch.isISOControl() || ch == '\"' || ch == '\\' } }) {
+            "搜索 facet 等值过滤值非法"
+        }
     }
 }
 

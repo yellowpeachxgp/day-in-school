@@ -184,6 +184,13 @@ class RoomSearchIndex(
             countArgs += campus.value
         }
         fromWhere.append(" AND search_docs.deleted = 0")
+        query.facetEquals.forEach { (key, value) ->
+            // facetsJson 由 canonical JSON 写入；键/值在本模型中禁止引号与反斜线，因此精确键值子串安全。
+            fromWhere.append(" AND instr(search_docs.facetsJson, ?) > 0")
+            val exactPair = "\"" + key + "\":\"" + value + "\""
+            args += exactPair
+            countArgs += exactPair
+        }
         if (query.types.isNotEmpty()) {
             fromWhere.append(" AND search_docs.entityType IN (")
             query.types.forEachIndexed { index, type ->
