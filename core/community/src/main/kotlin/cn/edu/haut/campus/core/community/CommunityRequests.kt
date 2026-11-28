@@ -49,7 +49,7 @@ data class CreateGroupRequest(
         requireText(schoolId, "school_id")
         requireWireEnum(type, setOf("study", "dorm", "club", "project"), "type")
         requireText(name, "name", 80)
-        requireOptionalText(description, "description", 500)
+        requireOptionalText(description, "description", 500, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -77,7 +77,7 @@ data class UpdateGroupRequest(
             require(description is JsonValue.Str || description == JsonValue.Null) {
                 "description 只能是字符串、JsonValue.Null 或省略"
             }
-            (description as? JsonValue.Str)?.let { requireText(it.value, "description", 500) }
+            (description as? JsonValue.Str)?.let { require(it.value.length <= 500) { "description 长度不能超过 500" } }
         }
     }
 
@@ -97,7 +97,7 @@ data class CreateGroupInviteRequest(
     init {
         requireIsoDateTime(expiresAt, "expires_at")
         require(maxUses in 1..1000) { "max_uses 必须在 1..1000" }
-        requireOptionalText(label, "label", 80)
+        requireOptionalText(label, "label", 80, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -164,6 +164,8 @@ data class GroupAvailabilityQueryRequest(
         require(granularityMinutes >= 30 && granularityMinutes % 30 == 0) { "granularity_minutes 必须是 30 的正整数倍" }
         requireAlignedInstantRange(windowStartAt, windowEndAt, "window_start_at", "window_end_at", granularityMinutes)
         require(durationMinutes >= 30 && durationMinutes % 30 == 0) { "duration_minutes 必须是 30 的正整数倍" }
+        val windowMillis = epochMillisIsoDateTime(windowEndAt) - epochMillisIsoDateTime(windowStartAt)
+        require(durationMinutes.toLong() * 60_000L <= windowMillis) { "duration_minutes 必须能放入查询窗口" }
         require(minAttendees >= 1) { "min_attendees 至少为 1" }
         require(memberIds.size <= 100 && memberIds.distinct().size == memberIds.size) {
             "member_ids 必须唯一且不超过 100 个"
@@ -307,7 +309,7 @@ data class CreateLedgerEntryRequest(
     init {
         requireWireEnum(entryKind, setOf("EXPENSE", "REFUND"), "entry_kind")
         requireText(title, "title", 120)
-        requireOptionalText(note, "note", 500)
+        requireOptionalText(note, "note", 500, allowBlank = true)
         require(amountFen != 0L) { "amount_fen 不能为 0" }
         requireUuid(paidByMemberId, "paid_by_member_id")
         requireIsoDateTime(occurredAt, "occurred_at")
@@ -367,7 +369,7 @@ data class CreateSettlementRequest(
         require(debtorMemberId != creditorMemberId) { "结算双方不能是同一成员" }
         require(amountFen >= 1L) { "amount_fen 至少为 1" }
         require(basisBalanceRevision >= 0L) { "basis_balance_revision 不能为负" }
-        requireOptionalText(note, "note", 240)
+        requireOptionalText(note, "note", 240, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -389,7 +391,7 @@ data class ConfirmSettlementRequest(val basisBalanceRevision: Long) : CommunityR
 }
 
 data class CancelSettlementRequest(val reason: String? = null) : CommunityRequestBody {
-    init { requireOptionalText(reason, "reason", 240) }
+    init { requireOptionalText(reason, "reason", 240, allowBlank = true) }
     override fun toJson(): JsonValue.Obj {
         val fields = jsonFields()
         fields.putString("reason", reason)
@@ -411,7 +413,7 @@ data class CreateDutyRotaRequest(
 ) : CommunityRequestBody {
     init {
         requireText(title, "title", 80)
-        requireOptionalText(description, "description", 500)
+        requireOptionalText(description, "description", 500, allowBlank = true)
         require(rotationMemberIds.size in 2..100 && rotationMemberIds.distinct().size == rotationMemberIds.size) {
             "rotation_member_ids 必须唯一且包含 2..100 个成员"
         }
@@ -462,7 +464,7 @@ data class UpdateDutyRotaRequest(
         requireOptionalText(title, "title", 80)
         if (description != null) {
             require(description is JsonValue.Str || description == JsonValue.Null) { "description 只能是字符串、Null 或省略" }
-            (description as? JsonValue.Str)?.let { requireText(it.value, "description", 500) }
+            (description as? JsonValue.Str)?.let { require(it.value.length <= 500) { "description 长度不能超过 500" } }
         }
         rotationMemberIds?.let {
             require(it.size in 2..100 && it.distinct().size == it.size) {
@@ -503,7 +505,7 @@ data class UpdateDutyRotaRequest(
 }
 
 data class CompleteDutyTaskRequest(val completionNote: String? = null) : CommunityRequestBody {
-    init { requireOptionalText(completionNote, "completion_note", 240) }
+    init { requireOptionalText(completionNote, "completion_note", 240, allowBlank = true) }
     override fun toJson(): JsonValue.Obj {
         val fields = jsonFields()
         fields.putString("completion_note", completionNote)
@@ -512,7 +514,7 @@ data class CompleteDutyTaskRequest(val completionNote: String? = null) : Communi
 }
 
 data class ConfirmDutyTaskRequest(val confirmationNote: String? = null) : CommunityRequestBody {
-    init { requireOptionalText(confirmationNote, "confirmation_note", 240) }
+    init { requireOptionalText(confirmationNote, "confirmation_note", 240, allowBlank = true) }
     override fun toJson(): JsonValue.Obj {
         val fields = jsonFields()
         fields.putString("confirmation_note", confirmationNote)
@@ -535,7 +537,7 @@ data class RequestDutySwapRequest(
         requireUuid(dutyTaskId, "duty_task_id")
         requireWireEnum(type, setOf("SWAP", "COVER"), "type")
         requireUuid(targetMemberId, "target_member_id")
-        requireOptionalText(reason, "reason", 240)
+        requireOptionalText(reason, "reason", 240, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -554,7 +556,7 @@ data class ResolveDutySwapRequest(
 ) : CommunityRequestBody {
     init {
         requireWireEnum(action, setOf("ACCEPT", "REJECT", "CANCEL"), "action")
-        requireOptionalText(resolutionNote, "resolution_note", 240)
+        requireOptionalText(resolutionNote, "resolution_note", 240, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -621,7 +623,7 @@ data class TransitionRepairStatusRequest(
 ) : CommunityRequestBody {
     init {
         requireWireEnum(toStatus, setOf("OPEN", "TRIAGED", "IN_PROGRESS", "RESOLVED", "REJECTED", "CLOSED"), "to_status")
-        requireOptionalText(note, "note", 500)
+        requireOptionalText(note, "note", 500, allowBlank = true)
         assignedMemberId?.let { requireUuid(it, "assigned_member_id") }
     }
 
@@ -640,7 +642,7 @@ data class SubmitRepairReviewRequest(
 ) : CommunityRequestBody {
     init {
         require(rating in 1..5) { "rating 必须在 1..5" }
-        requireOptionalText(comment, "comment", 500)
+        requireOptionalText(comment, "comment", 500, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -676,7 +678,7 @@ data class CreatePlaceStatusReportRequest(
         } else {
             require(correctsReportId == null) { "OBSERVATION 不允许 corrects_report_id" }
         }
-        requireOptionalText(note, "note", 280)
+        requireOptionalText(note, "note", 280, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -773,7 +775,7 @@ data class CreatePlaceReportFlagRequest(
 ) : CommunityRequestBody {
     init {
         requireWireEnum(reason, setOf("INCORRECT", "STALE", "ABUSE", "PII", "SPAM", "OTHER"), "reason")
-        requireOptionalText(detail, "detail", 500)
+        requireOptionalText(detail, "detail", 500, allowBlank = true)
     }
 
     override fun toJson(): JsonValue.Obj {

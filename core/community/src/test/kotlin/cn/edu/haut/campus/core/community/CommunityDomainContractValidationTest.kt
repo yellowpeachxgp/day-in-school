@@ -10,6 +10,16 @@ class CommunityDomainContractValidationTest {
     private val memberTwo = "22222222-2222-4222-8222-222222222222"
 
     @Test
+    fun optionalMaxLengthOnlyTextMayBeBlankWhenContractHasNoMinLength() {
+        CreateGroupRequest("haut", "study", "空白说明", description = "")
+        CreateGroupInviteRequest("2026-11-29T08:00:00Z", maxUses = 1, label = "")
+        CreatePlaceReportFlagRequest(reason = "INCORRECT", detail = "")
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
+            UpdateRepairTicketRequest(description = "")
+        }
+    }
+
+    @Test
     fun availabilityBlocksUseAbsoluteUtcThirtyMinuteAlignmentAndRejectOverlap() {
         AvailabilityBlockInput(
             startAt = "2026-11-28T08:15:00+05:45",
@@ -70,6 +80,14 @@ class CommunityDomainContractValidationTest {
                 durationMinutes = 30,
                 minAttendees = 1,
                 memberIds = listOf("not-a-uuid"),
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GroupAvailabilityQueryRequest(
+                windowStartAt = "2026-11-28T08:00:00Z",
+                windowEndAt = "2026-11-28T09:00:00Z",
+                durationMinutes = 90,
+                minAttendees = 1,
             )
         }
     }

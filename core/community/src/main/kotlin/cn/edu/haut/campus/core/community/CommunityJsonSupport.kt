@@ -40,9 +40,11 @@ internal fun requireText(value: String, field: String, maxLength: Int? = null): 
     return value
 }
 
-internal fun requireOptionalText(value: String?, field: String, maxLength: Int? = null): String? {
+internal fun requireOptionalText(value: String?, field: String, maxLength: Int? = null, allowBlank: Boolean = false): String? {
     if (value == null) return null
-    return requireText(value, field, maxLength)
+    if (!allowBlank) return requireText(value, field, maxLength)
+    if (maxLength != null) require(value.length <= maxLength) { field + " 长度不能超过 " + maxLength }
+    return value
 }
 
 internal fun requireIsoDateTime(value: String, field: String): String {
