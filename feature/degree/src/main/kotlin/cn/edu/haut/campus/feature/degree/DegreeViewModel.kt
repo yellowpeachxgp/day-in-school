@@ -87,6 +87,7 @@ class DegreeViewModel(
                             overrideDraft = OverrideDraft(
                                 attemptId = resolvedAttemptId,
                                 courseName = action.courseName,
+                                importId = it.activeImportId,
                                 targetGroupId = null,
                                 exclude = false,
                                 reason = ""
@@ -108,7 +109,7 @@ class DegreeViewModel(
                 state.copy(overrideDraft = state.overrideDraft?.copy(reason = action.reason))
             }
             DegreeUiAction.SubmitOverride -> submitOverride()
-            is DegreeUiAction.RetractOverride -> retractOverride(action.attemptId)
+            is DegreeUiAction.RetractOverride -> retractOverride(action.attemptId, _uiState.value.activeImportId)
             DegreeUiAction.DismissNotice -> _uiState.update { it.copy(notice = null) }
         }
     }
@@ -229,7 +230,8 @@ class DegreeViewModel(
                         attemptId = draft.attemptId,
                         action = if (draft.exclude) OverrideAction.EXCLUDE else OverrideAction.ASSIGN,
                         mapToGroupId = if (draft.exclude) null else draft.targetGroupId,
-                        reason = draft.reason.trim()
+                        reason = draft.reason.trim(),
+                        importId = draft.importId
                     ),
                     Actor.USER
                 )
@@ -243,7 +245,7 @@ class DegreeViewModel(
         }
     }
 
-    private fun retractOverride(attemptId: String) {
+    private fun retractOverride(attemptId: String, importId: String?) {
         scope.launch {
             try {
                 repository.recordOverride(
@@ -251,7 +253,8 @@ class DegreeViewModel(
                         attemptId = attemptId,
                         action = OverrideAction.RETRACT,
                         mapToGroupId = null,
-                        reason = "用户撤销此前人工认定"
+                        reason = "用户撤销此前人工认定",
+                        importId = importId
                     ),
                     Actor.USER
                 )

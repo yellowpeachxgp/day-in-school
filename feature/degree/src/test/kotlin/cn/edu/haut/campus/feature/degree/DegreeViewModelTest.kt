@@ -30,6 +30,7 @@ class DegreeViewModelTest {
     private class FakeRepository : DegreeRepository {
         val imports = mutableListOf<TrainingPlanImportRecord>()
         val overrides = mutableListOf<AuditOverride>()
+        val overrideInputs = mutableListOf<OverrideInput>()
         var activeId: String? = null
         var reportToReturn: AuditReport? = null
         var closed = false
@@ -78,6 +79,7 @@ class DegreeViewModelTest {
             listImports().firstOrNull { it.importId == activeId }
 
         override suspend fun recordOverride(input: OverrideInput, actor: Actor): AuditOverride {
+            overrideInputs += input
             val override = AuditOverride(
                 id = "ovr-fake",
                 attemptRef = cn.edu.haut.campus.core.model.EntityRef(
@@ -192,6 +194,7 @@ class DegreeViewModelTest {
         waitFor { fake.overrides.size == 1 }
         assertNull(vm.uiState.value.overrideDraft)
         assertEquals("open", fake.overrides.first().mapToGroupId)
+        assertEquals("tpl-fake", fake.overrideInputs.first().importId)
         vm.closeForSessionEnd()
     }
 

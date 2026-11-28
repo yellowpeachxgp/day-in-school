@@ -188,6 +188,7 @@ object DegreePreviewFixtures {
         overrideDraft = OverrideDraft(
             attemptId = "at-music",
             courseName = "音乐欣赏",
+            importId = "tpl-demo",
             targetGroupId = "open",
             exclude = false,
             reason = ""

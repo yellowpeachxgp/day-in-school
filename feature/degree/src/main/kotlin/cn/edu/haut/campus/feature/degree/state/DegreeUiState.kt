@@ -15,6 +15,8 @@ enum class DegreeStatus {
 data class OverrideDraft(
     val attemptId: String,
     val courseName: String,
+    /** 打开草稿时绑定的方案导入；切换方案后提交必须失败而不是串用到新方案。 */
+    val importId: String?,
     val targetGroupId: String?,
     val exclude: Boolean,
     val reason: String

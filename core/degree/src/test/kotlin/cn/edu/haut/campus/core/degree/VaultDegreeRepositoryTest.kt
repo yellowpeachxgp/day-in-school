@@ -384,4 +384,25 @@ class VaultDegreeRepositoryTest {
         assertTrue(report.trace.any { it.rule == "override-retract" && it.attemptId == "at-math" })
     }
 
+
+    @Test
+    fun overrideInputWithMismatchedImportIsRejected() = runBlocking {
+        val record = repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
+        val error = runCatching {
+            repository.recordOverride(
+                OverrideInput(
+                    attemptId = "at-x",
+                    action = OverrideAction.EXCLUDE,
+                    mapToGroupId = null,
+                    reason = "试图跨方案引用",
+                    importId = "not-" + record.importId
+                ),
+                Actor.USER
+            )
+        }.exceptionOrNull()
+        assertNotNull(error)
+        assertTrue(error!!.message.orEmpty().contains("不一致"))
+        assertTrue(repository.listOverrides().isEmpty())
+    }
+
 }
