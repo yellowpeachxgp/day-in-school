@@ -31,7 +31,8 @@ data class E2eeSyncPendingWrite(
     val writerCounter: Int,
     val idempotencyKey: String,
     val logicalClock: Long,
-    val rowSha256: String?
+    val rowSha256: String?,
+    val cleanupOnly: Boolean = false
 ) {
     init {
         require(kind == "UPSERT" || kind == "DELETE") { "pending write kind 非法" }
@@ -186,6 +187,7 @@ object E2eeSyncStateCodec {
         .put("idempotencyKey", item.idempotencyKey)
         .put("logicalClock", item.logicalClock)
         .put("rowSha256", item.rowSha256)
+        .put("cleanupOnly", item.cleanupOnly)
 
     private fun decodePending(obj: JSONObject): E2eeSyncPendingWrite = E2eeSyncPendingWrite(
         logicalKey = obj.getString("logicalKey"),
@@ -199,7 +201,8 @@ object E2eeSyncStateCodec {
         writerCounter = obj.getInt("writerCounter"),
         idempotencyKey = obj.getString("idempotencyKey"),
         logicalClock = obj.getLong("logicalClock"),
-        rowSha256 = obj.optNullableString("rowSha256")
+        rowSha256 = obj.optNullableString("rowSha256"),
+        cleanupOnly = obj.optBoolean("cleanupOnly", false)
     )
 
     private fun encodeConflict(item: E2eeSyncConflict): JSONObject = JSONObject()

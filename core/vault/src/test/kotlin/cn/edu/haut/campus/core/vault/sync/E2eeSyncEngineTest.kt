@@ -91,6 +91,49 @@ class E2eeSyncEngineTest {
     }
 
     @Test
+    fun duplicateIdentityUseRemoteTombstonesLocalLoserAndDoesNotReconflict() = runBlocking {
+        val env = TwoDeviceEnv()
+        val local = courseSnapshot("course-duplicate", "本机版本")
+        val remote = courseSnapshot("course-duplicate", "远端版本")
+        env.storeB.applyUpserts(listOf(local))
+        val localInjection = injectBlob(env, env.deviceA, local, 1L)
+        val remoteInjection = injectBlob(env, env.deviceB, remote, 2L)
+        seedDuplicateConflict(env, local, localInjection, remoteInjection)
+
+        val conflict = env.stateStoreB.load().conflicts.values.single()
+        val report = env.engineB.resolveConflict(conflict.id, E2eeSyncConflictResolution.USE_REMOTE)
+
+        assertEquals("TOMBSTONE", env.cloud.metadata(localInjection.metadata.blobId)?.changeKind)
+        assertEquals("UPSERT", env.cloud.metadata(remoteInjection.metadata.blobId)?.changeKind)
+        assertEquals("远端版本", courseName(env.storeB, "course-duplicate"))
+        assertTrue(env.engineB.status().conflicts.isEmpty())
+        val followUp = env.engineB.runOnce()
+        assertEquals(0, followUp.conflictsCreated)
+    }
+
+    @Test
+    fun duplicateIdentityKeepLocalTombstonesRemoteLoserAndUploadsWinner() = runBlocking {
+        val env = TwoDeviceEnv()
+        val local = courseSnapshot("course-duplicate-local", "本机版本")
+        val remote = courseSnapshot("course-duplicate-local", "远端版本")
+        env.storeB.applyUpserts(listOf(local))
+        val localInjection = injectBlob(env, env.deviceA, local, 1L)
+        val remoteInjection = injectBlob(env, env.deviceB, remote, 2L)
+        seedDuplicateConflict(env, local, localInjection, remoteInjection)
+
+        val conflict = env.stateStoreB.load().conflicts.values.single()
+        val report = env.engineB.resolveConflict(conflict.id, E2eeSyncConflictResolution.KEEP_LOCAL)
+
+        assertEquals("TOMBSTONE", env.cloud.metadata(remoteInjection.metadata.blobId)?.changeKind)
+        assertEquals("UPSERT", env.cloud.metadata(localInjection.metadata.blobId)?.changeKind)
+        assertEquals("本机版本", courseName(env.storeB, "course-duplicate-local"))
+        assertTrue(report.uploadedRows >= 1)
+        assertTrue(env.engineB.status().conflicts.isEmpty())
+        val followUp = env.engineB.runOnce()
+        assertEquals(0, followUp.conflictsCreated)
+    }
+
+    @Test
     fun plaintextLogicalRollbackWithFastForwardedVectorIsConflictNotApplied() = runBlocking {
         val env = TwoDeviceEnv()
         env.storeA.applyUpserts(listOf(courseSnapshot("course-rollback", "第一版")))
@@ -256,6 +299,83 @@ class E2eeSyncEngineTest {
         )
     }
 
+    private data class InjectedBlob(val metadata: SyncBlobMetadata, val payloadJson: String)
+
+    private fun injectBlob(
+        env: TwoDeviceEnv,
+        authorDeviceId: String,
+        snapshot: SyncBackupRowSnapshot,
+        logicalClock: Long
+    ): InjectedBlob = runBlocking {
+        val material = env.keyA.load()
+        try {
+            val payload = E2eeSyncPayloadCodec.payloadFromSnapshot(
+                snapshot = snapshot,
+                schemaVersion = env.storeB.schemaVersion,
+                syncSpaceId = material.syncSpaceId,
+                logicalClock = logicalClock,
+                writerDeviceId = authorDeviceId
+            )
+            val payloadJson = E2eeSyncPayloadCodec.encode(payload)
+            val plaintext = payloadJson.toByteArray(Charsets.UTF_8)
+            val blobId = UUID.randomUUID().toString()
+            val encrypted = E2eeSyncBlockCipher.encrypt(plaintext, material.masterKey, material.keyId, blobId, 1)
+            plaintext.fill(0)
+            val metadata = env.cloud.injectPut(
+                blobId = blobId,
+                deviceId = authorDeviceId,
+                input = SyncBlobPutInput(
+                    encryption = encrypted.encryption,
+                    ciphertextBase64 = encrypted.ciphertextBase64,
+                    ciphertextSha256 = encrypted.ciphertextSha256,
+                    baseVector = emptyList(),
+                    writerCounter = 1,
+                    idempotencyKey = "inject-" + blobId
+                )
+            )
+            InjectedBlob(metadata, payloadJson)
+        } finally {
+            material.zero()
+        }
+    }
+
+    private suspend fun seedDuplicateConflict(
+        env: TwoDeviceEnv,
+        local: SyncBackupRowSnapshot,
+        localInjection: InjectedBlob,
+        remoteInjection: InjectedBlob
+    ) {
+        val state = env.stateStoreB.load()
+        state.objects[local.logicalKey] = E2eeSyncObjectState(
+            logicalKey = local.logicalKey,
+            table = local.table,
+            rowKey = local.rowKey,
+            blobId = localInjection.metadata.blobId,
+            logicalClock = 1L,
+            syncedRowSha256 = local.rowSha256,
+            versionVector = localInjection.metadata.versionVector,
+            deleted = false,
+            lastChangeSequence = localInjection.metadata.changeSequence
+        )
+        val conflict = E2eeSyncConflict(
+            id = "sc-duplicate-test",
+            logicalKey = local.logicalKey,
+            table = local.table,
+            rowKey = local.rowKey,
+            kind = "DUPLICATE_IDENTITY",
+            reason = "test duplicate",
+            blobId = remoteInjection.metadata.blobId,
+            localPayloadJson = localInjection.payloadJson,
+            remotePayloadJson = remoteInjection.payloadJson,
+            localVector = localInjection.metadata.versionVector,
+            remoteVector = remoteInjection.metadata.versionVector,
+            remoteDeletion = false,
+            createdAtEpochMs = 1L
+        )
+        state.conflicts[conflict.id] = conflict
+        env.stateStoreB.save(state)
+    }
+
     private class TwoDeviceEnv {
         val deviceA = UUID.randomUUID().toString()
         val deviceB = UUID.randomUUID().toString()
@@ -333,6 +453,7 @@ class E2eeSyncEngineTest {
         var pageSize = 2
 
         fun blobCount(): Int = blobs.values.count { it.metadata.changeKind == "UPSERT" }
+        fun metadata(blobId: String): SyncBlobMetadata? = blobs[blobId]?.metadata
         fun mutationCount(): Int = mutations.size
         fun putAttempts(blobId: String): Int = putAttemptCounts[blobId] ?: 0
         fun currentMetadataForOnlyBlob(): SyncBlobMetadata = blobs.values.single().metadata

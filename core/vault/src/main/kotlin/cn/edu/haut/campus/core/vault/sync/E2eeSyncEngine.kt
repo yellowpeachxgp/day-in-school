@@ -486,17 +486,19 @@ internal class E2eeSyncEngine(
             state.pendingWrites.remove(pending.logicalKey)
             val table = pending.logicalKey.substringBefore(':')
             val rowKey = SyncBackupObjectKeys.rowKeyFromLogical(table, pending.logicalKey)
-            state.objects[pending.logicalKey] = E2eeSyncObjectState(
-                logicalKey = pending.logicalKey,
-                table = table,
-                rowKey = rowKey,
-                blobId = pending.blobId,
-                logicalClock = pending.logicalClock,
-                syncedRowSha256 = if (pending.kind == "UPSERT") pending.rowSha256 else null,
-                versionVector = metadata.versionVector,
-                deleted = pending.kind == "DELETE",
-                lastChangeSequence = metadata.changeSequence
-            )
+            if (!pending.cleanupOnly) {
+                state.objects[pending.logicalKey] = E2eeSyncObjectState(
+                    logicalKey = pending.logicalKey,
+                    table = table,
+                    rowKey = rowKey,
+                    blobId = pending.blobId,
+                    logicalClock = pending.logicalClock,
+                    syncedRowSha256 = if (pending.kind == "UPSERT") pending.rowSha256 else null,
+                    versionVector = metadata.versionVector,
+                    deleted = pending.kind == "DELETE",
+                    lastChangeSequence = metadata.changeSequence
+                )
+            }
             if (pending.kind == "UPSERT") stats.uploadedRows++ else stats.deletedRows++
             stateStore.save(state)
         } catch (error: E2eeSyncApiException) {
@@ -509,7 +511,9 @@ internal class E2eeSyncEngine(
                 "SYNC_BLOB_DELETED" -> {
                     if (pending.kind == "DELETE") {
                         state.pendingWrites.remove(pending.logicalKey)
-                        markDeletedWithoutServerMetadata(state, pending)
+                        if (!pending.cleanupOnly) {
+                            markDeletedWithoutServerMetadata(state, pending)
+                        }
                         stateStore.save(state)
                     } else {
                         state.pendingWrites.remove(pending.logicalKey)
@@ -590,12 +594,51 @@ internal class E2eeSyncEngine(
         )
     }
 
+    /** 用户明确选择 duplicate identity 的胜出版本后，用严格 CAS tombstone 失败 blob；cleanup 不覆盖胜出对象状态。 */
+    private suspend fun tombstoneDuplicateLoser(
+        state: E2eeSyncState,
+        material: E2eeSyncKeyMaterial,
+        logicalKey: String,
+        loserBlobId: String,
+        loserVector: SyncVersionVector,
+        stats: E2eeSyncRunStats
+    ) {
+        val deviceId = state.deviceId ?: throw E2eeSyncConsentException("本机尚未注册同步设备")
+        val writerCounter = SyncVectors.nextWriterCounter(loserVector, deviceId)
+        val key = idempotencyKey("duplicate-cleanup", deviceId, loserBlobId, writerCounter, logicalKey)
+        val pending = E2eeSyncPendingWrite(
+            logicalKey = logicalKey,
+            kind = "DELETE",
+            blobId = loserBlobId,
+            payloadJson = null,
+            encryption = null,
+            ciphertextBase64 = null,
+            ciphertextSha256 = null,
+            baseVector = loserVector,
+            writerCounter = writerCounter,
+            idempotencyKey = key,
+            logicalClock = (state.objects[logicalKey]?.logicalClock ?: 0L) + 1L,
+            rowSha256 = null,
+            cleanupOnly = true
+        )
+        state.pendingWrites[logicalKey] = pending
+        stateStore.save(state)
+        commitPendingWrite(state, material, pending, stats)
+    }
+
     private suspend fun applyConflictRemote(
         state: E2eeSyncState,
         material: E2eeSyncKeyMaterial,
         conflict: E2eeSyncConflict,
         stats: E2eeSyncRunStats
     ) {
+        if (conflict.kind == "DUPLICATE_IDENTITY") {
+            val loser = state.objects[conflict.logicalKey]
+                ?.takeIf { !it.deleted && it.blobId != conflict.blobId }
+            if (loser != null) {
+                tombstoneDuplicateLoser(state, material, conflict.logicalKey, loser.blobId, conflict.localVector, stats)
+            }
+        }
         if (conflict.remoteDeletion) {
             backupStore.applyDeletes(listOf(conflict.table to conflict.rowKey))
             stats.appliedRemoteRows++
@@ -636,6 +679,9 @@ internal class E2eeSyncEngine(
         conflict: E2eeSyncConflict,
         stats: E2eeSyncRunStats
     ) {
+        if (conflict.kind == "DUPLICATE_IDENTITY" && !conflict.blobId.isNullOrBlank()) {
+            tombstoneDuplicateLoser(state, material, conflict.logicalKey, conflict.blobId, conflict.remoteVector, stats)
+        }
         if (conflict.localDeletion) {
             val existing = state.objects[conflict.logicalKey]
             val blobId = existing?.takeIf { !it.deleted }?.blobId ?: conflict.blobId ?: uuid()
