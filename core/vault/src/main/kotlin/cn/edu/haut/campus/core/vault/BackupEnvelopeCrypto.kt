@@ -30,11 +30,17 @@ internal object BackupEnvelopeCrypto {
         plaintextZip: ByteArray,
         passphrase: CharArray,
         iterations: Int,
-        random: SecureRandom = SecureRandom()
+        random: SecureRandom = SecureRandom(),
+        allowLegacyIterations: Boolean = false
     ): ByteArray {
         require(passphrase.isNotEmpty()) { "备份口令不能为空" }
-        require(iterations in BackupFormatConstants.MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
-            "PBKDF2 迭代次数超出 dis-backup/v1 允许范围"
+        val minimumIterations = if (allowLegacyIterations) {
+            BackupFormatConstants.LEGACY_MIN_PBKDF2_ITERATIONS
+        } else {
+            BackupFormatConstants.MIN_PBKDF2_ITERATIONS
+        }
+        require(iterations in minimumIterations..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
+            "PBKDF2 迭代次数低于 dis-backup/v1 新导出基线或超出上限"
         }
         require(plaintextZip.size <= BackupFormatConstants.MAX_ARCHIVE_BYTES) { "备份明文超过大小上限" }
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
@@ -127,7 +133,7 @@ internal object BackupEnvelopeCrypto {
             throw BackupCorruptedException("payloadFormat 不是 application/zip")
         }
         val iterations = header.requiredIntOrCorrupt("iterations")
-        if (iterations !in BackupFormatConstants.MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
+        if (iterations !in BackupFormatConstants.LEGACY_MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
             throw BackupCorruptedException("PBKDF2 迭代次数超出允许范围")
         }
         val salt = decodeBase64Field(header, "salt")
@@ -232,8 +238,16 @@ internal object BackupEnvelopeCrypto {
     }
 
     private fun JsonValue.Obj.requiredIntOrCorrupt(key: String): Int = try {
-        requiredInt(key)
+        val literal = (requiredField(key) as? JsonValue.Num)?.literal
+            ?: throw IllegalArgumentException("字段不是 number")
+        if (!literal.matches(Regex("-?(0|[1-9][0-9]*)"))) {
+            throw IllegalArgumentException("字段不是严格整数字面量")
+        }
+        literal.toIntOrNull() ?: throw IllegalArgumentException("整数超出 Int 范围")
     } catch (error: Throwable) {
-        throw BackupCorruptedException("外层缺少整数字段: " + key, error)
+        throw BackupCorruptedException("外层缺少严格整数字段: " + key, error)
     }
+
+    private fun JsonValue.Obj.requiredField(key: String): JsonValue =
+        fields[key] ?: throw IllegalArgumentException("缺少字段 " + key)
 }

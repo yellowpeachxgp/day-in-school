@@ -36,6 +36,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
+import cn.edu.haut.campus.core.vault.BackupFormatConstants
 import cn.edu.haut.campus.core.vault.BackupRowConflict
 import cn.edu.haut.campus.core.vault.RestoreMode
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
@@ -122,7 +123,7 @@ private fun ExportWizardDialog(state: BackupCenterUiState, actions: BackupCenter
         passphrase = ""
         confirm = ""
     }
-    val valid = passphrase.length >= 8 && passphrase == confirm && !state.exportWizard.running
+    val valid = passphrase.length >= BackupFormatConstants.MIN_PASSPHRASE_CHARS && passphrase == confirm && !state.exportWizard.running
 
     AlertDialog(
         onDismissRequest = { if (!state.exportWizard.running) actions.closeExportWizard() },
@@ -137,7 +138,7 @@ private fun ExportWizardDialog(state: BackupCenterUiState, actions: BackupCenter
                 OutlinedTextField(
                     value = passphrase,
                     onValueChange = { passphrase = it },
-                    label = { Text("备份口令（至少 8 位）") },
+                    label = { Text("备份口令（至少 " + BackupFormatConstants.MIN_PASSPHRASE_CHARS + " 位）") },
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     singleLine = true,
@@ -152,8 +153,8 @@ private fun ExportWizardDialog(state: BackupCenterUiState, actions: BackupCenter
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().testTag("backup-export-confirm")
                 )
-                if (passphrase.isNotEmpty() && passphrase.length < 8) {
-                    Text("口令至少 8 个字符", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                if (passphrase.isNotEmpty() && passphrase.length < BackupFormatConstants.MIN_PASSPHRASE_CHARS) {
+                    Text("口令至少 " + BackupFormatConstants.MIN_PASSPHRASE_CHARS + " 个字符", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
                 }
                 if (confirm.isNotEmpty() && passphrase != confirm) {
                     Text("两次输入不一致", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
@@ -234,7 +235,7 @@ private fun RestoreWizardDialog(state: BackupCenterUiState, actions: BackupCente
                             passphrase = ""
                         }
                     },
-                    enabled = selectedUri != null && passphrase.length >= 8 && !wizard.running,
+                    enabled = selectedUri != null && passphrase.isNotEmpty() && !wizard.running,
                     modifier = Modifier.testTag("backup-inspect")
                 ) { Text(if (wizard.running && preview == null) "检查中…" else "检查备份") }
 

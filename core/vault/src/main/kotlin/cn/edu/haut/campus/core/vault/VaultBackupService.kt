@@ -5,9 +5,11 @@ import androidx.room.withTransaction
 import androidx.sqlite.db.SupportSQLiteDatabase
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.DataProvenance
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.json.Digests
 import java.io.InputStream
 import java.io.OutputStream
@@ -26,6 +28,12 @@ class VaultBackupService(
 ) : BackupService {
     private val sqlite: SupportSQLiteDatabase get() = database.openHelper.writableDatabase
 
+    init {
+        require(pbkdf2Iterations in BackupFormatConstants.MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
+            "新导出 PBKDF2 迭代次数必须达到 600k 基线且不超出 v1 上限"
+        }
+    }
+
     override suspend fun export(
         scope: SchoolAccountScope,
         selection: BackupSelection,
@@ -33,7 +41,7 @@ class VaultBackupService(
         out: OutputStream
     ): BackupManifest {
         require(scope == this.scope) { "BackupService scope 与调用 scope 不一致" }
-        require(passphrase.size >= 8) { "备份口令至少 8 个字符" }
+        if (passphrase.size < BackupFormatConstants.MIN_PASSPHRASE_CHARS) throw BackupWeakPassphraseException()
         val archive = database.withTransaction {
             captureArchive(BackupTableCatalog.selected(selection))
         }
@@ -388,10 +396,23 @@ class VaultBackupService(
             throw BackupValidationException("备份主键与当前 schema 不一致: " + policy.table)
         }
         val allNames = columns.map { it.name }.toSet()
-        if (!allNames.containsAll(policy.omittedColumns)) {
-            throw BackupValidationException("备份省略列在当前 schema 不存在: " + policy.table)
+        val unknownExported = policy.exportedColumns - allNames
+        if (unknownExported.isNotEmpty()) {
+            throw BackupValidationException("备份列白名单在当前 schema 不存在: " + policy.table + ":" + unknownExported.sorted().joinToString(","))
         }
-        val backupColumns = columns.filter { it.name !in policy.omittedColumns }
+        val unknownGenerated = policy.generatedColumns.keys - allNames
+        if (unknownGenerated.isNotEmpty()) {
+            throw BackupValidationException("备份生成列在当前 schema 不存在: " + policy.table + ":" + unknownGenerated.sorted().joinToString(","))
+        }
+        val nonExported = allNames - policy.exportedColumns
+        val missingRestoreDefault = nonExported - policy.generatedColumns.keys
+        if (missingRestoreDefault.isNotEmpty()) {
+            throw BackupValidationException("备份省略列缺少恢复期安全默认值: " + policy.table + ":" + missingRestoreDefault.sorted().joinToString(","))
+        }
+        val backupColumns = columns.filter { it.name in policy.exportedColumns }
+        if (backupColumns.size != policy.exportedColumns.size) {
+            throw BackupValidationException("备份列白名单与当前 schema 不完全匹配: " + policy.table)
+        }
         BackupSchemaSafety.validateColumns(policy, backupColumns.map { it.name })
         return CurrentTableSchema(allColumns = columns, backupColumns = backupColumns)
     }
@@ -411,6 +432,7 @@ class VaultBackupService(
                     cells[column.name] = readCell(cursor, index, blobs)
                 }
                 val row = BackupRow(cells)
+                BackupSchemaSafety.validateCellValues(row.cells, "备份表 " + policy.table)
                 validateScopeRow(policy, row)
                 validateBlobStoreRow(policy, row)
                 rows += row
@@ -427,6 +449,7 @@ class VaultBackupService(
             Cursor.FIELD_TYPE_STRING -> BackupCell.TextValue(cursor.getString(index))
             Cursor.FIELD_TYPE_BLOB -> {
                 val bytes = cursor.getBlob(index)
+                BackupSchemaSafety.validateBlobBytes(bytes, "备份 blob 内容")
                 val sha = Digests.sha256Hex(bytes)
                 val existing = blobs[sha]
                 if (existing != null && !existing.contentEquals(bytes)) {
@@ -446,6 +469,7 @@ class VaultBackupService(
             throw BackupValidationException("备份列集合与当前 schema 不一致: " + input.policy.table)
         }
         input.rows.forEach { row ->
+            BackupSchemaSafety.validateCellValues(row.cells, "恢复输入表 " + input.policy.table)
             schema.backupColumns.forEach { column -> validateCellAgainstColumn(row.cells.getValue(column.name), column, input.policy.table) }
             validateScopeRow(input.policy, row)
             validateBlobStoreRow(input.policy, row)
@@ -525,6 +549,7 @@ class VaultBackupService(
             if (bytes.size.toLong() != count || Digests.sha256Hex(bytes) != sha) {
                 throw BackupCorruptedException("blob ZIP 条目摘要或大小不一致")
             }
+            BackupSchemaSafety.validateBlobBytes(bytes, "恢复 blob 内容")
             blobs[sha] = bytes
         }
         val referenced = tables.flatMap { table -> table.rows.flatMap { it.cells.values } }
@@ -572,8 +597,28 @@ class VaultBackupService(
     private fun generatedCell(policy: BackupTablePolicy, column: String): BackupCell? =
         when (policy.generatedColumns[column]) {
             GeneratedColumnKind.OCCURRENCE_MUTATION_TOKEN -> BackupCell.TextValue(mutationTokenGenerator())
+            GeneratedColumnKind.NULL_ON_RESTORE -> BackupCell.NullValue
+            GeneratedColumnKind.EMPTY_JSON_OBJECT_ON_RESTORE -> BackupCell.TextValue("{}")
+            GeneratedColumnKind.EMPTY_JSON_ARRAY_ON_RESTORE -> BackupCell.TextValue("[]")
+            GeneratedColumnKind.RESTORED_PERSONAL_EVENT_PROVENANCE -> BackupCell.TextValue(restoredProvenanceJson())
             null -> null
         }
+
+    private fun restoredProvenanceJson(): String = canonicalJsonOf(
+        encodeProvenance(
+            DataProvenance(
+                providerId = "dis-backup/v1",
+                schoolId = scope.schoolId,
+                accountId = scope.accountId,
+                sourceSystem = "LOCAL_BACKUP_RESTORE",
+                sourceRecordId = null,
+                fetchedAt = null,
+                completeness = SnapshotCompleteness.UNKNOWN,
+                schemaVersion = 1,
+                contentRevision = null
+            )
+        )
+    ).text
 
     private fun bindCell(
         statement: androidx.sqlite.db.SupportSQLiteStatement,

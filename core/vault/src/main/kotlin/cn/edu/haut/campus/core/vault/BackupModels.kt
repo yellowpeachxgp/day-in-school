@@ -169,9 +169,12 @@ object BackupFormatConstants {
     const val MANIFEST_ENTRY = "manifest.json"
     const val DATA_ENTRY = "data.json"
     const val BLOB_ENTRY_PREFIX = "blobs/"
-    const val MIN_PBKDF2_ITERATIONS = 100_000
-    const val DEFAULT_PBKDF2_ITERATIONS = 120_000
-    const val MAX_PBKDF2_ITERATIONS = 500_000
+    /** v1 早期备份曾允许 100k；只用于恢复旧备份，新导出不得再使用该下限。 */
+    const val LEGACY_MIN_PBKDF2_ITERATIONS = 100_000
+    const val MIN_PBKDF2_ITERATIONS = 600_000
+    const val DEFAULT_PBKDF2_ITERATIONS = 600_000
+    const val MAX_PBKDF2_ITERATIONS = 2_000_000
+    const val MIN_PASSPHRASE_CHARS = 12
     const val MAX_HEADER_BYTES = 64 * 1024
     const val MAX_ARCHIVE_BYTES = 128L * 1024L * 1024L
     const val MAX_DATA_JSON_BYTES = 64 * 1024 * 1024
@@ -206,3 +209,6 @@ class BackupRestoreStaleException :
 
 class BackupValidationException(detail: String) :
     BackupException("备份内容校验失败：" + detail)
+
+class BackupWeakPassphraseException :
+    BackupException("备份口令至少 " + BackupFormatConstants.MIN_PASSPHRASE_CHARS + " 个字符")

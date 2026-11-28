@@ -221,19 +221,19 @@ internal object BackupWireCodec {
         try {
             return BackupManifest(
                 format = root.requiredString("format"),
-                formatVersion = root.requiredInt("formatVersion"),
+                formatVersion = root.requiredStrictIntOrCorrupt("formatVersion"),
                 createdAt = Instant.parse(root.requiredString("createdAt")),
                 appVersion = root.requiredString("appVersion"),
-                schemaVersion = root.requiredInt("schemaVersion"),
+                schemaVersion = root.requiredStrictIntOrCorrupt("schemaVersion"),
                 profileFingerprint = root.requiredString("profileFingerprint"),
-                entryCount = root.requiredInt("entryCount"),
+                entryCount = root.requiredStrictIntOrCorrupt("entryCount"),
                 payloadSha256 = root.requiredString("payloadSha256"),
                 tables = root.requiredArray("tables").map { value ->
                     val obj = value.asObjOrNull ?: throw IllegalArgumentException("manifest table 必须是 object")
                     requireExactKeys(obj, setOf("table", "rowCount", "sha256"), "manifest tables")
                     BackupTableManifest(
                         table = obj.requiredString("table"),
-                        rowCount = obj.requiredInt("rowCount"),
+                        rowCount = obj.requiredStrictIntOrCorrupt("rowCount"),
                         sha256 = obj.requiredString("sha256")
                     )
                 }
@@ -320,9 +320,26 @@ internal fun JsonValue.Obj.requiredStringOrCorrupt(key: String): String = try {
 }
 
 internal fun JsonValue.Obj.requiredLongOrCorrupt(key: String): Long = try {
-    requiredLong(key)
+    strictLongLiteral(key)
 } catch (error: Throwable) {
-    throw BackupCorruptedException("JSON 缺少 integer 字段: " + key, error)
+    throw BackupCorruptedException("JSON 缺少严格 integer 字段: " + key, error)
+}
+
+internal fun JsonValue.Obj.requiredStrictIntOrCorrupt(key: String): Int = try {
+    val value = strictLongLiteral(key)
+    if (value < Int.MIN_VALUE || value > Int.MAX_VALUE) throw IllegalArgumentException("integer 超出 Int 范围")
+    value.toInt()
+} catch (error: Throwable) {
+    throw BackupCorruptedException("JSON 缺少严格 integer 字段: " + key, error)
+}
+
+private fun JsonValue.Obj.strictLongLiteral(key: String): Long {
+    val literal = (requiredField(key) as? JsonValue.Num)?.literal
+        ?: throw IllegalArgumentException("字段不是 number")
+    if (!literal.matches(Regex("-?(0|[1-9][0-9]*)"))) {
+        throw IllegalArgumentException("字段不是严格整数字面量")
+    }
+    return literal.toLongOrNull() ?: throw IllegalArgumentException("integer 超出 Long 范围")
 }
 
 private fun JsonValue.Obj.requiredArrayOrCorrupt(key: String): List<JsonValue> = try {
