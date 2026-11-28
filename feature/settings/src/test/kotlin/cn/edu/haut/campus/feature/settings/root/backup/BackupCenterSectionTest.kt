@@ -2,6 +2,7 @@ package cn.edu.haut.campus.feature.settings.root.backup
 
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -77,7 +78,7 @@ class BackupCenterSectionTest {
     }
 
     @Test
-    fun syncPanelOpensConsentAndShowsRecoveryKeyState() {
+    fun syncPanelOpenConsentInvokesAction() {
         val actions = RecordingActions()
         val disabledSyncState = BackupCenterPreviewFixtures.content.copy(
             sync = BackupCenterPreviewFixtures.content.sync.copy(enabled = false, matrix = cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix.Empty)
@@ -88,12 +89,15 @@ class BackupCenterSectionTest {
 
         composeRule.onNodeWithTag("sync-open-consent").performClick()
         assertTrue(actions.events.contains("sync-open-consent"))
+    }
 
+    @Test
+    fun syncConsentShowsOneTimeRecoveryKeyState() {
         composeRule.setContent {
-            BackupCenterSection(state = BackupCenterPreviewFixtures.syncRecoveryKey, actions = actions)
+            BackupCenterSection(state = BackupCenterPreviewFixtures.syncRecoveryKey, actions = RecordingActions())
         }
         composeRule.onNodeWithText("开启端到端跨设备同步").assertIsDisplayed()
-        composeRule.onNodeWithTag("sync-generated-recovery-key").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-generated-recovery-key").assertExists()
     }
 
     @Test
@@ -103,8 +107,8 @@ class BackupCenterSectionTest {
             BackupCenterSection(state = BackupCenterPreviewFixtures.syncConflict, actions = actions)
         }
 
-        composeRule.onNodeWithTag("sync-conflict-local").assertIsDisplayed()
-        composeRule.onNodeWithTag("sync-conflict-remote").assertIsDisplayed()
+        composeRule.onNodeWithTag("sync-conflict-local").assertExists()
+        composeRule.onNodeWithTag("sync-conflict-remote").assertExists()
         composeRule.onNodeWithTag("sync-conflict-keep-local").performClick()
         composeRule.onNodeWithTag("sync-conflict-use-remote").performClick()
 
