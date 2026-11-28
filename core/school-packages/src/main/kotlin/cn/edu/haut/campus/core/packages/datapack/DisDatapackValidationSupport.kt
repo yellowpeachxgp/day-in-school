@@ -182,19 +182,20 @@ private fun ipv6PieceGroupCount(pieces: List<String>): Int {
 /** RFC 3986 IPv6address grammar；HTTPS datapack 链接保守拒绝 IPvFuture。 */
 private fun isValidIpv6Literal(value: String): Boolean {
     if (value.isEmpty() || value.any { ch -> ch !in '0'..'9' && ch !in 'a'..'f' && ch !in 'A'..'F' && ch != ':' && ch != '.' }) return false
-    val compressed = value.split("::")
-    if (compressed.size > 2) return false
+    val firstCompression = value.indexOf("::")
+    val hasCompression = firstCompression >= 0
+    if (hasCompression && firstCompression != value.lastIndexOf("::")) return false
     fun parseSide(side: String): List<String>? {
         if (side.isEmpty()) return emptyList()
         val pieces = side.split(':')
         return if (pieces.any { it.isEmpty() }) null else pieces
     }
-    if (compressed.size == 1) {
+    if (!hasCompression) {
         val pieces = parseSide(value) ?: return false
         return ipv6PieceGroupCount(pieces) == 8
     }
-    val left = parseSide(compressed[0]) ?: return false
-    val right = parseSide(compressed[1]) ?: return false
+    val left = parseSide(value.substring(0, firstCompression)) ?: return false
+    val right = parseSide(value.substring(firstCompression + 2)) ?: return false
     val leftGroups = ipv6PieceGroupCount(left)
     val rightGroups = ipv6PieceGroupCount(right)
     if (leftGroups < 0 || rightGroups < 0) return false
