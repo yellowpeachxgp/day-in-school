@@ -113,7 +113,8 @@ data class AuditReport(
     val totalEarnedCredits: BigDecimal,
     val totalRemainingCredits: BigDecimal,
     val notes: List<String>,
-    val basis: String
+    val basis: String,
+    val representativeAttemptIds: Map<String, String> = emptyMap()
 ) {
     val personalPlanningDisclaimer: String
         get() = "本报告是个人规划参考，不代表学校毕业审核结论"
@@ -505,7 +506,11 @@ object DegreeAuditor {
             totalRemainingCredits = totalRemaining,
             notes = notes,
             basis = "按培养方案「" + plan.title + "」" + plan.version + " 的 " + leaves.size +
-                " 个叶子要求组审计 " + attempts.size + " 条成绩记录与 " + overrides.size + " 项人工认定"
+                " 个叶子要求组审计 " + attempts.size + " 条成绩记录与 " + overrides.size + " 项人工认定",
+            representativeAttemptIds = aggregation.decisions.mapNotNull { decision ->
+                val attemptId = decision.selected?.id ?: decision.attempts.firstOrNull()?.id
+                if (attemptId == null) null else decision.courseKey to attemptId
+            }.toMap()
         )
     }
 
