@@ -3,7 +3,7 @@ package cn.edu.haut.campus.core.vault.sync
 import android.content.Context
 import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
 import cn.edu.haut.campus.core.database.CampusRepository
-import cn.edu.haut.campus.core.database.CloudIdentityAccessTokenProviderRegistry
+import cn.edu.haut.campus.core.database.CloudIdentityE2eeAccessTokenProviderRegistry
 
 /** 生产装配工厂。token 只在 HttpE2eeSyncApi 当前请求中使用；base URL 沿 repository 已验证身份快照。 */
 object E2eeSyncClientFactory {
@@ -14,7 +14,7 @@ object E2eeSyncClientFactory {
     ): E2eeSyncClient? {
         val backupStore = E2eeSyncBackupStoreRegistry.forProfile(repository.profileId) ?: return null
         val appContext = context.applicationContext
-        val cloudTokenDelegate = CloudIdentityAccessTokenProviderRegistry.forProfile(repository.profileId) ?: return null
+        val cloudTokenDelegate = CloudIdentityE2eeAccessTokenProviderRegistry.forProfile(repository.profileId) ?: return null
         val tokenProvider = E2eeSyncAccessTokenProvider { forceRefresh, failedAccessToken ->
             cloudTokenDelegate.resolve(forceRefresh, failedAccessToken)
         }

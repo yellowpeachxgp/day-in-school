@@ -75,6 +75,10 @@ class E2eeSyncClient internal constructor(
                 idempotencyKey = "e2ee-device-" + cn.edu.haut.campus.core.model.json.Digests.sha256Hex(deviceId, consent.id, label.orEmpty()).take(72)
             )
             if (registered.status != "ACTIVE") throw E2eeSyncConsentException("云端未接受同步设备登记")
+            val cloudUserAfterRegistration = cloudUserIdProvider()?.trim().orEmpty()
+            if (cloudUserAfterRegistration != cloudUserId) {
+                throw E2eeSyncConsentException("云账号在启用期间变化，已拒绝保存可能错绑的同步状态")
+            }
             val next = E2eeSyncState(
                 enabled = true,
                 deviceId = deviceId,
