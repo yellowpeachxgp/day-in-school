@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.inbox
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.DayOfWeek
@@ -34,6 +35,35 @@ class RelativeDateResolverTest {
         assertResolution("下周一", LocalDate.of(2026, 11, 30), DateTimeHint.NONE)
         assertResolution("下周三", LocalDate.of(2026, 12, 2), DateTimeHint.NONE)
         assertResolution("下个星期三", LocalDate.of(2026, 12, 2), DateTimeHint.NONE)
+    }
+
+    @Test
+    fun repeatedNextOrPreviousWeekAccumulatesDirectionAndKeepsLongestMatch() {
+        val nextNextMonday = ChineseRelativeDateResolver.resolve("下下周一", wednesday, term)
+        assertEquals(DateResolutionStatus.RESOLVED, nextNextMonday.status)
+        assertEquals(LocalDate.of(2026, 12, 7), nextNextMonday.date)
+        assertNotEquals(LocalDate.of(2026, 11, 30), nextNextMonday.date)
+        assertEquals("下下周一", nextNextMonday.matchedText)
+
+        val previousPreviousFriday = ChineseRelativeDateResolver.resolve("上上周五", wednesday, term)
+        assertEquals(DateResolutionStatus.RESOLVED, previousPreviousFriday.status)
+        assertEquals(LocalDate.of(2026, 11, 13), previousPreviousFriday.date)
+        assertNotEquals(LocalDate.of(2026, 11, 20), previousPreviousFriday.date)
+        assertEquals("上上周五", previousPreviousFriday.matchedText)
+
+        val withMeasureWord = ChineseRelativeDateResolver.resolve("下下个星期一", wednesday, term)
+        assertEquals(LocalDate.of(2026, 12, 7), withMeasureWord.date)
+    }
+
+    @Test
+    fun resolveAllDoesNotLetSuffixOfDoubleWeekPhraseStealOneWeek() {
+        val results = ChineseRelativeDateResolver.resolveAll("下下周一补课", wednesday, term)
+
+        assertEquals(1, results.size)
+        assertEquals("下下周一", results.single().matchedText)
+        assertEquals(0, results.single().span?.startOffset)
+        assertEquals(4, results.single().span?.endOffset)
+        assertEquals(LocalDate.of(2026, 12, 7), results.single().date)
     }
 
     @Test

@@ -139,6 +139,132 @@ class RuleNoticeParserTest {
     }
 
     @Test
+    fun negatedOrRefutedCancellationWordingDoesNotProduceProposal() {
+        val negatives = listOf(
+            "明天高等数学不停课，正常上课",
+            "明天高等数学未停课，正常上课",
+            "明天高等数学没停课，正常上课",
+            "明天高等数学并非停课",
+            "停课的消息不实",
+            "跟不上进度"
+        )
+
+        negatives.forEach { text ->
+            val report = parseReport(text)
+            assertTrue(text, report.actions.isEmpty())
+        }
+    }
+
+    @Test
+    fun cancelledLectureDoesNotProduceCreateEvent() {
+        listOf(
+            "讲座取消不办了",
+            "明天9点讲座取消不办了",
+            "明天9点的会议取消"
+        ).forEach { text ->
+            val report = parseReport(text)
+            assertTrue(text, report.actions.none { it is ProposedAction.CreateEvent })
+            assertTrue(text, report.issues.any { it.kind == ParseIssueKind.NO_ACTION })
+        }
+    }
+
+    @Test
+    fun completedOrNegatedSubmissionDoesNotProduceCreateTask() {
+        listOf(
+            "实验报告上周三已提交",
+            "实验报告明天不用提交",
+            "实验报告明天无需提交"
+        ).forEach { text ->
+            val report = parseReport(text)
+            assertTrue(text, report.actions.none { it is ProposedAction.CreateTask })
+            assertTrue(text, report.issues.any { it.kind == ParseIssueKind.NO_ACTION })
+        }
+    }
+
+    @Test
+    fun nearestDateAndTimeInDeadlineClauseWinOverIntroductoryPublicationDate() {
+        val report = parseReport("今天发放材料，明天9:00截止提交")
+
+        val action = report.actions.single() as ProposedAction.CreateTask
+        val expectedDue = LocalDate.of(2026, 11, 26).atTime(9, 0).atZone(zone).toInstant()
+        assertEquals(expectedDue, action.due)
+    }
+
+    @Test
+    fun morningQualifierNearestToClockOverridesDeadlineSuperlativeWan() {
+        val report = parseReport("明天最晚上午9点提交")
+
+        val action = report.actions.single() as ProposedAction.CreateTask
+        val expectedDue = LocalDate.of(2026, 11, 26).atTime(9, 0).atZone(zone).toInstant()
+        assertEquals(expectedDue, action.due)
+    }
+
+    @Test
+    fun chineseSingleDigitMinutesAreConsumedCompletely() {
+        val report = parseReport("明天下午3点5分提交")
+
+        val action = report.actions.single() as ProposedAction.CreateTask
+        val expectedDue = LocalDate.of(2026, 11, 26).atTime(15, 5).atZone(zone).toInstant()
+        assertEquals(expectedDue, action.due)
+        assertEquals(Confidence.HIGH, action.confidence["dueTime"])
+    }
+
+    @Test
+    fun daypartModifierDoesNotCrossPunctuationBoundary() {
+        val input = ExtractedText.fromPlainText("晚上8点结束，明天7点开始")
+        val times = NoticeTimeParser.findAll(input)
+
+        assertEquals(2, times.size)
+        assertEquals(LocalTime.of(20, 0), times[0].time)
+        assertEquals(LocalTime.of(7, 0), times[1].time)
+        assertFalse(times[1].periodAdjusted)
+    }
+
+    @Test
+    fun roomParserRejectsBareYearOrHeadcountDigitsButKeepsLegalRoomShapes() {
+        assertNull(NoticeRoomParser.find(ExtractedText.fromPlainText("地点2024")))
+        assertNull(NoticeRoomParser.find(ExtractedText.fromPlainText("在1500")))
+        assertEquals("A203", NoticeRoomParser.find(ExtractedText.fromPlainText("地点A203"))?.room)
+        assertEquals("F01", NoticeRoomParser.find(ExtractedText.fromPlainText("地点F01"))?.room)
+        assertEquals("教三楼302", NoticeRoomParser.find(ExtractedText.fromPlainText("地点教三楼302"))?.room)
+    }
+
+    @Test
+    fun bareDigitsInEventNoticeAreNotAbsorbedAsRoom() {
+        val report = parseReport("今晚7点在2024举办就业讲座")
+
+        val action = report.actions.single() as ProposedAction.CreateEvent
+        assertNull(action.draft.placeText)
+    }
+
+    @Test
+    fun cancellationChoosesCourseInSameClauseInsteadOfLongestCourseElsewhere() {
+        val report = parseReport("高数本周五停课；大学物理照常上课。")
+
+        val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, action.courseRef)
+        assertTrue(action.change is OccurrenceChange.Cancel)
+    }
+
+    @Test
+    fun roomOnlyChangeDoesNotBorrowDateFromNextSentence() {
+        val report = parseReport("本周五高等数学改到A203。下周一恢复原教室。")
+
+        val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(LocalDate.of(2026, 11, 27), action.date)
+        val change = action.change as OccurrenceChange.ChangeRoom
+        assertEquals("A203", change.room)
+    }
+
+    @Test
+    fun unresolvedTargetTeachingWeekDoesNotFallBackToRoomChange() {
+        val report = parseReport("高等数学本周五改到第21周周三，地点A203")
+
+        assertTrue(report.actions.isEmpty())
+        assertTrue(report.issues.any { it.kind == ParseIssueKind.DATE_UNRESOLVED })
+    }
+
+    @Test
     fun suspendPortReturnsSameActionsAsReport() = runBlocking {
         val input = ExtractedText.fromPlainText("高数本周五停课")
         val actions = parser.parse(input, context)

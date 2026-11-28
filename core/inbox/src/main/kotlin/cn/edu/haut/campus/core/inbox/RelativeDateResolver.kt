@@ -91,7 +91,7 @@ object ChineseRelativeDateResolver : RelativeDateResolver {
         """第\s*([0-9]{1,2}|[零〇一二三四五六七八九十]{1,4})\s*周\s*(?:周|星期|礼拜)?([一二三四五六日天1-7])"""
     )
     private val explicitWeekPattern = Regex(
-        """(本|这|下|上)\s*(?:个)?\s*(?:周|星期|礼拜)\s*(?:周|星期|礼拜)?([一二三四五六日天1-7])"""
+        """(本|这|[上下]+)\s*(?:个)?\s*(?:周|星期|礼拜)\s*(?:周|星期|礼拜)?([一二三四五六日天1-7])"""
     )
     private val fixedDayPattern = Regex(
         """(今天晚上|大后天|后天|明天|明晚|今晚|今天)"""
@@ -141,10 +141,11 @@ object ChineseRelativeDateResolver : RelativeDateResolver {
         }
 
         explicitWeekPattern.findAll(text).forEach { match ->
-            val direction = when (match.groupValues[1]) {
-                "本", "这" -> 0L
-                "下" -> 1L
-                "上" -> -1L
+            val directionToken = match.groupValues[1]
+            val direction = when {
+                directionToken == "本" || directionToken == "这" -> 0L
+                directionToken.all { it == '下' } -> directionToken.length.toLong()
+                directionToken.all { it == '上' } -> -directionToken.length.toLong()
                 else -> return@forEach
             }
             val weekday = parseDayOfWeek(match.groupValues[2]) ?: return@forEach
