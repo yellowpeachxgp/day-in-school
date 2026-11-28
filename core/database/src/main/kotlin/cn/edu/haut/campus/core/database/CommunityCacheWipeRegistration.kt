@@ -14,8 +14,6 @@ import java.io.File
  * CampusRepository facade.
  */
 object CommunityCacheWipeRegistration {
-    const val HOOK_KEY: String = "community_response_cache_wipe"
-
     fun rootForProfile(filesDir: File, profileId: String): File =
         CommunityCacheDirectories.rootForProfile(filesDir, profileId)
 

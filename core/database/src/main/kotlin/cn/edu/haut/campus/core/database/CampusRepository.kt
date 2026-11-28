@@ -337,9 +337,9 @@ class CampusRepository internal constructor(
     fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) =
         profileDataWiper.registerBeforeWipeHook(key, hook)
 
-
     private val profileDataWiper = ProfileDataWiper(
         appContext = appContext,
+        accountProfileId = accountProfile.id,
         database = database,
         preferences = preferences,
         dao = dao,
@@ -361,9 +361,6 @@ class CampusRepository internal constructor(
             runCatching { librarySeatSessionVault.clear() }
             runCatching { xiaomiAccountVault.saveAccounts(emptyList()) }
             runCatching { SchoolWebSessionManager.clearAllSchoolWebSessions() }
-        }
-        registerBeforeWipeHook(CommunityCacheWipeRegistration.HOOK_KEY) {
-            CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
         }
         repoScope.launch {
             runCatching { profileDataWiper.sanitizePersistedNullLiteralsForFacade(sanitizeBookingPlanWriteHookForTest) }

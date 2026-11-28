@@ -22,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ProfileDataWiper internal constructor(
     private val appContext: Context,
+    private val accountProfileId: String,
     private val database: HautDatabase,
     private val preferences: DataStore<Preferences>,
     private val dao: CampusDao,
@@ -164,6 +165,7 @@ class ProfileDataWiper internal constructor(
                 it[CampusRepositoryPrefKeys.AUTO_SYNC_ENABLED] = false
             }
         }
+        runCatching { CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfileId) }
         for (hook in beforeWipeHooks.values) {
             runCatching { hook.invoke() }
         }
