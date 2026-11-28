@@ -18,17 +18,19 @@ internal object BackupSchemaSafety {
         "password", "passwd", "pwd", "passphrase", "passcode", "credential", "credentials",
         "cookie", "setcookie", "authorization", "proxyauthorization", "secret", "clientsecret",
         "apikey", "aikey", "privatekey", "secretkey", "accesskey", "sessionkey", "cookiekey",
-        "encryptionkey", "signingkey", "masterkey", "keysecret", "keystore", "keychain"
+        "encryptionkey", "signingkey", "masterkey", "keysecret", "keystore", "keychain",
+        "jwt", "passkey", "sessid", "authcode", "authsecret", "hmackey"
     )
 
     private val forbiddenSegments = setOf(
         "password", "passwd", "pwd", "passphrase", "passcode", "credential", "credentials",
-        "cookie", "authorization", "secret", "token", "bearer", "session", "sessionid"
+        "cookie", "authorization", "auth", "secret", "token", "bearer", "session", "sessionid",
+        "jwt", "oauth", "sso", "sessid", "csrf", "xsrf", "passkey", "otp", "totp"
     )
 
     private val sensitiveKeyContexts = setOf(
         "api", "ai", "private", "secret", "access", "session", "auth", "encryption",
-        "signing", "master", "client", "credential", "cookie", "x"
+        "signing", "master", "client", "credential", "cookie", "hmac", "x"
     )
 
     private val sensitiveAssignmentPattern = Regex(

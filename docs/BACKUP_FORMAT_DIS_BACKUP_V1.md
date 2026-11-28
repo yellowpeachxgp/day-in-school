@@ -52,7 +52,7 @@ manifest 是 CanonicalJson，且 v1 拒绝任何未定义字段。字段：
 
 schema 层和值层防线同时生效：
 
-1. 键名黑名单覆盖 password/passwd/pwd/credential/cookie/authorization/auth/session/token/secret/api key/AI key/private key/access key/client secret 等常见变体；`sourceKey`、`courseKey`、`eventScopeKey` 这类稳定业务标识不因含有 Key 字样被误伤。
+1. 键名黑名单覆盖 password/passwd/pwd/credential/cookie/authorization/auth/session/token/secret/api key/AI key/private key/access key/client secret/JWT/OAuth/SSO/CSRF/XSRF/passkey/OTP/HMAC key 等常见变体；`sourceKey`、`courseKey`、`eventScopeKey` 这类稳定业务标识不因含有 Key 字样被误伤。
 2. 所有导出的文本单元格都做值扫描，不只扫键名；可解析为 JSON 的嵌套文本会递归扫描嵌套键和嵌套字符串。Bearer/JWT、Cookie/session 赋值、口令/Token/Key 赋值、PEM 私钥头、常见云厂商 key 形态都会 fail-closed。错误只报告表/列上下文，不回显秘密值。
 3. 文本型 blob 做同规则 best-effort 扫描；含 NUL 的二进制 blob 不按文本强制解释，但 schema 仍不允许凭据字段。扫描发现疑似秘密时导出/恢复整体失败，不做部分导出或部分写入。
 4. runtime diagnostic 与上游 provenance/投递细节不是可移植事实：`library_booking_plans.lastDiagnosticMessage` 不导出，恢复为 NULL；`parcel_items.sourcesJson/fieldProvenanceJson/checkpointsJson` 不导出，恢复为空 JSON；`personal_events.provenanceJson` 不导出，恢复为本地 `dis-backup/v1` RESTORE provenance。主用户内容（课程、日程、包裹状态等）仍可备份，但不再夹带上游账号痕迹、来源 JSON 或诊断文本。
@@ -63,7 +63,7 @@ v1 备份的可移植分类：学业数据、校园参考数据、提醒偏好�
 
 以下内容**明确不进入备份**：
 
-1. 凭据、Cookie、Token、AI Key、私钥、授权 session；schema 键名防线对 password/credential/cookie/authorization/auth/session/token/secret/api key/AI key/private key/access key/client secret 等变体 fail-closed，文本值扫描对嵌套秘密值同样 fail-closed。
+1. 凭据、Cookie、Token、AI Key、私钥、授权 session；schema 键名防线对 password/credential/cookie/authorization/auth/session/token/secret/api key/AI key/private key/access key/client secret/JWT/OAuth/SSO/CSRF/XSRF/passkey/OTP/HMAC key 等变体 fail-closed，文本值扫描对嵌套秘密值同样 fail-closed。
 2. `cloud_identity_binding`、`parcel_source_connections`：它们是跨设备授权/登录 linkage。备份不携带 Cookie/Token，因此不能恢复出“看似已授权”的假状态；用户在新设备重新登录/授权。
 3. `widget_instance_configs`：Android `appWidgetId` 是设备局部序号，跨设备恢复会错绑或覆盖其它 widget。
 4. `reminder_tasks`：调度运行时态，由课程/计划等 source-of-truth 重新 reconcile。

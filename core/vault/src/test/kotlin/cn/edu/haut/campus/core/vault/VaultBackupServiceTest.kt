@@ -352,7 +352,8 @@ class VaultBackupServiceTest {
     fun secretKeyBlacklistCoversAuthSessionKeyCookieAndTokenVariants() {
         listOf(
             "accessToken", "refresh_token", "idToken", "authToken", "sessionId", "x-api-key",
-            "privateKey", "clientSecret", "cookie", "set-cookie", "Authorization"
+            "privateKey", "clientSecret", "cookie", "set-cookie", "Authorization", "auth",
+            "jwt", "oauth", "sso", "session_key", "csrf", "xsrf", "passkey", "totp", "hmacKey"
         ).forEach { key ->
             val error = runCatching { BackupSchemaSafety.validateKeyName(key, "测试") }.exceptionOrNull()
             assertTrue("应拒绝 " + key, error is BackupValidationException)
