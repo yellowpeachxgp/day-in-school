@@ -1,19 +1,19 @@
 # 阶段 S 任务板（TASKBOARD）
 
 > 本文件是阶段 S 进度的唯一来源。每次派发、交回、阻塞、PR 创建、合并都必须立即更新，并经 PR 合入。
-> 当前快照：2026-11-28 11:10（Asia/Shanghai）由主代理批量刷新；22:40 之后已合并 CT-04/05/06、W4-02/03/04、W6-01a/01b/02、W0-04、W1-02b、W1-07、W0-05-c6/c7/c8/d首片、W0-10 收尾、lint 修复、sanitize 竞态修复等。
+> 当前快照：2026-11-28 22:30（Asia/Shanghai）由主代理批量刷新；11:10 之后已合并 W1-03/W1-04/W1-05切片一/W2-02/W2-03/W2-05切片一/W2-06切片一/W3-04/W3-05/W4-05/W4-06/W4-07骨架/W4-11/W4-12/W5-01/W5-02/CT-07/门禁对齐/lint修复等。
 
 ## 10 槽位状态
 
 | 槽位 | 子代理 | 当前任务 | 分支或 PR | 开始时间 | 状态 | 阻塞项 |
 |---|---|---|---|---|---|---|
-| 1 | m-w501 | W5-01 dis-datapack/v1 Schema/加载器/签名 | feat/cis-w5-01-datapack | 2026-11-28 | 进行中 | — |
-| 2 | m-w103fix2 | W1-03 vault 迁移审阅三项修复 | feat/cis-w1-03-vault / PR#133 | 2026-11-28 | 进行中 | — |
-| 3 | m-ct07 | CT-07 E2EE 同步块契约 | feat/cis-ct-07-e2ee-contract | 2026-11-28 | 进行中 | — |
-| 4 | m-w006ttfix5 | PR#104 核对候选持久化修复 | feat/cis-w0-06d / PR#104 | 2026-11-28 | 进行中 | — |
-| 5 | m-w405fix2 | W4-05 缓存竞态/毒化修复 | feat/cis-w4-05 / PR#137 | 2026-11-28 | 进行中 | — |
-| 6 | m-w103rev4 | W1-03 迁移维度复审 | PR#133 | 2026-11-28 | 进行中 | — |
-| 7 | — | 机动预留 | — | — | 空闲 | — |
+| 1 | m-w408b | W4-08 宿舍协作恢复 | feat/cis-w4-08-dorm | 2026-11-28 | 进行中 | — |
+| 2 | m-w503fix | W5-03 签名复查等阻断修复 | feat/cis-w5-03-guide-flowrunner / PR#159 | 2026-11-28 | 进行中 | — |
+| 3 | m-w301fix3 | W3-01 第二轮正确性修复 | feat/cis-w3-01-degree-audit / PR#153 | 2026-11-28 | 进行中 | — |
+| 4 | m-w105ttrev | PR#157 Timetable 切片二审阅 | PR#157 | 2026-11-28 | 进行中 | — |
+| 5 | m-w410 | W4-10 设施雷达 | feat/cis-w4-10-facility-radar | 2026-11-28 | 进行中 | — |
+| 6 | m-w506 | W5-06 首批数据包草稿 | feat/cis-w5-06-datapack-drafts | 2026-11-28 | 进行中 | — |
+| 7 | m-ct-polls | 契约线：list-polls 修正案 | feat/cis-ct-polls | 2026-11-28 | 进行中 | — |
 | 8 | — | 机动预留 | — | — | 空闲 | — |
 | 9 | — | 集成列车 | — | — | 空闲 | — |
 | 10 | — | 阶段联调验收 | — | — | 空闲 | — |
@@ -45,22 +45,22 @@
 | W1-01 | `:core:events` 与 outbox 协议 | Android | INF-00 | — | C05 | 已合并：a e27732c（PR#64）；b（PR#85） | m-w101bfix 等 | feat/cis-w1-01b-domain-events | PR#64/#85 | — | 942fd3bc（b） | — |
 | W1-02a | `:core:timeline` 核心（纯 JVM，含 ICS 导出） | Android | INF-00 | — | C04 | 已合并 | s-w102a | feat/cis-w1-02a-timeline | PR#71 | — | 18925c0 | — |
 | W1-02b | Timeline 首批 Source：课程、考试、实践课、个人日程 | Android | W1-02a、W0-04 | — | C04 | 已合并 | m-w102b | feat/cis-w1-02b-timeline-sources | PR#136 | — | e8cacae6 | — |
-| W1-03 | `:core:vault`：journal、FTS、outbox 落库、`personal_events`、`blob_store` | Android | W1-01、W0-05、R01、R06 | Room v12 | C05 C06 C27 | 修复中：架构/迁移审阅阻断修复（PR#133 head 45aa8db8）；骨架 UI 归 W1-03b（AUTO-035） | m-w103fix2 | feat/cis-w1-03-vault | PR#133 | — | — | — |
-| W1-04 | 备份与恢复 `dis-backup/v1` | Android | W1-03 | — | C07 C27 | 未开始 | — | — | — | — | — | — |
-| W1-05 | Today、Timetable、小组件改为读取 Timeline（截图不变） | Android | W1-02b、W0-06a | — | C04 C26 | 未开始 | — | — | — | — | — | — |
+| W1-03 | `:core:vault`：journal、FTS、outbox 落库、`personal_events`、`blob_store` | Android | W1-01、W0-05、R01、R06 | Room v12 | C05 C06 C27 | 已合并（核心）；骨架 UI 归 W1-03b 未开始 | m-w103c 等 | feat/cis-w1-03-vault | PR#133 | — | a1144164 | AUTO-035 切分 |
+| W1-04 | 备份与恢复 `dis-backup/v1` | Android | W1-03 | — | C07 C27 | 已合并 | m-w104 等 | feat/cis-w1-04-backup | PR#144 | — | 7cae54f2 | — |
+| W1-05 | Today、Timetable、小组件改为读取 Timeline（截图不变） | Android | W1-02b、W0-06a | — | C04 C26 | 进行中：切片一 Today 已合并（PR#151）；切片二 PR#157 审阅中；切片三小组件未开始 | m-w105ttrev | feat/cis-w1-05b-timetable-timeline | PR#151/#157 | — | 188f7384（切片一） | — |
 | W1-07 | `:core:campus-graph`：统一楼宇、教室、设施、入口、流程实体，迁入现有目录数据 | Android | W0-05 | — | C17 C20 C23 | 已合并 | m-w107b 等 | feat/cis-w1-07-campus-graph | PR#135 | — | 56fd280f | — |
 | W2-01 | `:core:automation` 引擎核心（规则、SPI、去重、试运行、运行记录模型） | Android | W1-01、W1-02a | — | C08 | 已合并 | m-w201 等 | feat/cis-w2-01-automation-core | PR#105 | — | b39940eb | Devin 2 项 lease/确认语义留 W2-02 硬验收 |
-| W2-02 | 内置触发器、条件与动作，Android 调度与 outbox 消费 | Android | W2-01、W1-03 | Room v13 | C08 | PR 待审（quick/android/secrets 已通过） | m-w202 | feat/cis-w2-02-automation-runtime | PR#145 | b823edf2 | — | 自动化风险/Room 迁移需 2 独立审阅 |
-| W2-03 | 4 个规则模板与 `WeatherProvider` SPI | Android | W2-02、R03 | — | C08 | 未开始 | — | — | — | — | — | — |
+| W2-02 | 内置触发器、条件与动作，Android 调度与 outbox 消费 | Android | W2-01、W1-03 | Room v13 | C08 | 已合并 | m-w202 等 | feat/cis-w2-02-automation-runtime | PR#145 | — | ccc3ecac | — |
+| W2-03 | 4 个规则模板与 `WeatherProvider` SPI | Android | W2-02、R03 | — | C08 | 已合并 | m-w203 等 | feat/cis-w2-03-rule-templates | PR#148 | — | 2dc95f7d | MET ToS 复核属用户待办 |
 | W2-04 | `:core:textextract`：端侧 OCR 与 PDF 文本抽取 | Android | R02、INF-00 | — | C09 | 已合并 | s7-w204 等 | feat/cis-w2-04-textextract | PR#78 | — | cddfb54 | — |
-| W2-05 | `:core:inbox`：分享入口、相对日期、规则解析器、指纹去重、改课预览与应用 | Android | W1-02b、W1-03、W2-04 | Room v14 | C09 | 未开始 | — | — | — | — | — | — |
-| W2-06 | `:core:ai` BYOK 通道（§6.8） | Android | W1-04 | — | C10 C27 | PR 待审（三项审阅阻断已修复，quick/android/secrets 已通过） | m-w206fix | feat/cis-w2-06-byok | PR#150 | cceba752 | — | 凭据/Key 类需 2 独立审阅 |
+| W2-05 | `:core:inbox`：分享入口、相对日期、规则解析器、指纹去重、改课预览与应用 | Android | W1-02b、W1-03、W2-04 | Room v14 | C09 | 进行中：切片一（日期/规则/去重/v14）已合并 PR#155；分享入口/预览应用未开始 | — | feat/cis-w2-05-inbox | PR#155 | — | 438fa000（切片一） | — |
+| W2-06 | `:core:ai` BYOK 通道（§6.8） | Android | W1-04 | — | C10 C27 | 进行中：切片一（Key 存储+Port）已合并 PR#150；切片二预览 UI 未开始 | — | feat/cis-w2-06-byok | PR#150 | — | ccda0234（切片一） | — |
 | W2-07 | 收件箱的 AI 解析器（可选路径，需预览和单次同意） | Android | W2-05、W2-06 | — | C09 C10 | 未开始 | — | — | — | — | — | — |
-| W3-01 | 培养方案导入、`DegreeAuditor`、人工认定、依据追踪 | Android | W0-05 | Room v15 | C11 | 未开始 | — | — | — | — | — | — |
+| W3-01 | 培养方案导入、`DegreeAuditor`、人工认定、依据追踪 | Android | W0-05 | Room v15（过渡 AUTO-042） | C11 | 第二轮修复中（PR#153） | m-w301fix3 | feat/cis-w3-01-degree-audit | PR#153 | — | — | — |
 | W3-02 | `:core:solver` 与 `TravelTimeMatrix`、无解解释 | Android | R04、W1-02a | — | C12 | 已合并 | w302-solver 等 | feat/cis-w3-02-solver | PR#87 | — | 240eb54 | — |
 | W3-03 | 选课沙盘：求解器 ↔ 选课草稿 ↔ 培养方案 | Android | W3-01、W3-02 | — | C12 | 未开始 | — | — | — | — | — | — |
-| W3-04 | `:core:knowledge`：资料归档、关联课程与教学周、全文搜索、作业截止 | Android | W1-03、W2-04、W1-02b | Room v16 | C13 | 未开始 | — | — | — | — | — | — |
-| W3-05 | 复习排程（求解器复用） | Android | W3-02、W3-04 | — | C13 | 未开始 | — | — | — | — | — | — |
+| W3-04 | `:core:knowledge`：资料归档、关联课程与教学周、全文搜索、作业截止 | Android | W1-03、W2-04、W1-02b | Room v16（过渡 AUTO-041） | C13 | 已合并 | m-w304 等 | feat/cis-w3-04-knowledge | PR#142 | — | 6658d50c | — |
+| W3-05 | 复习排程（求解器复用） | Android | W3-02、W3-04 | — | C13 | 已合并 | m-w305 等 | feat/cis-w3-05-review-scheduler | PR#149 | — | 0282a63e | — |
 | W3-06 | 课程资料问答（BYOK，答案附出处） | Android | W3-04、W2-06 | — | C13 C10 | 未开始 | — | — | — | — | — | — |
 | CT-01 | 群组、邀请、成员 | 两仓 contracts | INF-02 | — | C14 C28 | 已合并 | ct01-contract 等 | feat/cis-ct-01-group-contract | cloud PR#12；Android PR#95 | — | cloud 9ba3a2f；Android 43d58a6 | 11 端点已随 W4-01 翻 active |
 | CT-02 | 忙闲块与投票 | 两仓 contracts | CT-01 | — | C15 C28 | 已合并 | m-ct02 等 | feat/cis-ct-02-availability-contract | cloud PR#14；Android PR#99 | — | cloud a0d9cd4；Android 2b951004 | 7 端点 planned，实现属 W4-02 |
@@ -68,22 +68,22 @@
 | CT-04 | 地点状态 | 两仓 contracts | INF-02 | — | C17 C28 | 已合并 | m-ct04b 等 | feat/cis-ct-04-place-status-contract | cloud PR#20；Android PR#115 | — | cloud 53990f9；Android a7a6eaa1 | 9 端点已随 W4-04 翻 active |
 | CT-05 | 论坛与私信保留端点（501） | 两仓 contracts | INF-02 | — | C18 C28 | 已合并 | m-ct05 等 | feat/cis-ct-05-ugc-reserved-contract | cloud PR#22；Android PR#120 | — | cloud fa320ac；Android 55293ada | 12 端点 reserved |
 | CT-06 | 内容包 | 两仓 contracts | INF-02 | — | C19 C28 | 已合并 | m-ct06c 等 | feat/cis-ct-06-content-pack-contract | cloud PR#27；Android PR#134 | — | cloud 7102e2d；Android 1d1eadf1 | 10 端点 planned，实现属 W5-02 |
-| CT-07 | E2EE 同步块 | 两仓 contracts | INF-02 | — | C07 C28 | 进行中 | m-ct07 | feat/cis-ct-07-e2ee-contract | 待创建 | — | — | — |
+| CT-07 | E2EE 同步块 | 两仓 contracts | INF-02 | — | C07 C28 | 已合并 | m-ct07 等 | feat/cis-ct-07-e2ee-sync-contract | cloud PR#28；Android PR#138 | — | cloud a23357c；Android 530d73d7 | 7 端点已随 W4-11 翻 active |
 | W4-01 | `packages/community` | 云端 | CT-01、W0-08 | SQL 0005 | C14 | 已合并 | m-w401 等 | feat/cis-w4-01-community | cloud PR#15；Android PR#116 | — | cloud 8ce6ae1；Android 3cf03876 | — |
 | W4-02 | `packages/availability` | 云端 | CT-02、W4-01 | SQL 0006 | C15 | 已合并 | m-w402c 等 | feat/cis-w4-02-availability | cloud PR#25；Android PR#129 | — | cloud 89dea7b；Android c1a51169 | — |
 | W4-03 | `packages/ledger`（只记账） | 云端 | CT-03、W4-01 | SQL 0007 | C16 | 已合并 | m-w403c 等 | feat/cis-w4-03-ledger | cloud PR#26；Android PR#132 | — | cloud 4d8da4d；Android 4937fcbf | — |
 | W4-04 | `packages/place-status` | 云端 | CT-04、W0-08 | SQL 0008 | C17 | 已合并 | m-w404b 等 | feat/cis-w4-04-place-status | cloud PR#23；Android PR#123 | — | cloud e7a9477；Android 51a389e5 | — |
-| W4-05 | Android `:core:community` 客户端、本地缓存、注册擦除链路 | Android | CT-04、W0-05 | Room v17（暂缓 AUTO-037） | C14 C27 | 修复中：缓存竞态/毒化（PR#137） | m-w405fix2 | feat/cis-w4-05-community-client | PR#137 | — | — | — |
-| W4-06 | 论坛与私信接口预留：云端 501、Android `DisabledForumPort` | 两仓 | CT-05、W0-08、W4-05 | — | C18 | 未开始 | — | — | — | — | — | — |
-| W4-07 | 组队找时间（#33） | Android | W4-05、W1-02b | — | C15 | 未开始 | — | — | — | — | — | — |
+| W4-05 | Android `:core:community` 客户端、本地缓存、注册擦除链路 | Android | CT-04、W0-05 | Room v17（暂缓 AUTO-037） | C14 C27 | 已合并 | m-w405b 等 | feat/cis-w4-05-community-client | PR#137 | — | c00243fb | — |
+| W4-06 | 论坛与私信接口预留：云端 501、Android `DisabledForumPort` | 两仓 | CT-05、W0-08、W4-05 | — | C18 | 已合并 | m-w406 等 | feat/cis-w4-06-forum-reservation | cloud PR#34；Android PR#158 | — | cloud c78f55a；Android 6386fb8e | — |
+| W4-07 | 组队找时间（#33） | Android | W4-05、W1-02b | — | C15 | 骨架已合并（PR#160）；completion 待 list-polls 契约+实现（在途） | m-ct-polls | feat/cis-ct-polls | PR#160 | — | 39513335（骨架） | 契约缺口修复中 |
 | W4-08 | 宿舍协作（#37） | Android | W4-05、W4-09 | — | C16 | 未开始 | — | — | — | — | — | — |
 | W4-09 | `:core:ledger` 纯 JVM 分摊算法（与云端语义一致） | Android | INF-00 | — | C16 | 已合并 | s3-w409 | feat/cis-w4-09-ledger | PR#63 | — | 8aadb4d | — |
 | W4-10 | 设施雷达与状态上报（#39） | Android | W4-05、W1-07 | — | C17 | 未开始 | — | — | — | — | — | — |
-| W4-11 | `packages/sync` E2EE 块存储 | 云端 | CT-07、W0-08 | SQL 0010 | C07 | 未开始 | — | — | — | — | — | — |
-| W4-12 | Android 跨设备同步客户端 | Android | W1-04、W4-11 | — | C07 | 未开始 | — | — | — | — | — | — |
-| W5-01 | `dis-datapack/v1` Schema、加载器、签名 | 两仓 | W1-07、INF-02 | Room v18 | C19 | 进行中 | m-w501 | feat/cis-w5-01-datapack | 待创建 | — | — | — |
-| W5-02 | `packages/content-catalog` | 云端 | CT-06、W5-01 | SQL 0009 | C19 | 未开始 | — | — | — | — | — | — |
-| W5-03 | `:core:guide` FlowRunner | Android | W5-01、W1-02b | — | C20 C21 | 未开始 | — | — | — | — | — | — |
+| W4-11 | `packages/sync` E2EE 块存储 | 云端 | CT-07、W0-08 | SQL 0010 | C07 | 已合并 | m-w411 等 | feat/cis-w4-11-sync | cloud PR#32；Android PR#147 | — | cloud 2a3f938；Android 9c9d4ddb | — |
+| W4-12 | Android 跨设备同步客户端 | Android | W1-04、W4-11 | — | C07 | 已合并 | m-w412 等 | feat/cis-w4-12-sync-client | PR#152 | — | 478dbe87 | — |
+| W5-01 | `dis-datapack/v1` Schema、加载器、签名 | 两仓 | W1-07、INF-02 | Room v18（过渡 AUTO-040） | C19 | 已合并 | m-w501 等 | feat/cis-w5-01-datapack | cloud PR#29；Android PR#140 | — | cloud 44b14e6；Android b896a5ff | — |
+| W5-02 | `packages/content-catalog` | 云端 | CT-06、W5-01 | SQL 0009 | C19 | 已合并 | m-w502 等 | feat/cis-w5-02-content-catalog | cloud PR#33；Android PR#156 | — | cloud ff0e72d；Android 735483ea | — |
+| W5-03 | `:core:guide` FlowRunner | Android | W5-01、W1-02b | — | C20 C21 | 修复中（签名复查/截断/控制字符） | m-w503fix | feat/cis-w5-03-guide-flowrunner | PR#159 | — | — | — |
 | W5-04 | 办事流程导航（#38） | Android | W5-03 | — | C20 | 未开始 | — | — | — | — | — | — |
 | W5-05 | 考证、竞赛与奖助中心（#41） | Android | W5-03、W3-01 | — | C21 | 未开始 | — | — | — | — | — | — |
 | W5-06 | 首批数据包草稿：10 个高频事项、机会目录、设施目录（只用公开来源，一律 `UNVERIFIED`，D1） | 数据 | W5-01 | — | C19 | 未开始 | — | — | — | — | — | — |
@@ -93,9 +93,9 @@
 | W6-01a | 插件安全底座 | 两仓 | W6-00、W0-08、W0-06c | SQL 0011；Room v19 预留 | C22 | 已合并 | m-w601a 等 | feat/cis-w6-01a-plugin-security | cloud PR#19；Android PR#114 | — | cloud 925c0df；Android 490e85de | 双独立审阅通过 |
 | W6-01b | 插件开发者工具：keygen / pack / simulate / doctor、三种 init 模板与从零到上架指南 | 两仓 | W6-00 | — | C22 | 已合并 | m-w601b 等 | feat/cis-w6-01b-plugin-tools | cloud PR#18；Android PR#111 | — | cloud e8d6e5f；Android ae91fff6 | — |
 | W6-02 | `:core:ui-runtime` 声明式渲染器、6 个槽位接入与插件管理页（阶段2） | Android | W6-01a | — | C22 | 已合并 | m-w602 等 | feat/cis-w6-02-ui-runtime | PR#131 | — | b2160486 | — |
-| W6-03 | 室内路网数据包与室外到室内衔接（试点 1 栋楼，#35） | Android | W1-07、W5-01 | — | C23 | 未开始 | — | — | — | — | — | — |
+| W6-03 | 室内路网数据包与室外到室内衔接（试点 1 栋楼，#35） | Android | W1-07、W5-01 | — | C23 | 未开始 | — | — | — | — | — | W1-07/W5-01 已就绪 |
 | W6-04 | 一日回放与两套课表通勤对比（#44 轻量） | Android | W1-02b、W3-02 | — | C24 | 未开始 | — | — | — | — | — | — |
-| W6-05 | 官方「计算机服务社维修预约」与非官方示例插件全流程、零修改宿主与失败安全验收（阶段2） | 两仓 | W6-01a、W6-02 | — | C22 | 未开始 | — | — | — | — | — | AC-34…AC-36 |
+| W6-05 | 官方「计算机服务社维修预约」与非官方示例插件全流程、零修改宿主与失败安全验收（阶段2） | 两仓 | W6-01a、W6-02 | — | C22 | 未开始 | — | — | — | — | — | W6-01a/02 已就绪 |
 
 ## 更新规则
 
