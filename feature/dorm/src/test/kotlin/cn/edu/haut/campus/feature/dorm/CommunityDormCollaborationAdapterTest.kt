@@ -100,17 +100,71 @@ class CommunityDormCollaborationAdapterTest {
         }
     }
 
-    private fun envelope(dataJson: String): String =
-        """{"ok":true,"code":"OK","request_id":"req","data":""" + dataJson + ""","meta":{"request_id":"req","api_version":"v1","next_cursor":null}}"""
+    private fun envelope(dataJson: String): String {
+        val data = Json.parse(dataJson)
+        return Json.canonical(
+            obj(
+                "ok" to JsonValue.Bool(true),
+                "code" to str("OK"),
+                "request_id" to str("req"),
+                "data" to data,
+                "meta" to obj(
+                    "request_id" to str("req"),
+                    "api_version" to str("v1"),
+                    "next_cursor" to JsonValue.Null,
+                ),
+            ),
+        )
+    }
 
-    private fun jsonMembers(): String = "[" + listOf(member1, member2, member3).joinToString(",") { id ->
-        """{"member_id":""" + id + ""","group_id":""" + groupId + ""","school_id":"haut","cloud_user_id":"10000000-0000-4000-8000-000000000001","display_name":"合成成员","role":"MEMBER","sharing_level":"NONE","status":"ACTIVE","joined_at":"2026-11-01T00:00:00Z","left_at":null}"""
-    } + "]"
+    private fun jsonMembers(): String = Json.canonical(
+        JsonValue.Arr(
+            listOf(member1, member2, member3).map { id ->
+                obj(
+                    "member_id" to str(id),
+                    "group_id" to str(groupId),
+                    "school_id" to str("haut"),
+                    "cloud_user_id" to str("10000000-0000-4000-8000-000000000001"),
+                    "display_name" to str("合成成员"),
+                    "role" to str("MEMBER"),
+                    "sharing_level" to str("NONE"),
+                    "status" to str("ACTIVE"),
+                    "joined_at" to str("2026-11-01T00:00:00Z"),
+                    "left_at" to JsonValue.Null,
+                )
+            },
+        ),
+    )
 
     private fun jsonLedgerEntry(shares: List<Long>): String {
-        val shareJson = listOf(member1, member2, member3).mapIndexed { index, id ->
-            """{"participant_member_id":""" + id + ""","amount_fen":""" + shares[index] + """}"""
-        }.joinToString(",")
-        return """{"entry_id":"20000000-0000-4000-8000-000000000001","group_id":""" + groupId + ""","school_id":"haut","entry_kind":"EXPENSE","corrects_entry_id":null,"correction_reason":null,"title":"公共洗衣液","note":null,"amount_fen":1000,"paid_by_member_id":""" + member1 + ""","occurred_at":"2026-11-20T12:00:00Z","split_rule":{"type":"EQUAL"},"shares":[""" + shareJson + """],"created_by_member_id":""" + member1 + ""","created_at":"2026-11-20T12:00:01Z"}"""
+        val shareRows = listOf(member1, member2, member3).mapIndexed { index, id ->
+            obj(
+                "participant_member_id" to str(id),
+                "amount_fen" to num(shares[index]),
+            )
+        }
+        return Json.canonical(
+            obj(
+                "entry_id" to str("20000000-0000-4000-8000-000000000001"),
+                "group_id" to str(groupId),
+                "school_id" to str("haut"),
+                "entry_kind" to str("EXPENSE"),
+                "corrects_entry_id" to JsonValue.Null,
+                "correction_reason" to JsonValue.Null,
+                "title" to str("公共洗衣液"),
+                "note" to JsonValue.Null,
+                "amount_fen" to num(1000L),
+                "paid_by_member_id" to str(member1),
+                "occurred_at" to str("2026-11-20T12:00:00Z"),
+                "split_rule" to obj("type" to str("EQUAL")),
+                "shares" to JsonValue.Arr(shareRows),
+                "created_by_member_id" to str(member1),
+                "created_at" to str("2026-11-20T12:00:01Z"),
+            ),
+        )
     }
+
+    private fun str(value: String): JsonValue.Str = JsonValue.Str(value)
+    private fun num(value: Long): JsonValue.Num = JsonValue.Num(value.toString())
+    private fun obj(vararg fields: Pair<String, JsonValue>): JsonValue.Obj = JsonValue.Obj(linkedMapOf(*fields))
 }
