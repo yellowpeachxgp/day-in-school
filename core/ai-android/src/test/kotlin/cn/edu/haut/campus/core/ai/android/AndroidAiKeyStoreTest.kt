@@ -63,6 +63,20 @@ class AndroidAiKeyStoreTest {
     }
 
     @Test
+    fun trailingSlashEndpointIsCanonicalizedBeforeEncryptedRoundTrip() = runTest {
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("trailing-slash"), keys = fakeKeys)
+        val trailing = endpoint.copy(baseUrl = HttpsUrl("https://provider.example/v1/"))
+        val canonical = endpoint.copy(baseUrl = HttpsUrl("https://provider.example/v1"))
+
+        store.put(scope, trailing, keyCanary().toCharArray())
+
+        assertEquals(canonical, store.settings(scope).endpoint)
+        val loadedEndpoint = store.withKeyMaterial(scope) { storedEndpoint, _ -> storedEndpoint }
+        assertEquals(canonical, loadedEndpoint)
+        store.wipeAll(scope)
+    }
+
+    @Test
     fun profilePartitionsStayIsolatedAndWipingOneLeavesTheOtherConfigured() = runTest {
         val store = AndroidAiKeyStore(context, rootDir = testRoot("profile-isolation"), keys = fakeKeys)
         val otherEndpoint = endpoint.copy(model = "chat-other-profile")

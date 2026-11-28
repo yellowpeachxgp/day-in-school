@@ -11,6 +11,7 @@ import cn.edu.haut.campus.core.ai.AiKeyStatus
 import cn.edu.haut.campus.core.ai.AiKeyStore
 import cn.edu.haut.campus.core.ai.AiSettings
 import cn.edu.haut.campus.core.ai.AiSettingsStore
+import cn.edu.haut.campus.core.ai.HttpsUrl
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -104,10 +105,11 @@ class AndroidAiKeyStore internal constructor(
                 try {
                     keyBytes = charsToUtf8(keyCopy)
                     require(keyBytes.size <= AiByokStorageFormat.MAX_KEY_BYTES) { "AI Key UTF-8 长度超限" }
-                    payload = AiByokStorageFormat.encodePayload(endpoint, keyBytes)
+                    val normalizedEndpoint = endpoint.copy(baseUrl = HttpsUrl(endpoint.baseUrl.withoutTrailingSlash))
+                    payload = AiByokStorageFormat.encodePayload(normalizedEndpoint, keyBytes)
                     writeAtomic(envelopeFile(scope), encrypt(scope, payload))
                     val verified = decryptEnvelopeLocked(scope) as? EnvelopeRead.Valid
-                    check(verified != null && verified.payload.endpoint == endpoint) { "AI Key 安全保存校验失败" }
+                    check(verified != null && verified.payload.endpoint == normalizedEndpoint) { "AI Key 安全保存校验失败" }
                     try {
                         val roundTrip = verified.payload.keyBytes
                         check(roundTrip.contentEquals(keyBytes)) { "AI Key 安全保存校验失败" }
