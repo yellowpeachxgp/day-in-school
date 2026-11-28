@@ -178,6 +178,7 @@ internal fun SettingsHomeSectionContent(
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
     onNavigateToAutomation: () -> Unit,
+    onNavigateToAiService: () -> Unit,
     onShowImportHistory: () -> Unit,
     settingsEntriesContent: @Composable () -> Unit = {}
 ) {
@@ -602,6 +603,41 @@ internal fun SettingsHomeSectionContent(
                         }
                         Text(
                             text = "规则与记录 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToAiService)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "AI 服务",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "用户自带 Key · 默认关闭 · 发送前预览",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "配置 BYOK ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )
