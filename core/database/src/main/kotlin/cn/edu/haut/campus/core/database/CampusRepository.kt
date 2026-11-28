@@ -221,11 +221,10 @@ class CampusRepository internal constructor(
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
 
-        override suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> =
-            this@CampusRepository.syncWithCampusCloud()
-
-        override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? =
-            this@CampusRepository.cloudHttpTransportForTest
+        override suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> = this@CampusRepository.syncWithCampusCloud()
+        override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? = this@CampusRepository.cloudHttpTransportForTest
+        override suspend fun wipeCommunityCacheForCloudIdentityChange() =
+            CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
     }
     private val cloudIdentityRepository: CloudIdentityRepository = CloudIdentityRepository(
         environment = repositoryEnvironment,
@@ -336,9 +335,9 @@ class CampusRepository internal constructor(
     fun registerBeforeWipeHook(key: String, hook: suspend () -> Unit) =
         profileDataWiper.registerBeforeWipeHook(key, hook)
 
-
     private val profileDataWiper = ProfileDataWiper(
         appContext = appContext,
+        accountProfileId = accountProfile.id,
         database = database,
         preferences = preferences,
         dao = dao,
