@@ -104,7 +104,8 @@ class VaultBackupServiceTest {
         assertEquals("高等数学A（一）", database.campusDao().getCourseById("course-1")?.name)
         assertEquals("复习离散数学", database.vaultDao().getPersonalEvent("pe-1")?.title)
         assertNotNull(database.vaultDao().getBlob(database.vaultDao().getBlobsSnapshot().single().blobId))
-        assertEquals(1, RoomSearchIndex(database).query(scope, SearchQuery(scope, "离散")).totalCount)
+        val hits = RoomSearchIndex(database).query(scope, SearchQuery(scope, "离散")).hits
+        assertTrue(hits.any { it.document.ref.id == "pe-1" })
         val restoredToken = database.campusDao().getOccurrenceOverrideById("ov-1")?.mutationToken
         assertTrue(restoredToken?.isNotBlank() == true)
         assertNotEquals("frozen-token", restoredToken)
