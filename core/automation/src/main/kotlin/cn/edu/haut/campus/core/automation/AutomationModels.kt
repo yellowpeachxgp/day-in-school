@@ -271,7 +271,10 @@ enum class ActionOutcomeStatus {
     FAILED,
     DRY_RUN_PREVIEW,
     BLOCKED_CONFIRMATION_REQUIRED,
-    SKIPPED_QUIET_HOURS
+    SKIPPED_QUIET_HOURS,
+
+    /** 执行/确认/检查点状态无法对账；绝不把已发生副作用误记为未执行或被阻止。 */
+    INDETERMINATE
 }
 
 data class ActionOutcome(
@@ -303,7 +306,10 @@ enum class RunStatus {
     CONDITIONS_NOT_MET,
     DISABLED,
     INVALID_RULE,
-    SUPPRESSED
+    SUPPRESSED,
+
+    /** 至少一个动作已经发生或可能发生，但持久化证据不足以判定终局。 */
+    INDETERMINATE
 }
 
 /** MASTER_PLAN §6.3 的运行记录模型；dedupeKey、起止时间与 statusReason 是排障所需的最小补充。 */
@@ -351,6 +357,7 @@ data class AutomationDedupeRecord(
     val ruleId: String,
     val triggerInstanceKey: String,
     val runId: String,
+    val executionOwner: String,
     val acquiredAt: Instant,
     val policyFingerprint: String,
     val leaseExpiresAt: Instant,
@@ -362,6 +369,7 @@ data class AutomationDedupeRecord(
         requireAutomationToken(ruleId, "ruleId")
         requireAutomationToken(triggerInstanceKey, "triggerInstanceKey", 512)
         requireAutomationToken(runId, "runId", 128)
+        requireAutomationToken(executionOwner, "executionOwner", 128)
         requireAutomationToken(policyFingerprint, "policyFingerprint", 256)
         require(!leaseExpiresAt.isBefore(acquiredAt)) { "dedupe lease 过期时间早于获取时间" }
         when (state) {
@@ -371,6 +379,70 @@ data class AutomationDedupeRecord(
                 require(completed != null) { "RUN_RECORDED dedupe 缺少 completedAt" }
                 require(!completed.isBefore(acquiredAt)) { "dedupe completedAt 早于 acquiredAt" }
             }
+        }
+    }
+}
+
+/** 动作检查点状态。STARTED 只表示某次执行已开始/接管，COMPLETED 才携带可对账 outcome。 */
+enum class AutomationActionCheckpointState {
+    STARTED,
+    COMPLETED
+}
+
+/**
+ * 稳定的动作级 durable checkpoint。
+ *
+ * checkpointKey 由 runId + actionIndex 派生，崩溃恢复与 outbox 重投都得到同一条记录；
+ * executionOwner + attempt 是 fencing 维度：lease 过期后的恢复者可以接管 STARTED 行，
+ * 但旧执行体不能用 stale owner/attempt 覆盖新执行体的完成结果。confirmation 不含用户秘密，
+ * 只记录一次性确认凭证本身，用于 run append 失败后的同一触发实例对账，绝不跨触发实例重用。
+ */
+data class AutomationActionCheckpoint(
+    val checkpointKey: String,
+    val dedupeKey: String,
+    val runId: String,
+    val ruleId: String,
+    val triggerInstanceKey: String,
+    val actionIndex: Int,
+    val actionType: String,
+    val configDigest: String,
+    val executionOwner: String,
+    val attempt: Long,
+    val state: AutomationActionCheckpointState,
+    val outcome: ActionOutcome? = null,
+    val confirmation: ActionConfirmation? = null,
+    val startedAt: Instant,
+    val updatedAt: Instant,
+    val completedAt: Instant? = null
+) {
+    init {
+        requireAutomationToken(checkpointKey, "checkpointKey", 160)
+        requireAutomationToken(dedupeKey, "dedupeKey", 1024)
+        requireAutomationToken(runId, "runId", 128)
+        requireAutomationToken(ruleId, "ruleId")
+        requireAutomationToken(triggerInstanceKey, "triggerInstanceKey", 512)
+        require(actionIndex >= 0) { "actionIndex 不能为负" }
+        requireAutomationType(actionType, "actionType")
+        require(configDigest.matches(Regex("^[0-9a-f]{64}$"))) { "configDigest 必须是 SHA-256 hex" }
+        requireAutomationToken(executionOwner, "executionOwner", 128)
+        require(attempt > 0) { "checkpoint attempt 必须大于 0" }
+        require(!updatedAt.isBefore(startedAt)) { "checkpoint updatedAt 早于 startedAt" }
+        when (state) {
+            AutomationActionCheckpointState.STARTED -> {
+                require(outcome == null) { "STARTED checkpoint 不能携带 outcome" }
+                require(completedAt == null) { "STARTED checkpoint 不能有 completedAt" }
+            }
+            AutomationActionCheckpointState.COMPLETED -> {
+                require(outcome != null) { "COMPLETED checkpoint 缺少 outcome" }
+                val completed = completedAt
+                require(completed != null) { "COMPLETED checkpoint 缺少 completedAt" }
+                require(!completed.isBefore(startedAt)) { "checkpoint completedAt 早于 startedAt" }
+            }
+        }
+        confirmation?.let {
+            require(it.ruleId == ruleId) { "checkpoint confirmation 与 ruleId 不一致" }
+            require(it.actionType == actionType) { "checkpoint confirmation 与 actionType 不一致" }
+            require(it.configDigest == configDigest) { "checkpoint confirmation 与 configDigest 不一致" }
         }
     }
 }

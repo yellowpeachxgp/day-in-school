@@ -41,7 +41,7 @@ class AutomationStoresTest {
         val store = InMemoryAutomationDedupeStore()
         val expired = record(leaseSeconds = 10)
         assertTrue(store.tryAcquire(expired) is DedupeAcquireResult.Acquired)
-        val reacquired = record(acquiredAt = acquiredAt.plusSeconds(11), leaseSeconds = 30)
+        val reacquired = record(acquiredAt = acquiredAt.plusSeconds(11), leaseSeconds = 30, executionOwner = "owner-2")
         assertTrue(store.tryAcquire(reacquired) is DedupeAcquireResult.Acquired)
 
         assertFalse("旧执行体不得关闭新 PENDING 执行窗口", store.markRunRecorded(expired, acquiredAt.plusSeconds(12)))
@@ -52,12 +52,14 @@ class AutomationStoresTest {
 
     private fun record(
         acquiredAt: Instant = this.acquiredAt,
-        leaseSeconds: Long = 30
+        leaseSeconds: Long = 30,
+        executionOwner: String = "owner-1"
     ): AutomationDedupeRecord = AutomationDedupeRecord(
         dedupeKey = "dedupe-test",
         ruleId = "rule-1",
         triggerInstanceKey = "trigger-instance",
         runId = "run-test",
+        executionOwner = executionOwner,
         acquiredAt = acquiredAt,
         policyFingerprint = "once-per-trigger-instance",
         leaseExpiresAt = acquiredAt.plusSeconds(leaseSeconds)
