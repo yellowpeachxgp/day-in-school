@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.packages.datapack
 
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.packages.PackageException
 import org.junit.Assert.assertEquals
@@ -9,6 +10,7 @@ import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.LocalDate
+import java.util.Base64
 
 class DisDatapackLoaderValidationTest {
 
@@ -46,6 +48,20 @@ class DisDatapackLoaderValidationTest {
         for (name in listOf("procedureGuideItem", "opportunityCatalogItem", "facilityCatalogItem", "indoorGraphItem", "periodPresetItem", "pharmacyCatalogItem")) {
             assertTrue(defs.fields.containsKey(name))
         }
+    }
+
+
+    @Test
+    fun ct06ContractExampleArtifactPassesExactByteSchemaDecoding() {
+        val examples = readContractFile("contracts/examples/cloud-api-examples.http")
+        val match = Regex("\\\"artifact_base64\\\":\\s*\\\"([A-Za-z0-9+/=]+)\\\"").find(examples)
+        assertTrue(match != null)
+        val artifact = Base64.getDecoder().decode(match!!.groupValues[1])
+        assertEquals("2af33a7f0e4574c501a6cb0513e68e191fd9757e2efb325d584d2d9daffcbca5", Digests.sha256Hex(artifact))
+        val decoded = DisDatapackLoader.decode(artifact)
+        assertEquals("haut.procedures", decoded.pack.packId)
+        assertEquals("2026.11.1", decoded.pack.version)
+        assertEquals(VerificationLevel.UNVERIFIED, decoded.pack.verificationLevel)
     }
 
     @Test
@@ -100,14 +116,16 @@ class DisDatapackLoaderValidationTest {
     }
 
 
-    private fun readContractSchema(): String {
+    private fun readContractSchema(): String = readContractFile("contracts/schemas/dis-datapack-v1.schema.json")
+
+    private fun readContractFile(relativePath: String): String {
         var dir = Paths.get("").toAbsolutePath()
         while (dir != null) {
-            val candidate = dir.resolve("contracts/schemas/dis-datapack-v1.schema.json")
+            val candidate = dir.resolve(relativePath)
             if (Files.isRegularFile(candidate)) return String(Files.readAllBytes(candidate), Charsets.UTF_8)
             dir = dir.parent
         }
-        throw AssertionError("contracts/schemas/dis-datapack-v1.schema.json not found from test working directory")
+        throw AssertionError(relativePath + " not found from test working directory")
     }
 
     private fun validateWith(root: cn.edu.haut.campus.core.model.json.JsonValue, kind: String, item: cn.edu.haut.campus.core.model.json.JsonValue): DisDatapack {
