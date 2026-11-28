@@ -112,6 +112,27 @@ class GuidePersistenceTest {
         }
     }
 
+    @Test
+    fun codec_rejects_non_positive_scheduled_duration_as_persistence_error() {
+        val snapshot = ProcedureRunSnapshot(
+            scope = GuideTestFixtures.scope,
+            packId = "haut.procedures",
+            itemId = "student-certificate",
+            packVersion = "2026.11.1",
+            artifactSha256 = "a".repeat(64),
+            scheduledSteps = mapOf("prepare" to ScheduledStep(Instant.parse("2026-12-01T01:00:00Z"), Duration.ofMinutes(30))),
+            createdAt = created,
+            updatedAt = updated,
+            revision = 1
+        )
+        val encoded = GuideProgressCodec.encodeProcedureRun(snapshot)
+        val tampered = encoded.replace("\"durationSeconds\":30", "\"durationSeconds\":-1")
+
+        assertFailsWith<GuidePersistenceException> {
+            GuideProgressCodec.decodeProcedureRun(tampered)
+        }
+    }
+
     private inline fun <reified T : Throwable> assertFailsWith(block: () -> Unit): T {
         try {
             block()

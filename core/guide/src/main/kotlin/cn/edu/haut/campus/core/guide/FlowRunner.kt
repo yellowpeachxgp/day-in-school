@@ -186,6 +186,8 @@ class FlowRunner(
         guidePackage: GuidePackage,
         itemId: String
     ): ProcedureRunState {
+        requireProcedure(guidePackage, itemId)
+        requireScopeSchool(scope, guidePackage)
         store.deleteProcedureRun(scope, guidePackage.packId, itemId)
         return start(scope, guidePackage, itemId)
     }

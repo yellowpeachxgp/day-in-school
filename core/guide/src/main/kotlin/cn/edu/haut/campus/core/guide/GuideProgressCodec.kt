@@ -66,9 +66,13 @@ object GuideProgressCodec {
             val obj = expectObj(value, path)
             expectExactKeys(obj, path, setOf("startAt", "durationSeconds"))
             val durationValue = obj.fields["durationSeconds"]
+            val durationSeconds = if (durationValue is JsonValue.Null) null else expectLong(durationValue, path + ".durationSeconds")
+            if (durationSeconds != null && durationSeconds <= 0) {
+                throw GuidePersistenceException(path + ".durationSeconds 必须为正")
+            }
             scheduled[stepId] = ScheduledStep(
                 startAt = expectInstant(obj.fields["startAt"], path + ".startAt"),
-                duration = if (durationValue is JsonValue.Null) null else Duration.ofSeconds(expectLong(durationValue, path + ".durationSeconds"))
+                duration = durationSeconds?.let { seconds -> Duration.ofSeconds(seconds) }
             )
         }
         return try {

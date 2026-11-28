@@ -65,6 +65,11 @@ object GuidePackageLoader {
         }
         val expectedPayload = DisDatapackSignature.payloadSha256ForCanonicalBytes(canonicalBytes)
         val verification = verified.signatureVerification
+        try {
+            DisDatapackSignature.validateShape(verification.signature)
+        } catch (error: IllegalArgumentException) {
+            throw GuideSecurityException("datapack detached signature 形状非法：" + error.message)
+        }
         if (verification.payloadSha256 != expectedPayload) {
             throw GuideSecurityException("datapack payloadSha256 与 canonical bytes 不一致")
         }
@@ -98,6 +103,9 @@ object GuidePackageLoader {
         requireUnique(item.steps.map { it.id }, "流程步骤 ID", item.id)
         requireUnique(item.questions.map { it.id }, "流程问题 ID", item.id)
         requireUnique(item.materials.map { it.name }, "流程材料名称", item.id)
+        if (item.dependsOn.isNotEmpty()) {
+            throw GuideDefinitionException("procedure-guide dependsOn 语义尚未由契约明确，拒绝静默执行：" + item.id)
+        }
         val stepIndex = item.steps.mapIndexed { index, step -> step.id to index }.toMap()
         item.questions.forEach { question ->
             requireUnique(question.options.map { it.value }, "问题选项值", item.id + "/" + question.id)

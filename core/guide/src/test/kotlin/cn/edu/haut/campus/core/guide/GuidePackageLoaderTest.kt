@@ -78,6 +78,30 @@ class GuidePackageLoaderTest {
         }
     }
 
+    @Test
+    fun loader_rejects_depends_on_because_cross_item_semantics_are_not_contractual() {
+        val invalid = GuideTestFixtures.branchProcedure().copy(dependsOn = listOf("other-procedure"))
+        val pack = GuideTestFixtures.disPack(DisDatapackKind.PROCEDURE_GUIDE, listOf(invalid))
+
+        assertFailsWith<GuideDefinitionException> {
+            GuidePackageLoader.loadVerified(GuideTestFixtures.verified(pack), LocalDate.parse("2026-11-28"))
+        }
+    }
+
+    @Test
+    fun loader_rejects_detached_signature_with_invalid_shape_even_if_digests_match() {
+        val pack = GuideTestFixtures.disPack(DisDatapackKind.PROCEDURE_GUIDE, listOf(GuideTestFixtures.branchProcedure()))
+        val verified = GuideTestFixtures.verified(pack)
+        val invalidSignature = verified.signatureVerification.signature.copy(valueBase64 = "not-base64")
+        val forged = verified.copy(
+            signatureVerification = verified.signatureVerification.copy(signature = invalidSignature)
+        )
+
+        assertFailsWith<GuideSecurityException> {
+            GuidePackageLoader.loadVerified(forged, LocalDate.parse("2026-11-28"))
+        }
+    }
+
     private inline fun <reified T : Throwable> assertFailsWith(block: () -> Unit): T {
         try {
             block()
