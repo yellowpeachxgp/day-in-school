@@ -177,6 +177,7 @@ internal fun SettingsHomeSectionContent(
     onNavigateToSchoolCenter: () -> Unit,
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
+    onNavigateToAutomation: () -> Unit,
     onShowImportHistory: () -> Unit,
     settingsEntriesContent: @Composable () -> Unit = {}
 ) {
@@ -566,6 +567,41 @@ internal fun SettingsHomeSectionContent(
                         }
                         Text(
                             text = "进入计时 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToAutomation)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "自动化",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "定时、课前、水电阈值与本地提醒规则",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "规则与记录 ›",
                             style = MaterialTheme.typography.labelMedium,
                             color = XPeachTheme.readablePrimary
                         )

@@ -1,9 +1,13 @@
 package cn.edu.haut.campus
 
 import android.app.Application
+import cn.edu.haut.campus.core.automation.HomeRefreshActionPort
+import cn.edu.haut.campus.core.automation.android.AutomationRuntime
+import cn.edu.haut.campus.core.automation.android.AutomationRuntimeCoordinator
 import cn.edu.haut.campus.core.database.AccountSessionCoordinator
 import cn.edu.haut.campus.core.database.ExtensionPluginWipeRegistration
 import cn.edu.haut.campus.core.designsystem.LauncherIconAliasReconciler
+import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.ReminderCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.vault.VaultRuntimeInstaller
@@ -49,12 +53,28 @@ class HautCampusApplication : Application() {
                 WidgetRefreshCoordinator.clearForAccountSwitch(this)
                 ReminderCoordinator.deactivateCurrent()
                 FocusCoordinator.deactivateCurrent()
+                AutomationRuntime.deactivateCurrent(this)
                 old?.let { UtilitySamplingWorker.cancelPeriodicWork(this, it) }
             },
             afterSwitch = { active ->
                 UtilitySamplingWorker.schedulePeriodicWork(this, active)
                 ReminderCoordinator.bind(this, active).initialize()
                 FocusCoordinator.bind(this, active)
+                val automationRefreshPort = object : HomeRefreshActionPort {
+                    override suspend fun refresh(
+                        scope: cn.edu.haut.campus.core.model.SchoolAccountScope,
+                        reason: String
+                    ): Boolean {
+                        WidgetRefreshCoordinator.requestImmediateRefreshAll(this@HautCampusApplication)
+                        return true
+                    }
+                }
+                AutomationRuntime.bind(this@HautCampusApplication, active, automationRefreshPort)
+                AutomationRuntimeCoordinator.enqueueImmediate(
+                    this@HautCampusApplication,
+                    AccountBackgroundScope.from(active),
+                    "account-active"
+                )
                 WidgetRefreshCoordinator.requestImmediateRefreshAll(this)
             }
         )
