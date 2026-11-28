@@ -12,6 +12,8 @@ import cn.edu.haut.campus.core.model.SchoolId
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import java.io.File
+import javax.crypto.SecretKey
+import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,7 +41,7 @@ class AndroidAiKeyStoreTest {
 
     @Test
     fun storeUsesNoBackupPartitionEncryptsKeyAndNeverExposesPlaintextOnDisk() = runTest {
-        val store = AndroidAiKeyStore(context, rootDir = testRoot("plain"))
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("plain"), keys = fakeKeys)
         val canary = keyCanary()
         store.put(scope, endpoint, canary.toCharArray())
 
@@ -61,7 +63,7 @@ class AndroidAiKeyStoreTest {
 
     @Test
     fun keyMaterialExistsOnlyInsideCallbackAndArrayIsWipedAfterwards() = runTest {
-        val store = AndroidAiKeyStore(context, rootDir = testRoot("wipe"))
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("wipe"), keys = fakeKeys)
         val canary = keyCanary()
         store.put(scope, endpoint, canary.toCharArray())
         var exposed: CharArray? = null
@@ -80,7 +82,7 @@ class AndroidAiKeyStoreTest {
 
     @Test
     fun corruptEnvelopeBecomesInvalidAndDoesNotThrowOrLeakMaterial() = runTest {
-        val store = AndroidAiKeyStore(context, rootDir = testRoot("corrupt"))
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("corrupt"), keys = fakeKeys)
         store.put(scope, endpoint, keyCanary().toCharArray())
         val vault = store.rootDir.listFiles()?.single { it.name.endsWith(".vault") }
         assertNotEquals(null, vault)
@@ -98,7 +100,7 @@ class AndroidAiKeyStoreTest {
 
     @Test
     fun wipeDeletesCiphertextEnabledFlagAndProfileKeyMaterial() = runTest {
-        val store = AndroidAiKeyStore(context, rootDir = testRoot("clear"))
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("clear"), keys = fakeKeys)
         store.put(scope, endpoint, keyCanary().toCharArray())
         store.setEnabled(scope, true)
         assertTrue(store.rootDir.listFiles()?.isNotEmpty() == true)
@@ -108,6 +110,25 @@ class AndroidAiKeyStoreTest {
         assertEquals(AiKeyStatus.NONE, store.status(scope).first())
         assertFalse(store.configuration(scope).enabled)
         assertTrue(store.rootDir.listFiles()?.isEmpty() != false)
+    }
+
+    private val fakeKeys = FakeAiAesKeyProvider()
+
+    private class FakeAiAesKeyProvider : AiAesKeyProvider {
+        private val keys = mutableMapOf<String, SecretKey>()
+
+        override fun existing(scope: SchoolAccountScope): SecretKey? = keys[storageKey(scope)]
+
+        override fun getOrCreate(scope: SchoolAccountScope): SecretKey = keys.getOrPut(storageKey(scope)) {
+            // 测试专用软件 AES key 只留在进程内；生产实现仍由 AndroidKeyStore 生成非导出 key。
+            SecretKeySpec(ByteArray(32) { index -> (index * 17 + 11).toByte() }, "AES")
+        }
+
+        override fun delete(scope: SchoolAccountScope) {
+            keys.remove(storageKey(scope))
+        }
+
+        private fun storageKey(scope: SchoolAccountScope): String = AiByokStorageFormat.scopeStorageKey(scope)
     }
 
     private fun testRoot(name: String): File {
