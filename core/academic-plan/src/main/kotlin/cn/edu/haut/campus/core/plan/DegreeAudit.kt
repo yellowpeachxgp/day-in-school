@@ -213,7 +213,9 @@ object DegreeAuditor {
             val normalizedCode = normalizedNonBlank(ref.code) ?: return
             declaredCodesByCourseName.getOrPut(normalize(ref.name)) { mutableMapOf() }[normalizedCode] = originalCode
         }
-        plan.allGroups().forEach { group -> group.courses.forEach(::registerDeclaredCourseRef) }
+        plan.allGroups().forEach { group ->
+            group.courses.forEach { ref -> registerDeclaredCourseRef(ref) }
+        }
         plan.substitutions.forEach { rule ->
             registerDeclaredCourseRef(rule.course)
             registerDeclaredCourseRef(rule.replaces)
