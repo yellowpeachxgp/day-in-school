@@ -8,6 +8,7 @@ sealed interface TeamTimeUiAction {
     data object PermissionRequested : TeamTimeUiAction
     data class GroupSelected(val groupId: String) : TeamTimeUiAction
     data class GroupNameChanged(val value: String) : TeamTimeUiAction
+    data class GroupTypeSelected(val type: String) : TeamTimeUiAction
     data object CreateGroupClicked : TeamTimeUiAction
     data object ShareBusyBlocksClicked : TeamTimeUiAction
     data object WithdrawSharingClicked : TeamTimeUiAction

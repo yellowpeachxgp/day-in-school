@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.feature.teamtime.state
 
 import androidx.compose.runtime.Immutable
+import cn.edu.haut.campus.feature.teamtime.TeamTimePollStatus
 
 /** 阶段 S 统一 11 态矩阵。 */
 enum class TeamTimeStatus {
@@ -59,6 +60,7 @@ data class TeamTimePollOptionUi(
 data class TeamTimePollUi(
     val pollId: String,
     val title: String,
+    val status: TeamTimePollStatus,
     val statusLabel: String,
     val deadlineLabel: String,
     val options: List<TeamTimePollOptionUi>,
@@ -72,9 +74,12 @@ data class TeamTimeUiState(
     val groups: List<TeamTimeGroupUi> = emptyList(),
     val selectedGroupId: String? = null,
     val groupNameInput: String = "",
+    val groupTypeInput: String = "study",
     val pollTitleInput: String = "",
     val durationMinutes: Int = 60,
     val minAttendees: Int = 1,
+    val activeMemberCount: Int = 0,
+    val sharingMemberCount: Int = 0,
     val share: TeamTimeShareUi = TeamTimeShareUi(),
     val localBusyBlockCount: Int = 0,
     val queryWindowLabel: String = "",
@@ -85,5 +90,5 @@ data class TeamTimeUiState(
     val notice: String? = null,
 ) {
     val selectedCandidateCount: Int get() = candidates.count { it.selected }
-    val canCreatePoll: Boolean get() = selectedCandidateCount >= 2 && !working
+    val canCreatePoll: Boolean get() = selectedCandidateCount in 2..10 && pollTitleInput.isNotBlank() && !working
 }

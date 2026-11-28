@@ -5,7 +5,6 @@ import cn.edu.haut.campus.core.community.CommunityEnvelope
 import cn.edu.haut.campus.core.community.CommunityError
 import cn.edu.haut.campus.core.community.CommunityErrorKind
 import cn.edu.haut.campus.core.community.CommunityResult
-import cn.edu.haut.campus.core.community.CommunityFeature
 import cn.edu.haut.campus.core.community.confirmGroupPoll
 import cn.edu.haut.campus.core.community.createGroup
 import cn.edu.haut.campus.core.community.createGroupPoll
@@ -89,7 +88,7 @@ class CommunityTeamTimeRepository(
     override suspend fun currentCloudUserId(): String? = cloudUserIdProvider()
 
     override suspend fun listGroups(): CommunityResult<List<TeamTimeGroup>> =
-        client.listGroups(schoolId = scope.schoolId.value, type = "study")
+        client.listGroups(schoolId = scope.schoolId.value)
             .mapEnvelopeData(TeamTimeJson::parseGroupList)
 
     override suspend fun createGroup(name: String, type: String): CommunityResult<TeamTimeGroup> =

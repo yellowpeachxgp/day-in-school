@@ -120,6 +120,7 @@ dependencies {
     implementation(project(":feature:importer"))
     implementation(project(":feature:settings"))
     implementation(project(":feature:automation"))
+    implementation(project(":feature:teamtime"))
 
     implementation(project(":widget:common"))
     implementation(project(":widget:nextclass"))

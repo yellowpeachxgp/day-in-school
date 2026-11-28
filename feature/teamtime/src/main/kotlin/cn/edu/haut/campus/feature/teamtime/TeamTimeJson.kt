@@ -41,7 +41,10 @@ internal object TeamTimeJson {
         return TeamTimeShareSummary(
             memberId = obj.reqString("member_id"),
             sharingLevel = obj.reqString("sharing_level"),
-            blockCount = obj.reqInt("block_count"),
+            blockCount = obj.reqInt("block_count").also {
+                // 契约要求响应对账 blocks；feature 只校验存在性并立即丢弃，不把原始块传给 UI 或成员维展示。
+                obj.reqArray("blocks")
+            },
             ttlSeconds = obj.reqInt("ttl_seconds"),
             expiresAt = parseTeamTimeInstant(obj.reqString("expires_at"), "expires_at"),
             updatedAt = parseTeamTimeInstant(obj.reqString("updated_at"), "updated_at"),
@@ -124,11 +127,11 @@ internal object TeamTimeJson {
             optionId = obj.reqString("option_id"),
             groupId = obj.reqString("group_id"),
             schoolId = obj.reqString("school_id"),
-            startAt = parseTeamTimeInstant(obj.reqString("event.start_at"), "event.start_at"),
-            endAt = parseTeamTimeInstant(obj.reqString("event.end_at"), "event.end_at"),
+            startAt = parseTeamTimeInstant(obj.reqString("start_at"), "start_at"),
+            endAt = parseTeamTimeInstant(obj.reqString("end_at"), "end_at"),
             status = obj.reqString("status"),
             confirmedByMemberId = obj.reqString("confirmed_by_member_id"),
-            confirmedAt = parseTeamTimeInstant(obj.reqString("event.confirmed_at"), "event.confirmed_at"),
+            confirmedAt = parseTeamTimeInstant(obj.reqString("confirmed_at"), "confirmed_at"),
         )
     }
 
