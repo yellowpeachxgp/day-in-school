@@ -169,17 +169,19 @@ class TimelineScheduleAdapterEquivalenceTest {
     @Test
     fun longAndControlManualCourseNamesRoundTripExactly() {
         val rawName = "手工\u0001\n\u0085" + "长".repeat(300) + "\u0007\u007F"
+        val teacher = "xm\u0001\u0085" + "名".repeat(4_200) + "\u007F"
+        val rawRoom = "cdmc\u0007\u0085" + "室".repeat(4_200) + "\u0001"
         val weirdCourse = Course(
             id = "c-weird-manual",
             externalId = "manual-weird",
             name = rawName,
-            teacher = "手工教师",
+            teacher = teacher,
             colorArgb = 0xFF111111,
             source = CourseSource.MANUAL
         )
         val weirdRule = CourseScheduleRule(
             id = "r-weird-manual", courseId = weirdCourse.id, termId = term.id, weekday = DayOfWeek.MONDAY,
-            startPeriod = 1, endPeriod = 2, weeks = setOf(2), rawRoom = "手工教室"
+            startPeriod = 1, endPeriod = 2, weeks = setOf(2), rawRoom = rawRoom
         )
         val allCourses = courses + weirdCourse
         val allRules = baseRules() + weirdRule
@@ -192,7 +194,10 @@ class TimelineScheduleAdapterEquivalenceTest {
         )
 
         assertEquals("含超长/控制字符课程名的展示模型必须与旧展开路径逐字段一致", engineOut, timelineOut)
-        assertEquals(rawName, timelineOut.first { it.courseId == weirdCourse.id }.courseName)
+        val weirdOut = timelineOut.first { it.courseId == weirdCourse.id }
+        assertEquals(rawName, weirdOut.courseName)
+        assertEquals("xm/cdmc 超长含控制符教师必须端到端逐字还原", teacher, weirdOut.teacher)
+        assertEquals("xm/cdmc 超长含控制符教室必须端到端逐字还原", rawRoom, weirdOut.rawRoom)
     }
 
     @Test

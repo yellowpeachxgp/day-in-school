@@ -206,8 +206,10 @@ private fun TodayLegacyContent(
         term,
         courseTimelineEvents,
         courses,
+        rules,
         periodTimes,
         calendarOverrides,
+        occurrenceOverrides,
         buildings,
         effectiveScale
     ) {
@@ -228,6 +230,9 @@ private fun TodayLegacyContent(
                     term = activeTerm,
                     periodTimes = periodTimes,
                     courses = courses,
+                    rules = rules,
+                    calendarOverrides = calendarOverrides,
+                    occurrenceOverrides = occurrenceOverrides,
                     buildings = buildings
                 )
             }
@@ -492,13 +497,23 @@ private fun TodayLegacyContent(
                         val todayCanceledCount = remember(
                             selectedDate,
                             courseTimelineEvents,
+                            term,
                             courses,
+                            rules,
+                            periodTimes,
+                            calendarOverrides,
+                            occurrenceOverrides,
                             buildings
                         ) {
                             TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                                 date = selectedDate,
                                 events = courseTimelineEvents,
+                                term = term,
                                 courses = courses,
+                                rules = rules,
+                                periodTimes = periodTimes,
+                                calendarOverrides = calendarOverrides,
+                                occurrenceOverrides = occurrenceOverrides,
                                 buildings = buildings
                             ).size
                         }
@@ -599,8 +614,10 @@ private fun TodayLegacyContent(
                         term,
                         courseTimelineEvents,
                         courses,
+                        rules,
                         periodTimes,
                         calendarOverrides,
+                        occurrenceOverrides,
                         buildings,
                         effectiveScale
                     ) {
@@ -621,6 +638,9 @@ private fun TodayLegacyContent(
                                     term = activeTerm,
                                     periodTimes = periodTimes,
                                     courses = courses,
+                                    rules = rules,
+                                    calendarOverrides = calendarOverrides,
+                                    occurrenceOverrides = occurrenceOverrides,
                                     buildings = buildings
                                 )
                             }
@@ -629,13 +649,23 @@ private fun TodayLegacyContent(
                     val canceledOnDate = remember(
                         dateForView,
                         courseTimelineEvents,
+                        term,
                         courses,
+                        rules,
+                        periodTimes,
+                        calendarOverrides,
+                        occurrenceOverrides,
                         buildings
                     ) {
                         TimelineScheduleAdapter.resolveCanceledOccurrencesForDateFromEvents(
                             date = dateForView,
                             events = courseTimelineEvents,
+                            term = term,
                             courses = courses,
+                            rules = rules,
+                            periodTimes = periodTimes,
+                            calendarOverrides = calendarOverrides,
+                            occurrenceOverrides = occurrenceOverrides,
                             buildings = buildings
                         )
                     }

@@ -13,6 +13,11 @@ import java.time.LocalTime
  * 通用 Timeline 语义仍只使用 start/end/timeSemantics/status/busy；这些字段只用于
  * 课表适配层把投影还原为既有 ClassOccurrence 编辑/展示模型。UNCERTAIN 事件的
  * startTime/endTime 继续标明 TimeEvidence，绝不因为有了元数据而冒充精确时间。
+ *
+ * 自由文本（课程名、教师、教室、覆盖原因）不允许把既有合法输入直接塞进受控信封：
+ * 安全短文本保持原样以减少开销；含 ISO 控制字符或超出单值上限的文本统一用
+ * JSON 转义分片保存，截断时由调用侧权威输入快照兜底，绝不允许投影 flow 因
+ * TimelineEvent/sourceMetadata require 而死亡。
  */
 object CourseOccurrenceTimelineMetadata {
     const val OCCURRENCE_ID = "courseOccurrence.occurrenceId"
@@ -34,11 +39,15 @@ object CourseOccurrenceTimelineMetadata {
     const val USER_MODIFIED = "courseOccurrence.userModified"
     const val MERGED_RULE_IDS_JSON = "courseOccurrence.mergedRuleIdsJson"
     const val TIME_EVIDENCE = "courseOccurrence.timeEvidence"
-    const val COURSE_NAME_JSON_CHUNK_COUNT = "courseOccurrence.courseNameJson.chunkCount"
-    const val COURSE_NAME_JSON_TRUNCATED = "courseOccurrence.courseNameJson.truncated"
-    const val COURSE_NAME_JSON_CHUNK_PREFIX = "courseOccurrence.courseNameJson.chunk."
+    const val COURSE_NAME = "courseOccurrence.courseName"
+    const val COURSE_NAME_JSON_CHUNK_COUNT = "courseOccurrence.courseName.json.chunkCount"
+    const val COURSE_NAME_JSON_TRUNCATED = "courseOccurrence.courseName.json.truncated"
+    const val COURSE_NAME_JSON_CHUNK_PREFIX = "courseOccurrence.courseName.json.chunk."
 
-    private const val COURSE_NAME_CHUNK_SIZE = 4096
+    private const val JSON_CHUNK_COUNT_SUFFIX = ".json.chunkCount"
+    private const val JSON_TRUNCATED_SUFFIX = ".json.truncated"
+    private const val JSON_CHUNK_PREFIX_SUFFIX = ".json.chunk."
+    private const val METADATA_VALUE_LIMIT = 4096
     private const val METADATA_ENTRY_LIMIT = 64
 
     /**
@@ -68,12 +77,49 @@ object CourseOccurrenceTimelineMetadata {
         }
     }
 
+    /**
+     * 自由文本的统一信封：安全短文本沿用原 key；控制字符/超长文本改用 JSON 分片。
+     * 每次最多再占 count+truncated 两个控制项，因此不会突破 TimelineEvent 64 条 metadata 上限。
+     */
+    private fun MutableMap<String, String>.putLosslessText(baseKey: String, value: String) {
+        if (value.none { it.isISOControl() } && value.length <= METADATA_VALUE_LIMIT) {
+            put(baseKey, value)
+            return
+        }
+        val encodedChunks = metadataJsonString(value).chunked(METADATA_VALUE_LIMIT)
+        val maxChunks = (METADATA_ENTRY_LIMIT - size - 2).coerceAtLeast(0)
+        val storedChunks = encodedChunks.take(maxChunks)
+        put(baseKey + JSON_CHUNK_COUNT_SUFFIX, storedChunks.size.toString())
+        storedChunks.forEachIndexed { index, chunk ->
+            put(baseKey + JSON_CHUNK_PREFIX_SUFFIX + index, chunk)
+        }
+        if (storedChunks.size < encodedChunks.size) {
+            put(baseKey + JSON_TRUNCATED_SUFFIX, "true")
+        }
+    }
+
+    /** 读取统一信封；完整 JSON 分片逐字还原，安全短文本按原 key 直读，截断/残缺返回 null 让调用侧兜底。 */
+    private fun decodeLosslessText(metadata: Map<String, String>, baseKey: String): String? {
+        val chunkCountText = metadata[baseKey + JSON_CHUNK_COUNT_SUFFIX] ?: return metadata[baseKey]
+        if (metadata[baseKey + JSON_TRUNCATED_SUFFIX] == "true") return null
+        val chunkCount = chunkCountText.toIntOrNull() ?: return null
+        if (chunkCount < 0) return null
+        val parts = (0 until chunkCount).map { index ->
+            metadata[baseKey + JSON_CHUNK_PREFIX_SUFFIX + index] ?: return null
+        }
+        return runCatching {
+            Json.parse(parts.joinToString("")).stringOrNull()
+        }.getOrNull()
+    }
+
+    private fun hasTruncatedLosslessText(metadata: Map<String, String>): Boolean =
+        metadata.keys.any { it.endsWith(JSON_TRUNCATED_SUFFIX) && metadata[it] == "true" }
+
     fun encode(occurrence: ClassOccurrence): Map<String, String> = buildMap {
         put(OCCURRENCE_ID, occurrence.occurrenceId)
         put(COURSE_ID, occurrence.courseId)
         occurrence.ruleId?.let { put(RULE_ID, it) }
         occurrence.overrideId?.let { put(OVERRIDE_ID, it) }
-        occurrence.teacher?.let { put(TEACHER, it) }
         put(COLOR_ARGB, occurrence.colorArgb.toString())
         put(DATE, occurrence.date.toString())
         occurrence.teachingWeek?.let { put(TEACHING_WEEK, it.toString()) }
@@ -81,10 +127,8 @@ object CourseOccurrenceTimelineMetadata {
         put(END_PERIOD, occurrence.endPeriod.toString())
         put(START_TIME, occurrence.startTime.toString())
         put(END_TIME, occurrence.endTime.toString())
-        put(RAW_ROOM, occurrence.rawRoom)
         occurrence.buildingId?.let { put(BUILDING_ID, it) }
         put(MAKEUP_OR_OVERRIDDEN, occurrence.isMakeupOrOverridden.toString())
-        occurrence.overrideReason?.let { put(OVERRIDE_REASON, it) }
         put(USER_MODIFIED, occurrence.userModified.toString())
         put(
             MERGED_RULE_IDS_JSON,
@@ -92,39 +136,20 @@ object CourseOccurrenceTimelineMetadata {
         )
         put(TIME_EVIDENCE, occurrence.timeEvidence.name)
 
-        // 只有信封标题无法无损表达时才写课程名原文。metadataJsonString 会把全部
-        // ISO 控制字符转成 ASCII Unicode 转义；按 sourceMetadata 单值上限分片，且绝不突破事件 64 条上限。
+        // 三个既有自由文本与课程名共用同一 JSON 分片协议；普通安全短文本仍保持旧 key/原值。
+        this.putLosslessText(RAW_ROOM, occurrence.rawRoom)
+        occurrence.teacher?.let { this.putLosslessText(TEACHER, it) }
+        occurrence.overrideReason?.let { this.putLosslessText(OVERRIDE_REASON, it) }
         if (safeTimelineTitle(occurrence.courseName) != occurrence.courseName) {
-            val encodedCourseName = metadataJsonString(occurrence.courseName)
-            val encodedChunks = encodedCourseName.chunked(COURSE_NAME_CHUNK_SIZE)
-            val baseEntryCount = this.size
-            val maxChunks = (METADATA_ENTRY_LIMIT - baseEntryCount - 2).coerceAtLeast(0)
-            val storedChunks = encodedChunks.take(maxChunks)
-            put(COURSE_NAME_JSON_CHUNK_COUNT, storedChunks.size.toString())
-            storedChunks.forEachIndexed { index, chunk ->
-                put(COURSE_NAME_JSON_CHUNK_PREFIX + index, chunk)
-            }
-            if (storedChunks.size < encodedChunks.size) {
-                put(COURSE_NAME_JSON_TRUNCATED, "true")
-            }
+            this.putLosslessText(COURSE_NAME, occurrence.courseName)
         }
-    }
-
-    private fun decodeCourseName(metadata: Map<String, String>): String? {
-        val chunkCount = metadata[COURSE_NAME_JSON_CHUNK_COUNT]?.toIntOrNull() ?: return null
-        if (chunkCount < 0 || metadata[COURSE_NAME_JSON_TRUNCATED] == "true") return null
-        val parts = (0 until chunkCount).map { index ->
-            metadata[COURSE_NAME_JSON_CHUNK_PREFIX + index] ?: return null
-        }
-        return runCatching {
-            Json.parse(parts.joinToString("")).stringOrNull()
-        }.getOrNull()
     }
 
     /** 还原 Timeline 投影时的原始领域字段；buildingName、internalBreaks 与冲突分栏仍由课表 engine 统一后处理。 */
     fun decode(
         event: TimelineEvent,
-        courseNamesById: Map<String, String> = emptyMap()
+        courseNamesById: Map<String, String> = emptyMap(),
+        fallbackOccurrence: (String) -> ClassOccurrence? = { null }
     ): ClassOccurrence {
         val metadata = event.sourceMetadata
         fun required(key: String): String = metadata[key]
@@ -134,20 +159,30 @@ object CourseOccurrenceTimelineMetadata {
             ?.mapNotNull { it.stringOrNull() }
             ?: throw IllegalArgumentException("课程 Timeline mergedRuleIds 元数据不是字符串数组: " + event.id.value)
         val evidence = TimeEvidence.valueOf(required(TIME_EVIDENCE))
+        val occurrenceId = required(OCCURRENCE_ID)
+        val fallback = if (hasTruncatedLosslessText(metadata)) fallbackOccurrence(occurrenceId) else null
         val courseId = required(COURSE_ID)
-        val restoredCourseName = decodeCourseName(metadata)
+        val restoredCourseName = decodeLosslessText(metadata, COURSE_NAME)
+            ?: fallback?.courseName
             ?: courseNamesById[courseId]
             ?: event.title
+        val restoredTeacher = decodeLosslessText(metadata, TEACHER)
+            ?: fallback?.teacher
+        val restoredRawRoom = decodeLosslessText(metadata, RAW_ROOM)
+            ?: fallback?.rawRoom
+            ?: ""
+        val restoredOverrideReason = decodeLosslessText(metadata, OVERRIDE_REASON)
+            ?: fallback?.overrideReason
         // hasResolvedTime 必须随证据等级还原：UNRESOLVED/INVALID 只保留排序锚点，
         // 缺省会意外回落为 true，把「时间待确认」冒充成精确时间。
         val hasResolvedTime = evidence.hasResolvedTime
         return ClassOccurrence(
-            occurrenceId = required(OCCURRENCE_ID),
+            occurrenceId = occurrenceId,
             courseId = courseId,
             ruleId = metadata[RULE_ID],
             overrideId = metadata[OVERRIDE_ID],
             courseName = restoredCourseName,
-            teacher = metadata[TEACHER],
+            teacher = restoredTeacher,
             colorArgb = required(COLOR_ARGB).toLong(),
             date = LocalDate.parse(required(DATE)),
             teachingWeek = metadata[TEACHING_WEEK]?.toInt(),
@@ -156,10 +191,10 @@ object CourseOccurrenceTimelineMetadata {
             endPeriod = required(END_PERIOD).toInt(),
             startTime = LocalTime.parse(required(START_TIME)),
             endTime = LocalTime.parse(required(END_TIME)),
-            rawRoom = required(RAW_ROOM),
+            rawRoom = restoredRawRoom,
             buildingId = metadata[BUILDING_ID],
             isMakeupOrOverridden = required(MAKEUP_OR_OVERRIDDEN).toBooleanStrict(),
-            overrideReason = metadata[OVERRIDE_REASON],
+            overrideReason = restoredOverrideReason,
             userModified = required(USER_MODIFIED).toBooleanStrict(),
             mergedRuleIds = mergedIds,
             hasResolvedTime = hasResolvedTime,

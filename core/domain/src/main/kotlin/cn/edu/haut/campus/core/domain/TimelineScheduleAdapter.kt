@@ -17,6 +17,7 @@ import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.timeline.CourseOccurrenceTimelineMetadata
 import cn.edu.haut.campus.core.timeline.CourseScheduleTimelineSnapshot
 import cn.edu.haut.campus.core.timeline.CourseTimelineProjection
+import cn.edu.haut.campus.core.timeline.ScheduleOccurrenceExpander
 import cn.edu.haut.campus.core.timeline.EventStatus
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineEvent
@@ -112,6 +113,32 @@ object TimelineScheduleAdapter {
         return ScheduleEngine.assignConflictColumns(merged)
     }
 
+    /** 仅在 metadata 极端截断时惰性使用的权威输入兜底；正常路径绝不直接展开。 */
+    private fun authoritativeOccurrenceFallback(
+        date: LocalDate,
+        term: Term?,
+        courses: List<Course>,
+        rules: List<CourseScheduleRule>,
+        periodTimes: List<PeriodTime>,
+        calendarOverrides: List<CalendarOverride>,
+        occurrenceOverrides: List<OccurrenceOverride>
+    ): (String) -> ClassOccurrence? {
+        val activeTerm = term ?: return { null }
+        val occurrencesById by lazy(LazyThreadSafetyMode.NONE) {
+            val expansion = ScheduleOccurrenceExpander.expandDate(
+                date = date,
+                term = activeTerm,
+                courses = courses,
+                rules = rules,
+                periodTimes = periodTimes,
+                calendarOverrides = calendarOverrides,
+                occurrenceOverrides = occurrenceOverrides
+            )
+            (expansion.active + expansion.cancelled).associateBy { it.occurrenceId }
+        }
+        return { occurrenceId -> occurrencesById[occurrenceId] }
+    }
+
     /**
      * 读取指定日期的生效课程事件（Timeline 投影还原），返回与既有课表完全同形的
      * [ClassOccurrence] 列表：含楼宇名、连堂内部课间与冲突分栏。
@@ -141,6 +168,9 @@ object TimelineScheduleAdapter {
             term = term,
             periodTimes = periodTimes,
             courses = courses,
+            rules = rules,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides,
             buildings = buildings
         )
     }
@@ -195,7 +225,12 @@ object TimelineScheduleAdapter {
         return resolveCanceledOccurrencesForDateFromEvents(
             date = date,
             events = events,
+            term = activeTerm,
             courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides,
             buildings = buildings
         )
     }
@@ -213,12 +248,24 @@ object TimelineScheduleAdapter {
         term: Term,
         periodTimes: List<PeriodTime>,
         courses: List<Course> = emptyList(),
+        rules: List<CourseScheduleRule> = emptyList(),
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val courseNamesById = courses.associate { it.id to it.name }
+        val fallbackOccurrence = authoritativeOccurrenceFallback(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
         val active = events
             .filter { it.isCourseOccurrenceProjection() && it.status != EventStatus.CANCELLED_TODAY }
-            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById) }
+            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById, fallbackOccurrence) }
             .filter { it.date == date }
         return active.presentationPostProcessed(date, term, periodTimes, buildings)
     }
@@ -227,14 +274,28 @@ object TimelineScheduleAdapter {
     fun resolveCanceledOccurrencesForDateFromEvents(
         date: LocalDate,
         events: List<TimelineEvent>,
+        term: Term? = null,
         courses: List<Course> = emptyList(),
+        rules: List<CourseScheduleRule> = emptyList(),
+        periodTimes: List<PeriodTime> = emptyList(),
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
         buildings: List<Building> = emptyList()
     ): List<ClassOccurrence> {
         val buildingMap = buildings.associateBy { it.id }
         val courseNamesById = courses.associate { it.id to it.name }
+        val fallbackOccurrence = authoritativeOccurrenceFallback(
+            date = date,
+            term = term,
+            courses = courses,
+            rules = rules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
         return events
             .filter { it.isCourseOccurrenceProjection() && it.status == EventStatus.CANCELLED_TODAY }
-            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById) }
+            .map { CourseOccurrenceTimelineMetadata.decode(it, courseNamesById, fallbackOccurrence) }
             .filter { it.date == date }
             .map { occ -> occ.copy(buildingName = occ.buildingId?.let { buildingMap[it]?.name }) }
             .sortedBy { it.startPeriod }
@@ -246,6 +307,9 @@ object TimelineScheduleAdapter {
         term: Term,
         periodTimes: List<PeriodTime>,
         courses: List<Course> = emptyList(),
+        rules: List<CourseScheduleRule> = emptyList(),
+        calendarOverrides: List<CalendarOverride> = emptyList(),
+        occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
         buildings: List<Building> = emptyList()
     ): (LocalDate) -> List<ClassOccurrence> = { date ->
         resolveOccurrencesForDateFromEvents(
@@ -254,6 +318,9 @@ object TimelineScheduleAdapter {
             term = term,
             periodTimes = periodTimes,
             courses = courses,
+            rules = rules,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides,
             buildings = buildings
         )
     }
