@@ -62,7 +62,7 @@ internal fun prepareNoteExtraction(bytes: ByteArray): PreparedExtraction {
         KnowledgeTextLine(
             lineIndex = index,
             pageIndex = 0,
-            text = raw.removeSuffix(""),
+            text = raw.removeSuffix(13.toChar().toString()),
             confidence = null,
             bounds = null,
             coordinateSpace = KnowledgeCoordinateSpace.TEXT_LINE
