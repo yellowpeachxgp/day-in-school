@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.campusgraph
 
+import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.PlaceRef
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.packages.bundle.PackageBundle
