@@ -5,6 +5,8 @@ import cn.edu.haut.campus.core.database.AcademicEntityWritePort
 import cn.edu.haut.campus.core.database.EntityJournalEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.events.EventEnvelope
 import cn.edu.haut.campus.core.events.EventAppendStatus
 import cn.edu.haut.campus.core.events.EventOutbox
@@ -19,7 +21,6 @@ import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.SourceRef
-import cn.edu.haut.campus.core.model.json.JsonValue
 import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
@@ -285,26 +286,21 @@ class RoomVaultJournal(
     }
 
     private fun toEventEnvelope(change: EntityChange): EventEnvelope {
-        val payload = canonicalJsonOf(
-            jsonObjectOf(
-                "changeId" to JsonValue.Num(change.changeId.toString()),
-                "writeGroupId" to JsonValue.Str(change.writeGroupId),
-                "entity" to encodeEntityRef(change.ref),
-                "op" to JsonValue.Str(change.op.name),
-                "actor" to JsonValue.Str(change.actor.name),
-                "actorDetail" to jsonString(change.actorDetail),
-                "occurredAt" to JsonValue.Str(change.at.toString())
-            )
-        )
-        return EventEnvelope(
+        val typedEvent = DomainEvent.VaultEntityChanged(
             eventId = checkNotNull(change.eventId) { "journal 事件缺少 eventId" },
-            eventType = VAULT_ENTITY_CHANGED_EVENT_TYPE,
-            schemaVersion = VAULT_ENTITY_CHANGED_SCHEMA_VERSION,
+            scope = change.ref.scope,
             occurredAt = change.at,
-            scopeKey = VaultScopeKeyCodec.encode(change.ref.scope),
-            payload = payload,
-            metadata = emptyMap()
+            changeId = change.changeId,
+            writeGroupId = change.writeGroupId,
+            entityRef = change.ref,
+            change = change.op,
+            actor = change.actor,
+            actorDetail = change.actorDetail,
+            changedPaths = SnapshotChangedPaths.of(change.before, change.after)
         )
+        // 共享 outbox 只接收 registry 的 canonical typed envelope。payload 不含 before/after 值，
+        // 仅含 changeId、稳定引用、写操作者与脱敏路径；敏感路径由 codec invariant 再次 fail-closed。
+        return DomainEventCodecRegistry.DEFAULT.encode(typedEvent)
     }
 
     private fun entityRefOf(row: EntityJournalEntity): EntityRef = EntityRef(

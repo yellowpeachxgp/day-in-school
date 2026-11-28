@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.events
 
 import cn.edu.haut.campus.core.model.AccountId
+import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.ChangeKind
@@ -186,6 +187,7 @@ private fun defaultDomainEventCodecs(): List<DomainEventCodec<out DomainEvent>> 
     GeofenceTransitionCodec,
     NoticeConfirmedCodec,
     GroupEventConfirmedCodec,
+    VaultEntityChangedCodec,
     DataStaleCodec
 )
 
@@ -353,6 +355,47 @@ private object GroupEventConfirmedCodec : DomainEventCodec<DomainEvent.GroupEven
             occurredAt = header.occurredAt,
             groupId = stringField(root, "groupId", eventType),
             eventRef = decodeEntityRef(objectField(root, "eventRef", eventType))
+        )
+    }
+}
+
+private object VaultEntityChangedCodec : DomainEventCodec<DomainEvent.VaultEntityChanged>() {
+    override val eventClass = DomainEvent.VaultEntityChanged::class
+    override val eventType = "vault.entity.changed"
+    override val schemaVersion = 1
+
+    override fun encodePayload(value: DomainEvent.VaultEntityChanged): CanonicalJson = CanonicalJson.ofValue(
+        jsonObject(
+            "actor" to JsonValue.Str(value.actor.name),
+            "actorDetail" to (value.actorDetail?.let { JsonValue.Str(it) } ?: JsonValue.Null),
+            "change" to JsonValue.Str(value.change.name),
+            "changeId" to canonicalNumber(value.changeId.toString()),
+            "changedPaths" to JsonValue.Arr(value.changedPaths.map { JsonValue.Str(it) }),
+            "entityRef" to encodeEntityRef(value.entityRef),
+            "writeGroupId" to JsonValue.Str(value.writeGroupId)
+        )
+    )
+
+    override fun decodePayload(payload: CanonicalJson, header: DomainEventHeader): DomainEvent.VaultEntityChanged {
+        val root = payloadObject(
+            payload,
+            eventType,
+            setOf("actor", "actorDetail", "change", "changeId", "changedPaths", "entityRef", "writeGroupId")
+        )
+        return DomainEvent.VaultEntityChanged(
+            eventId = header.eventId,
+            scope = header.scope,
+            occurredAt = header.occurredAt,
+            changeId = longField(root, "changeId", eventType),
+            writeGroupId = stringField(root, "writeGroupId", eventType),
+            entityRef = decodeEntityRef(objectField(root, "entityRef", eventType)),
+            change = decodeEnum<ChangeKind>(root, "change", eventType),
+            actor = decodeEnum<Actor>(root, "actor", eventType),
+            actorDetail = nullableStringField(root, "actorDetail", eventType),
+            changedPaths = arrayField(root, "changedPaths", eventType).map { value ->
+                (value as? JsonValue.Str)?.value
+                    ?: throw IllegalArgumentException(eventType + " payload 字段 changedPaths 必须只含 string")
+            }
         )
     }
 }

@@ -14,6 +14,8 @@ import cn.edu.haut.campus.core.model.SnapshotCompleteness
 import cn.edu.haut.campus.core.model.VerificationLevel
 import cn.edu.haut.campus.core.timeline.BusyLevel
 import cn.edu.haut.campus.core.timeline.EventStatus
+import cn.edu.haut.campus.core.timeline.PersonalEventDraft
+import cn.edu.haut.campus.core.timeline.PersonalTimelineSource
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineKind
 import java.time.Instant
@@ -90,10 +92,18 @@ class RoomPersonalEventStoreTest {
         assertEquals(listOf(id.value), searchIndex.query(scope, SearchQuery(scope, "离散")).hits.map { it.document.ref.id })
 
         val window = TimeWindow(Instant.parse("2026-01-10T00:00:00Z"), Instant.parse("2026-01-11T00:00:00Z"))
-        val timeline = store.observe(scope, window).first()
+        val records = store.observe(scope, window).first()
+        assertEquals(1, records.size)
+        assertEquals(TimelineKind.REVIEW_BLOCK, records[0].kind)
+        assertEquals(BusyLevel.BUSY, records[0].busy)
+
+        val timeline = PersonalTimelineSource(store).observe(scope, window).first()
         assertEquals(1, timeline.size)
-        assertEquals(TimelineKind.REVIEW_BLOCK, timeline[0].kind)
-        assertEquals(BusyLevel.BUSY, timeline[0].busy)
+        assertEquals(id, timeline[0].id)
+        assertEquals(id.value, timeline[0].provenance.sourceRecordId)
+        assertEquals(id.value, timeline[0].source.provenance.sourceRecordId)
+        assertEquals(cn.edu.haut.campus.core.model.EntityType.PERSONAL_EVENT, timeline[0].source.entity.type)
+        assertEquals(id.value, timeline[0].source.entity.id)
 
         store.upsert(draft.copy(id = id), Actor.USER)
         assertEquals(1, database.vaultDao().countEntityJournal())

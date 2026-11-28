@@ -12,6 +12,7 @@ import cn.edu.haut.campus.core.events.EventOutbox
 import cn.edu.haut.campus.core.events.OutboxEventRecord
 import cn.edu.haut.campus.core.events.UnknownEventException
 import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.util.concurrent.ConcurrentHashMap
@@ -20,7 +21,8 @@ import java.util.concurrent.atomic.AtomicLong
 /** Room 实现的 at-least-once outbox；sequence 由 SQLite 单调分配，ack 按 consumer group 持久化。 */
 class RoomEventOutbox(
     private val database: HautDatabase,
-    private val clock: () -> Long = System::currentTimeMillis
+    private val clock: () -> Long = System::currentTimeMillis,
+    private val domainEventCodecRegistry: DomainEventCodecRegistry = DomainEventCodecRegistry.DEFAULT
 ) : EventOutbox {
     private val dao = database.vaultDao()
     private val nextListenerId = AtomicLong(0)
@@ -37,6 +39,14 @@ class RoomEventOutbox(
      * 避免嵌套事务最终回滚却把未提交事件先推给进程内消费者。
      */
     internal suspend fun appendDeferred(envelope: EventEnvelope): EventAppendResult {
+        // domain_outbox 是共享类型化总线，不是通用裸 envelope 通道。写入前必须能被 registry 解码，
+        // 且解码后重新编码必须与待写 envelope 逐字段相同；否则未知类型、私造 schema、绕过 codec 的
+        // payload 或敏感字段都不会进入共享表毒化下游消费者。纯内部审计只写 entity_journal，不进本表。
+        val decoded = domainEventCodecRegistry.decode(envelope)
+        val canonicalTypedEnvelope = domainEventCodecRegistry.encode(decoded)
+        require(canonicalTypedEnvelope == envelope) {
+            "domain_outbox 只接受 DomainEventCodecRegistry 规范编码的事件"
+        }
         val encoded = CanonicalEventEnvelopeCodec.encode(envelope).text
         return database.withTransaction {
             val existing = dao.getOutboxByEventId(envelope.eventId)

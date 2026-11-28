@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.vault
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.database.PersonalEventEntity
 import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.PlaceRef
@@ -12,11 +13,13 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.timeline.BusyLevel
 import cn.edu.haut.campus.core.timeline.EventStatus
+import cn.edu.haut.campus.core.timeline.PersonalEventDraft
+import cn.edu.haut.campus.core.timeline.PersonalEventRecord
+import cn.edu.haut.campus.core.timeline.PersonalEventStore
+import cn.edu.haut.campus.core.timeline.PersonalEventTimelineInputProvider
 import cn.edu.haut.campus.core.timeline.TimeWindow
-import cn.edu.haut.campus.core.timeline.TimelineEvent
 import cn.edu.haut.campus.core.timeline.TimelineEventId
 import cn.edu.haut.campus.core.timeline.TimelineKind
-import cn.edu.haut.campus.core.timeline.TimelineSource
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -31,11 +34,8 @@ class RoomPersonalEventStore(
     private val searchIndex: RoomSearchIndex,
     private val clock: () -> Instant = Instant::now,
     private val idGenerator: () -> String = { UUID.randomUUID().toString() }
-) : PersonalEventStore, TimelineSource {
+) : PersonalEventStore, PersonalEventTimelineInputProvider {
     private val dao = database.vaultDao()
-
-    override val id: String = PersonalEventDraft.PERSONAL_TIMELINE_SOURCE
-    override val kinds: Set<TimelineKind> = PersonalEventDraft.ALLOWED_KINDS
 
     override suspend fun upsert(event: PersonalEventDraft, actor: Actor): TimelineEventId {
         require(event.scope == scope) { "PersonalEventStore 只能写入本 profile scope" }
@@ -104,12 +104,13 @@ class RoomPersonalEventStore(
         }
     }
 
-    override fun observe(scope: SchoolAccountScope, window: TimeWindow): Flow<List<TimelineEvent>> {
+    override fun observe(scope: SchoolAccountScope, window: TimeWindow): Flow<List<PersonalEventRecord>> {
         require(scope == this.scope) { "PersonalEventStore 只能观察本 profile scope" }
+        // window 是 core/timeline PersonalTimelineSource 的投影裁剪条件；这里只提供权威记录，
+        // 不复制 TimelineSource 投影逻辑，避免 source/provenance 语义在 vault 二次漂移。
         return dao.observePersonalEvents().map { rows ->
             rows.filter { it.inScope(scope) }
-                .map { it.toTimelineEvent() }
-                .filter { it.overlaps(window) }
+                .map { it.toPersonalEventRecord() }
         }
     }
 
@@ -142,22 +143,22 @@ internal fun encodeEntityRefList(links: List<EntityRef>): String =
 internal fun decodeEntityRefList(raw: String): List<EntityRef> =
     Json.parse(raw).asArrOrNull?.items?.map(::decodeEntityRef) ?: emptyList()
 
-internal fun PersonalEventEntity.toTimelineEvent(): TimelineEvent {
+internal fun PersonalEventEntity.toPersonalEventRecord(): PersonalEventRecord {
     val rowScope = scope()
     val provenance = decodeProvenance(Json.parse(provenanceJson))
-    val selfRef = EntityRef(EntityType.PERSONAL_EVENT, id, rowScope)
     val sourceType = sourceEntityType
     val sourceId = sourceEntityId
     val sourceEntity = if (sourceType != null && sourceId != null) {
         EntityRef(EntityType.valueOf(sourceType), sourceId, rowScope)
     } else {
-        selfRef
+        null
     }
     val place = placeRefId?.let { placeId ->
-        val campus = requireNotNull(rowScope.campusId) { "有 placeRef 的个人日程必须带 scope campusId" }
-        PlaceRef(placeId, rowScope.schoolId, campus)
+        val segments = placeId.split('/')
+        require(segments.size == 4) { "个人日程 placeRefId 不是稳定地点图 ID" }
+        PlaceRef(placeId, rowScope.schoolId, CampusId(segments[1]))
     }
-    return TimelineEvent(
+    return PersonalEventRecord(
         id = TimelineEventId(id),
         scope = rowScope,
         kind = TimelineKind.valueOf(kind),
@@ -166,11 +167,11 @@ internal fun PersonalEventEntity.toTimelineEvent(): TimelineEvent {
         end = endAtEpochMs?.let(Instant::ofEpochMilli),
         zone = ZoneId.of(zoneId),
         place = place,
-        source = SourceRef(sourceEntity, provenance),
-        provenance = provenance,
         status = EventStatus.valueOf(status),
         busy = BusyLevel.valueOf(busy),
         revision = revision,
+        provenance = provenance,
+        sourceEntity = sourceEntity,
         links = decodeEntityRefList(linksJson)
     )
 }

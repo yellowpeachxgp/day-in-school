@@ -16,8 +16,6 @@ import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.time.Instant
 
-internal const val VAULT_ENTITY_CHANGED_EVENT_TYPE = "vault.entity.changed"
-internal const val VAULT_ENTITY_CHANGED_SCHEMA_VERSION = 1
 internal const val MAX_ENTITY_SNAPSHOT_BYTES = 64 * 1024
 
 internal object VaultScopeKeyCodec {

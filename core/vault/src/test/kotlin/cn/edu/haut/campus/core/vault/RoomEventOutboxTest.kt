@@ -3,13 +3,19 @@ package cn.edu.haut.campus.core.vault
 import androidx.room.Room
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEvent
+import cn.edu.haut.campus.core.events.DomainEventBus
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.events.EventAppendStatus
 import cn.edu.haut.campus.core.events.EventEnvelope
 import cn.edu.haut.campus.core.events.EventIdConflictException
+import cn.edu.haut.campus.core.events.SensitiveEventPayloadException
+import cn.edu.haut.campus.core.events.UnknownDomainEventTypeException
 import cn.edu.haut.campus.core.events.UnknownEventException
 import cn.edu.haut.campus.core.database.CourseEntity
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
+import cn.edu.haut.campus.core.model.ChangeKind
 import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ProfileId
@@ -72,10 +78,43 @@ class RoomEventOutboxTest {
         outbox.append(envelope("event-conflict"))
 
         val error = runCatching {
-            outbox.append(envelope("event-conflict", payload = """{"value":2}"""))
+            outbox.append(envelope("event-conflict", changeId = 2L))
         }.exceptionOrNull()
 
         assertTrue(error is EventIdConflictException)
+    }
+
+    @Test
+    fun unregisteredRawEnvelopeCannotEnterSharedDomainOutbox() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val rawEnvelope = EventEnvelope(
+            eventId = "event-raw-test",
+            eventType = "vault.test",
+            schemaVersion = 1,
+            occurredAt = Instant.parse("2026-01-02T03:04:05Z"),
+            scopeKey = "haut/acct_outbox/prof_outbox",
+            payload = CanonicalJson.of("""{"value":1}"""),
+            metadata = emptyMap()
+        )
+
+        val error = runCatching { outbox.append(rawEnvelope) }.exceptionOrNull()
+
+        assertTrue(error is UnknownDomainEventTypeException)
+        assertEquals(0, database.vaultDao().countDomainOutbox())
+    }
+
+    @Test
+    fun sensitiveChangedPathEnvelopeCannotEnterSharedDomainOutbox() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val valid = envelope("event-sensitive-path")
+        val tampered = valid.copy(
+            payload = CanonicalJson.of(valid.payload.text.replace("/row/title", "/row/sessionCookie"))
+        )
+
+        val error = runCatching { outbox.append(tampered) }.exceptionOrNull()
+
+        assertTrue(error is SensitiveEventPayloadException)
+        assertEquals(0, database.vaultDao().countDomainOutbox())
     }
 
     @Test
@@ -161,6 +200,18 @@ class RoomEventOutboxTest {
         assertEquals(1, pending.size)
         assertEquals("vault.entity.changed", pending[0].envelope.eventType)
         assertTrue(pending[0].envelope.payload.text.contains("course-outbox"))
+        assertFalse(pending[0].envelope.payload.text.contains("高等数学"))
+
+        val typed = DomainEventBus(RoomEventBus(RoomEventOutbox(database)))
+            .subscribe("automation")
+            .first()
+        assertTrue(typed is DomainEvent.VaultEntityChanged)
+        val vaultEvent = typed as DomainEvent.VaultEntityChanged
+        assertEquals(1L, vaultEvent.changeId)
+        assertEquals("course-outbox", vaultEvent.entityRef.id)
+        assertEquals(ChangeKind.CREATED, vaultEvent.change)
+        assertEquals(Actor.USER, vaultEvent.actor)
+        assertTrue(vaultEvent.changedPaths.contains("/course/name"))
     }
 
     @Test
@@ -229,14 +280,25 @@ class RoomEventOutboxTest {
         assertEquals(emptyList<String>(), received)
     }
 
-    private fun envelope(eventId: String, payload: String = """{"value":1}"""): EventEnvelope =
-        EventEnvelope(
-            eventId = eventId,
-            eventType = "vault.test",
-            schemaVersion = 1,
-            occurredAt = Instant.parse("2026-01-02T03:04:05Z"),
-            scopeKey = "haut/account/profile",
-            payload = CanonicalJson.of(payload),
-            metadata = emptyMap()
+    private fun envelope(eventId: String, changeId: Long = 1L): EventEnvelope {
+        val scope = SchoolAccountScope(
+            schoolId = SchoolId("haut"),
+            accountId = AccountId("acct_outbox"),
+            profileId = ProfileId("prof_outbox")
         )
+        return DomainEventCodecRegistry.DEFAULT.encode(
+            DomainEvent.VaultEntityChanged(
+                eventId = eventId,
+                scope = scope,
+                occurredAt = Instant.parse("2026-01-02T03:04:05Z"),
+                changeId = changeId,
+                writeGroupId = "write-group-" + changeId,
+                entityRef = EntityRef(EntityType.PERSONAL_EVENT, "personal:" + eventId, scope),
+                change = ChangeKind.UPDATED,
+                actor = Actor.USER,
+                actorDetail = null,
+                changedPaths = listOf("/row/title")
+            )
+        )
+    }
 }
