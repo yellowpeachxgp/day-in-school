@@ -230,7 +230,8 @@ internal object CourseScheduleTimelineProjector {
             status = status,
             busy = busy,
             revision = snapshot.revision,
-            links = links
+            links = links,
+            sourceMetadata = CourseOccurrenceTimelineMetadata.encode(this)
         )
     }
 
