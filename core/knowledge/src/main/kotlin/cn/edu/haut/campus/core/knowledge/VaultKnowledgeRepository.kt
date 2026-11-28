@@ -194,7 +194,13 @@ class VaultKnowledgeRepository internal constructor(
             val extractionLines = material.extraction?.let { readExtractionLines(it.blobId) }.orEmpty()
             val located = locateLine(extractionLines, text, pageIndex)
             val bodyPageMatches = pageMatchesLines(extractionLines, text, pageIndex)
+            val pageSnippet = if (located == null && bodyPageMatches) {
+                makePageSnippet(extractionLines, text, pageIndex)
+            } else {
+                null
+            }
             val snippet = located?.text?.let { makeSnippet(it, text) }
+                ?: pageSnippet
                 ?: if (bodyPageMatches || hit.channel == SearchHitChannel.BODY || hit.channel == SearchHitChannel.FALLBACK) {
                     hit.snippet
                 } else {
@@ -350,23 +356,66 @@ class VaultKnowledgeRepository internal constructor(
 
     private fun pageMatchesLines(lines: List<KnowledgeTextLine>, query: String, pageIndex: Int?): Boolean {
         if (lines.isEmpty()) return false
-        val units = SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
+        val units = queryUnits(query)
         if (units.isEmpty()) return false
         val normalizedPageText = lines
             .filter { pageIndex == null || it.pageIndex == pageIndex }
             .joinToString(" ") { it.text }
             .let(SearchTextNormalizer::normalizePlain)
-        return normalizedPageText.isNotBlank() && units.all { normalizedPageText.contains(it) }
+        return normalizedPageText.isNotBlank() && units.mapIndexed { index, unit ->
+            unitMatchesNormalizedText(normalizedPageText, unit, isQueryTail = index == units.lastIndex)
+        }.all { it }
     }
 
     private fun locateLine(lines: List<KnowledgeTextLine>, query: String, pageIndex: Int?): KnowledgeTextLine? {
         if (lines.isEmpty()) return null
-        val units = SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
+        val units = queryUnits(query)
         fun matches(line: KnowledgeTextLine): Boolean {
             val normalized = SearchTextNormalizer.normalizePlain(line.text)
-            return units.all { normalized.contains(it) }
+            return units.mapIndexed { index, unit ->
+                unitMatchesNormalizedText(normalized, unit, isQueryTail = index == units.lastIndex)
+            }.all { it }
         }
         return lines.firstOrNull { (pageIndex == null || it.pageIndex == pageIndex) && matches(it) }
+    }
+
+    private fun makePageSnippet(lines: List<KnowledgeTextLine>, query: String, pageIndex: Int?): String? {
+        val units = queryUnits(query)
+        val pageLines = lines.filter { pageIndex == null || it.pageIndex == pageIndex }.sortedWith(
+            compareBy<KnowledgeTextLine> { it.pageIndex }.thenBy { it.lineIndex }
+        )
+        if (pageLines.isEmpty() || units.isEmpty()) return null
+        val matchingLines = mutableListOf<KnowledgeTextLine>()
+        units.forEachIndexed { index, unit ->
+            val matched = pageLines.firstOrNull { line ->
+                unitMatchesNormalizedText(
+                    SearchTextNormalizer.normalizePlain(line.text),
+                    unit,
+                    isQueryTail = index == units.lastIndex
+                )
+            }
+            if (matched != null && matched !in matchingLines) matchingLines += matched
+        }
+        val selected = if (matchingLines.isNotEmpty()) matchingLines.take(3) else pageLines.take(2)
+        return selected.joinToString(" … ") { makeSnippet(it.text, query) }.take(240).ifBlank { null }
+    }
+
+    private fun queryUnits(query: String): List<String> =
+        SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
+
+    private fun unitMatchesNormalizedText(normalizedText: String, unit: String, isQueryTail: Boolean): Boolean {
+        if (unit.any(::isCjkCharacter)) return normalizedText.contains(unit)
+        return normalizedText.split(' ').filter { it.isNotBlank() }.any { token ->
+            token == unit || (isQueryTail && unit.length >= 3 && token.startsWith(unit))
+        }
+    }
+
+    private fun isCjkCharacter(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
+        Character.UnicodeScript.HAN,
+        Character.UnicodeScript.HIRAGANA,
+        Character.UnicodeScript.KATAKANA,
+        Character.UnicodeScript.HANGUL -> true
+        else -> false
     }
 
     private fun makeSnippet(text: String, query: String): String {

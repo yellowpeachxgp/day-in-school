@@ -237,6 +237,32 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertEquals(2, hits[0].pageIndex)
         assertNull(hits[0].lineIndex)
         assertNull(hits[0].bounds)
+        assertTrue(hits[0].snippet.contains("特征值"))
+        assertTrue(hits[0].snippet.contains("特征向量"))
+    }
+
+    @Test
+    fun asciiTitleMatchDoesNotUseSubstringInsideUnrelatedBodyWordsAsPageMatch() = runBlocking {
+        extractor.pdfLines = listOf(
+            extractedLine(0, 4, "nonlinear systems"),
+            extractedLine(1, 4, "prealgebra notes")
+        )
+        repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.PDF,
+                title = "linear algebra lecture",
+                note = null,
+                fileName = "linear.pdf",
+                mimeType = "application/pdf",
+                contentBytes = byteArrayOf(4, 5, 6)
+            )
+        )
+        val hits = repository.searchMaterials(scope, "linear algebra")
+        assertEquals(1, hits.size)
+        assertNull(hits[0].pageIndex)
+        assertNull(hits[0].lineIndex)
     }
 
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
