@@ -30,6 +30,13 @@ object AutomationKeys {
         return "run-" + sha256Hex(material).substring(0, 40)
     }
 
+    /** 动作级幂等/检查点身份；不包含执行 attempt，因此崩溃恢复仍回到同一动作逻辑身份。 */
+    fun actionExecutionKey(runId: String, actionIndex: Int): String {
+        require(actionIndex >= 0) { "actionIndex 不能为负" }
+        val material = "automation-action/v1\n" + lengthPrefixed(runId) + "\n" + actionIndex
+        return "act-" + sha256Hex(material).substring(0, 40)
+    }
+
     fun dryRunTriggerInstanceKey(ruleId: String, at: Instant): String {
         val material = "automation-dry-run/v1\n" + lengthPrefixed(ruleId) + "\n" + at.epochSecond + "\n" + at.nano
         return "dry-run:" + sha256Hex(material).substring(0, 32)

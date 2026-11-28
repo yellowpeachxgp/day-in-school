@@ -331,9 +331,13 @@ interface CampusDao {
         DomainOutboxEntity::class,
         SearchDocEntity::class,
         SearchFtsEntity::class,
-        BlobStoreEntity::class
+        BlobStoreEntity::class,
+        AutomationRuleEntity::class,
+        AutomationRunEntity::class,
+        AutomationDedupeEntity::class,
+        AutomationActionCheckpointEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class HautDatabase : RoomDatabase() {
@@ -342,4 +346,5 @@ abstract class HautDatabase : RoomDatabase() {
     abstract fun utilityAndFocusDao(): UtilityAndFocusDao
     abstract fun cloudAndParcelDao(): CloudAndParcelDao
     abstract fun vaultDao(): VaultDao
+    abstract fun automationDao(): AutomationDao
 }

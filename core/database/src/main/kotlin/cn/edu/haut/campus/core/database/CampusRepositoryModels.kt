@@ -45,6 +45,8 @@ data class AppPreferencesState(
     val syncXnm: String = AcademicTermResolver.defaultAcademicYearCode(),
     val syncXqm: String = AcademicTermResolver.defaultSemesterCode(),
     val lastAutoSyncEpochMillis: Long? = null,
+    val lastAcademicDataSyncEpochMillis: Long? = null,
+    val lastAcademicDataSyncTermId: String? = null,
     val customChannelUrls: Map<String, String> = emptyMap(),
     val customClubGroupNumbers: Map<String, String> = emptyMap(),
     val campusCommunityCatalog: cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog = cn.edu.haut.campus.core.model.CampusCommunityCloudCatalog(),
