@@ -1,10 +1,10 @@
 package cn.edu.haut.campus.feature.settings.ai
 
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -49,7 +49,7 @@ class AiServiceScreenTest {
 
         composeRule.onNodeWithTag("ai-connectivity-start").performClick()
         assertEquals(listOf("start-test"), actions.events)
-        composeRule.onNodeWithText("发送前预览").assertDoesNotExist()
+        assertTrue(composeRule.onAllNodesWithText("发送前预览").fetchSemanticsNodes().isEmpty())
 
         composeRule.setContent {
             AiServiceScreenContent(state = AiServicePreviewFixtures.previewReady, onBack = {}, actions = actions)
@@ -67,7 +67,7 @@ class AiServiceScreenTest {
         }
 
         composeRule.onNodeWithText("· 手机号 × 1").assertIsDisplayed()
-        composeRule.onNodeWithText("13812345678").assertDoesNotExist()
+        assertTrue(composeRule.onAllNodesWithText("13812345678").fetchSemanticsNodes().isEmpty())
     }
 
     @Test

@@ -27,7 +27,7 @@ class AiServicePrivacyGuardTest {
     @Test
     fun uiStateDoesNotDeclareKeyOrConsentFields() {
         val source = File(repoRoot, "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/ai/state/AiServiceUiState.kt").readText()
-        assertFalse(Regex("(?i)\bkey\s*:").containsMatchIn(source))
+        assertFalse(Regex("(?i)(?:^|[^A-Za-z0-9])key\\s*:").containsMatchIn(source))
         assertFalse(source.contains("CharArray"))
         assertFalse(source.contains("AiConsentToken"))
     }
