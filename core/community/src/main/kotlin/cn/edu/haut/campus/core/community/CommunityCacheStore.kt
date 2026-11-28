@@ -78,6 +78,18 @@ data class CommunityCachedEnvelope(
 interface CommunityCacheStore {
     suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope?
     suspend fun write(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long)
+
+    /** 单调递增的失效代际；客户端必须在网络请求发出前捕获，并在写缓存前用 writeIfCurrent 复核。 */
+    suspend fun invalidationGeneration(): Long
+
+    /** 只有捕获代际仍当前时才写入；返回 false 表示在途响应已被 mutation/403/404/wipe 失效。 */
+    suspend fun writeIfCurrent(
+        key: CommunityCacheKey,
+        envelope: CommunityEnvelope,
+        cachedAtEpochMillis: Long,
+        expectedInvalidationGeneration: Long,
+    ): Boolean
+
     suspend fun invalidateAll()
     suspend fun wipe()
     suspend fun countEntries(): Int
@@ -101,6 +113,7 @@ class FileCommunityCacheStore internal constructor(
     private val maxBytes: Long,
     private val maxEntryBytes: Int,
     private val deleteTreeImpl: (Path) -> Unit,
+    private val deleteResponseFileImpl: (Path) -> Unit = { Files.deleteIfExists(it) },
 ) : CommunityCacheStore {
     constructor(
         rootDir: Path,
@@ -115,6 +128,7 @@ class FileCommunityCacheStore internal constructor(
         deleteTreeImpl = ::deleteTreeRecursively,
     )
     private val responsesDir: Path = rootDir.resolve("responses")
+    private val invalidationTombstone: Path = rootDir.resolve(".invalidation-poisoned")
     private val rootKey = rootDir.toAbsolutePath().normalize().toString()
     private val lock = ROOT_LOCKS.computeIfAbsent(rootKey) { Any() }
     private val instanceWipeGeneration = WIPE_GENERATIONS[rootKey] ?: 0L
@@ -129,7 +143,7 @@ class FileCommunityCacheStore internal constructor(
 
     override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = withContext(Dispatchers.IO) {
         synchronized(lock) {
-            if (isRetiredByWipe()) return@synchronized null
+            if (isCacheAccessBlocked()) return@synchronized null
             val file = responsesDir.resolve(key.storageId + ".json")
             if (!Files.isRegularFile(file)) return@synchronized null
             if (runCatching { Files.size(file) }.getOrDefault(Long.MAX_VALUE) > maxEntryBytes) {
@@ -153,37 +167,85 @@ class FileCommunityCacheStore internal constructor(
     override suspend fun write(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long) =
         withContext(Dispatchers.IO) {
             synchronized(lock) {
-                if (isRetiredByWipe()) return@synchronized
-                Files.createDirectories(responsesDir)
-                val entry = encodeEntry(key, envelope, cachedAtEpochMillis)
-                val bytes = Json.canonical(entry).toByteArray(Charsets.UTF_8)
-                if (bytes.size > maxEntryBytes) {
-                    throw IOException("community cache entry exceeds " + maxEntryBytes + " bytes")
-                }
-                val temporary = Files.createTempFile(responsesDir, "write-", ".tmp")
-                try {
-                    Files.write(temporary, bytes)
-                    val target = responsesDir.resolve(key.storageId + ".json")
-                    try {
-                        Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-                    } catch (error: java.nio.file.AtomicMoveNotSupportedException) {
-                        Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
-                    }
-                    pruneOverflow()
-                } finally {
-                    runCatching { Files.deleteIfExists(temporary) }
+                if (!isCacheAccessBlocked()) {
+                    writeEntryLocked(key, envelope, cachedAtEpochMillis)
                 }
             }
         }
 
+    override suspend fun invalidationGeneration(): Long = synchronized(lock) {
+        INVALIDATION_GENERATIONS[rootKey] ?: 0L
+    }
+
+    override suspend fun writeIfCurrent(
+        key: CommunityCacheKey,
+        envelope: CommunityEnvelope,
+        cachedAtEpochMillis: Long,
+        expectedInvalidationGeneration: Long,
+    ): Boolean = withContext(Dispatchers.IO) {
+        synchronized(lock) {
+            if (isCacheAccessBlocked()) {
+                false
+            } else if ((INVALIDATION_GENERATIONS[rootKey] ?: 0L) != expectedInvalidationGeneration) {
+                false
+            } else {
+                writeEntryLocked(key, envelope, cachedAtEpochMillis)
+                true
+            }
+        }
+    }
+
+    private fun writeEntryLocked(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long) {
+        Files.createDirectories(responsesDir)
+        val entry = encodeEntry(key, envelope, cachedAtEpochMillis)
+        val bytes = Json.canonical(entry).toByteArray(Charsets.UTF_8)
+        if (bytes.size > maxEntryBytes) {
+            throw IOException("community cache entry exceeds " + maxEntryBytes + " bytes")
+        }
+        val temporary = Files.createTempFile(responsesDir, "write-", ".tmp")
+        try {
+            Files.write(temporary, bytes)
+            val target = responsesDir.resolve(key.storageId + ".json")
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (error: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING)
+            }
+            pruneOverflow()
+        } finally {
+            runCatching { Files.deleteIfExists(temporary) }
+        }
+    }
+
     override suspend fun invalidateAll() = withContext(Dispatchers.IO) {
         synchronized(lock) {
-            if (Files.exists(responsesDir)) {
-                Files.list(responsesDir).use { stream ->
-                    stream.filter { Files.isRegularFile(it) }.forEach { Files.deleteIfExists(it) }
+            // 先推进失效代际再删文件：即使删除期间有在途读响应迟到，其写前复核也必然失败。
+            val nextGeneration = (INVALIDATION_GENERATIONS[rootKey] ?: 0L) + 1L
+            INVALIDATION_GENERATIONS[rootKey] = nextGeneration
+            try {
+                // 持久 tombstone 先于清理落盘：清理中途失败或进程重启后，新实例也不得读残留快照。
+                writeInvalidationTombstoneLocked(nextGeneration)
+                if (Files.exists(responsesDir)) {
+                    Files.list(responsesDir).use { stream ->
+                        stream.filter { Files.isRegularFile(it) }.forEach { file ->
+                            deleteResponseFileImpl(file)
+                            if (Files.exists(file)) {
+                                throw IOException("community cache invalidation did not remove " + file.fileName)
+                            }
+                        }
+                    }
                 }
+                Files.createDirectories(responsesDir)
+                Files.deleteIfExists(invalidationTombstone)
+                if (Files.exists(invalidationTombstone)) {
+                    throw IOException("community cache invalidation poison tombstone could not be removed")
+                }
+                INVALIDATION_FAILURES.remove(rootKey)
+            } catch (error: Exception) {
+                // 失效失败不得让既有失权快照或迟到写回继续使用；重试清理或 wipe 成功后才会解除。
+                INVALIDATION_FAILURES[rootKey] = true
+                throw error
             }
-            Files.createDirectories(responsesDir)
         }
         Unit
     }
@@ -193,9 +255,11 @@ class FileCommunityCacheStore internal constructor(
             // 先推进本进程内代际再删除：擦除前已在途的旧实例写入在锁释放后必然失效，
             // 而擦除后新建的实例采用新代际，可以继续正常使用同一目录。
             WIPE_GENERATIONS[rootKey] = (WIPE_GENERATIONS[rootKey] ?: 0L) + 1L
+            INVALIDATION_GENERATIONS[rootKey] = (INVALIDATION_GENERATIONS[rootKey] ?: 0L) + 1L
             try {
                 deleteTreeImpl(rootDir)
                 WIPE_FAILURES.remove(rootKey)
+                INVALIDATION_FAILURES.remove(rootKey)
             } catch (error: Exception) {
                 // 擦除失败必须同时“显式传播 + 阻断后续读写”：调用方不得宣称成功，
                 // 新实例也不得把可能残留的失权快照当作可用缓存。重试 wipe 成功后才解除阻断。
@@ -215,8 +279,30 @@ class FileCommunityCacheStore internal constructor(
         }
     }
 
-    private fun isRetiredByWipe(): Boolean =
-        WIPE_FAILURES.containsKey(rootKey) || (WIPE_GENERATIONS[rootKey] ?: 0L) != instanceWipeGeneration
+    private fun isCacheAccessBlocked(): Boolean =
+        WIPE_FAILURES.containsKey(rootKey) ||
+            INVALIDATION_FAILURES.containsKey(rootKey) ||
+            (WIPE_GENERATIONS[rootKey] ?: 0L) != instanceWipeGeneration ||
+            invalidationTombstonePresentOrUnknown()
+
+    private fun invalidationTombstonePresentOrUnknown(): Boolean {
+        val exists = Files.exists(invalidationTombstone)
+        val definitelyAbsent = Files.notExists(invalidationTombstone)
+        // exists/notExists 同时为 false 表示 IO 状态未知；缓存隐私语义选择 fail-closed。
+        return exists || !definitelyAbsent
+    }
+
+    private fun writeInvalidationTombstoneLocked(generation: Long) {
+        Files.createDirectories(rootDir)
+        val marker = JsonValue.Obj(
+            linkedMapOf(
+                "schema_version" to JsonValue.Num("1"),
+                "kind" to JsonValue.Str("community-cache-invalidation-poisoned"),
+                "invalidation_generation" to JsonValue.Num(generation.toString()),
+            ),
+        )
+        Files.write(invalidationTombstone, Json.canonical(marker).toByteArray(Charsets.UTF_8))
+    }
 
     private fun encodeEntry(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long): JsonValue.Obj {
         return JsonValue.Obj(
@@ -278,6 +364,8 @@ class FileCommunityCacheStore internal constructor(
         private val ROOT_LOCKS = ConcurrentHashMap<String, Any>()
         private val WIPE_GENERATIONS = ConcurrentHashMap<String, Long>()
         private val WIPE_FAILURES = ConcurrentHashMap<String, Boolean>()
+        private val INVALIDATION_GENERATIONS = ConcurrentHashMap<String, Long>()
+        private val INVALIDATION_FAILURES = ConcurrentHashMap<String, Boolean>()
     }
 
 }
@@ -302,23 +390,55 @@ private fun deleteTreeRecursively(path: Path) {
 }
 
 class InMemoryCommunityCacheStore : CommunityCacheStore {
+    private val lock = Any()
     private val entries = LinkedHashMap<String, CommunityCachedEnvelope>()
+    private var invalidationGenerationValue = 0L
 
-    override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = entries[key.storageId]
+    override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = synchronized(lock) {
+        entries[key.storageId]
+    }
 
     override suspend fun write(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long) {
-        entries[key.storageId] = CommunityCachedEnvelope(envelope, cachedAtEpochMillis)
+        synchronized(lock) {
+            entries[key.storageId] = CommunityCachedEnvelope(envelope, cachedAtEpochMillis)
+        }
+    }
+
+    override suspend fun invalidationGeneration(): Long = synchronized(lock) {
+        invalidationGenerationValue
+    }
+
+    override suspend fun writeIfCurrent(
+        key: CommunityCacheKey,
+        envelope: CommunityEnvelope,
+        cachedAtEpochMillis: Long,
+        expectedInvalidationGeneration: Long,
+    ): Boolean = synchronized(lock) {
+        if (invalidationGenerationValue != expectedInvalidationGeneration) {
+            false
+        } else {
+            entries[key.storageId] = CommunityCachedEnvelope(envelope, cachedAtEpochMillis)
+            true
+        }
     }
 
     override suspend fun invalidateAll() {
-        entries.clear()
+        synchronized(lock) {
+            invalidationGenerationValue += 1L
+            entries.clear()
+        }
     }
 
     override suspend fun wipe() {
-        entries.clear()
+        synchronized(lock) {
+            invalidationGenerationValue += 1L
+            entries.clear()
+        }
     }
 
-    override suspend fun countEntries(): Int = entries.size
+    override suspend fun countEntries(): Int = synchronized(lock) {
+        entries.size
+    }
 }
 
 private fun JsonValue.longOrNull(): Long? = (this as? JsonValue.Num)?.literal?.toLongOrNull()

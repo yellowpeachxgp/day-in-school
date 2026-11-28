@@ -2,6 +2,10 @@ package cn.edu.haut.campus.core.community
 
 import cn.edu.haut.campus.core.model.Staleness
 import cn.edu.haut.campus.core.model.json.Json
+import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,14 +26,15 @@ class CommunityClientTest {
         cacheStore: CommunityCacheStore? = null,
         featureGate: CommunityFeatureGate = CommunityFeatureGate.ENABLED,
         token: String? = "synthetic-access-token",
-        cacheIdentityProvider: suspend () -> CommunityCacheIdentity? = { communityTestCacheIdentity() },
+        sessionSnapshotProvider: suspend () -> CommunitySessionSnapshot = {
+            CommunitySessionSnapshot(token, communityTestCacheIdentity())
+        },
     ): CommunityClient = CommunityClient(
         baseUrl = "https://cloud.example.test",
         scope = communityTestScope(),
-        accessTokenProvider = { token },
+        sessionSnapshotProvider = sessionSnapshotProvider,
         featureGate = featureGate,
         cacheStore = cacheStore,
-        cacheIdentityProvider = cacheIdentityProvider,
         transport = transport,
         clock = fixedClock,
     )
@@ -297,6 +302,229 @@ class CommunityClientTest {
     }
 
     @Test
+    fun inFlightReadResponseIsNotWrittenBackAfterMutationInvalidation() = runTest {
+        val cache = InMemoryCommunityCacheStore()
+        val identity = communityTestCacheIdentity()
+        cache.write(
+            communityListGroupsCacheKey(identity),
+            envelopeFromBody(successBody("[]", requestId = "req-before-mutation")),
+            cachedAtEpochMillis = 1L,
+        )
+        val readStarted = CompletableDeferred<Unit>()
+        val releaseRead = CompletableDeferred<Unit>()
+        var offlineMode = false
+        val transport = object : CommunityTransport {
+            override suspend fun execute(request: CommunityHttpRequest): CommunityHttpResponse {
+                return when {
+                    request.method == "GET" && offlineMode -> throw IOException("synthetic offline after mutation")
+                    request.method == "GET" -> {
+                        readStarted.complete(Unit)
+                        releaseRead.await()
+                        CommunityHttpResponse(200, successBody("[]", requestId = "req-inflight-before-mutation"))
+                    }
+                    request.method == "POST" -> CommunityHttpResponse(
+                        201,
+                        successBody("{}", requestId = "req-mutation-during-read"),
+                    )
+                    else -> error("unexpected request method " + request.method)
+                }
+            }
+        }
+        val subject = client(
+            transport,
+            cacheStore = cache,
+            sessionSnapshotProvider = { CommunitySessionSnapshot("synthetic-access-token", identity) },
+        )
+        assertEquals(1, cache.countEntries())
+
+        val inFlightRead = async { subject.listGroups("haut") }
+        readStarted.await()
+        val mutation = subject.createGroup(
+            CreateGroupRequest("haut", "study", "在途读 mutation"),
+            idempotencyKey = "idem-mutate-inflight",
+        )
+
+        assertTrue(mutation is CommunityResult.Success)
+        assertEquals("mutation 在在途读响应写回前必须清空既有快照", 0, cache.countEntries())
+        releaseRead.complete(Unit)
+        val readResult = inFlightRead.await()
+        assertTrue(readResult is CommunityResult.Success)
+        assertEquals(Staleness.FRESH, (readResult as CommunityResult.Success).staleness)
+        assertEquals("在途读迟到成功响应不得重新写回 mutation 前快照", 0, cache.countEntries())
+
+        offlineMode = true
+        val offline = subject.listGroups("haut")
+        assertTrue(offline is CommunityResult.Failure)
+        assertEquals("NETWORK_UNAVAILABLE", (offline as CommunityResult.Failure).error.code)
+    }
+
+    @Test
+    fun inFlightReadResponseIsNotWrittenBackAfterAuthoritativeForbiddenOrNotFound() = runTest {
+        val groupId = "11111111-1111-4111-8111-111111111111"
+        for ((status, code) in listOf(403 to "GROUP_PERMISSION_DENIED", 404 to "GROUP_NOT_FOUND")) {
+            val cache = InMemoryCommunityCacheStore()
+            val identity = communityTestCacheIdentity()
+            cache.write(
+                communityListGroupsCacheKey(identity),
+                envelopeFromBody(successBody("[]", requestId = "req-before-authoritative-" + status)),
+                cachedAtEpochMillis = 1L,
+            )
+            val readStarted = CompletableDeferred<Unit>()
+            val releaseRead = CompletableDeferred<Unit>()
+            var offlineMode = false
+            val transport = object : CommunityTransport {
+                override suspend fun execute(request: CommunityHttpRequest): CommunityHttpResponse {
+                    if (request.method == "GET" && request.url.contains("/api/v1/groups?")) {
+                        if (offlineMode) throw IOException("synthetic offline after authoritative " + status)
+                        readStarted.complete(Unit)
+                        releaseRead.await()
+                        return CommunityHttpResponse(
+                            200,
+                            successBody("[]", requestId = "req-inflight-authoritative-" + status),
+                        )
+                    }
+                    if (request.method == "GET" && request.url.contains("/api/v1/groups/")) {
+                        return CommunityHttpResponse(status, errorBody(code, retryable = false))
+                    }
+                    error("unexpected request " + request.method + " " + request.url)
+                }
+            }
+            val subject = client(
+                transport,
+                cacheStore = cache,
+                sessionSnapshotProvider = { CommunitySessionSnapshot("synthetic-access-token", identity) },
+            )
+            assertEquals(1, cache.countEntries())
+
+            val inFlightRead = async { subject.listGroups("haut") }
+            readStarted.await()
+            val authoritative = subject.getGroup(groupId)
+
+            assertTrue(authoritative is CommunityResult.Failure)
+            assertEquals(code, (authoritative as CommunityResult.Failure).error.code)
+            assertEquals("HTTP " + status + " 在在途读响应写回前必须清空既有快照", 0, cache.countEntries())
+            releaseRead.complete(Unit)
+            val readResult = inFlightRead.await()
+            assertTrue(readResult is CommunityResult.Success)
+            assertEquals("在途读迟到成功响应不得重新写回 403/404 前快照", 0, cache.countEntries())
+
+            offlineMode = true
+            val offline = subject.listGroups("haut")
+            assertTrue(offline is CommunityResult.Failure)
+            assertEquals("NETWORK_UNAVAILABLE", (offline as CommunityResult.Failure).error.code)
+        }
+    }
+
+    @Test
+    fun forbiddenInvalidationFailurePoisonsResidualCacheForOfflineAndServerFailures() = runTest {
+        val filesDir = Files.createTempDirectory("community-client-invalidate-failure-test").toFile()
+        try {
+            val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_client_invalidate_failure")
+            var failDeletion = true
+            val cache = FileCommunityCacheStore(
+                rootDir = root.toPath(),
+                maxEntries = 128,
+                maxBytes = 2L * 1024L * 1024L,
+                maxEntryBytes = 512 * 1024,
+                deleteTreeImpl = { path ->
+                    if (!path.toFile().deleteRecursively() && Files.exists(path)) {
+                        throw IOException("synthetic tree delete failure")
+                    }
+                },
+                deleteResponseFileImpl = { file ->
+                    if (failDeletion) throw IOException("synthetic response delete failure")
+                    Files.deleteIfExists(file)
+                },
+            )
+            val transport = RecordingCommunityTransport(
+                jsonResponse(successBody("[]", requestId = "req-before-cleanup-failure")),
+                jsonResponse(errorBody("GROUP_PERMISSION_DENIED", retryable = false), status = 403),
+                networkFailure(),
+                jsonResponse(errorBody("STORAGE_UNAVAILABLE", retryable = true), status = 503),
+            )
+            val subject = client(transport, cacheStore = cache)
+
+            assertTrue(subject.listGroups("haut") is CommunityResult.Success)
+            assertEquals(1, cache.countEntries())
+            val forbidden = subject.listGroups("haut")
+            assertTrue(forbidden is CommunityResult.Failure)
+            assertEquals("CACHE_INVALIDATION_FAILED", (forbidden as CommunityResult.Failure).error.code)
+            assertEquals("失败注入保留残留文件，用于证明 cachedOrFailure 不得读出", 1, cache.countEntries())
+
+            val offline = subject.listGroups("haut")
+            assertTrue(offline is CommunityResult.Failure)
+            assertEquals("NETWORK_UNAVAILABLE", (offline as CommunityResult.Failure).error.code)
+            val serverFailure = subject.listGroups("haut")
+            assertTrue(serverFailure is CommunityResult.Failure)
+            assertEquals("STORAGE_UNAVAILABLE", (serverFailure as CommunityResult.Failure).error.code)
+
+            failDeletion = false
+            cache.invalidateAll()
+            assertEquals(0, cache.countEntries())
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
+    private suspend fun verifyInFlightIdentitySwitchUnreadable(abaRelogin: Boolean) = coroutineScope {
+        val cloudUserA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        val cloudUserB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        val identityA1 = communityTestCacheIdentity(cloudUserId = cloudUserA, identityGeneration = 1L)
+        val identityB2 = communityTestCacheIdentity(cloudUserId = cloudUserB, identityGeneration = 2L)
+        val identityA3 = communityTestCacheIdentity(cloudUserId = cloudUserA, identityGeneration = 3L)
+        var session = CommunitySessionSnapshot("token-a", identityA1)
+        val cache = InMemoryCommunityCacheStore()
+        val readStarted = CompletableDeferred<Unit>()
+        val releaseRead = CompletableDeferred<Unit>()
+        var offlineMode = false
+        val requests = mutableListOf<CommunityHttpRequest>()
+        val transport = object : CommunityTransport {
+            override suspend fun execute(request: CommunityHttpRequest): CommunityHttpResponse {
+                requests += request.copy()
+                if (offlineMode) throw IOException("synthetic offline after identity switch")
+                readStarted.complete(Unit)
+                releaseRead.await()
+                return CommunityHttpResponse(
+                    200,
+                    successBody("[]", requestId = if (abaRelogin) "req-inflight-aba" else "req-inflight-a-to-b"),
+                )
+            }
+        }
+        val subject = client(
+            transport,
+            cacheStore = cache,
+            sessionSnapshotProvider = { session },
+        )
+
+        val inFlightRead = async { subject.listGroups("haut") }
+        readStarted.await()
+        assertEquals("Bearer token-a", requests.single().headers["Authorization"])
+        session = CommunitySessionSnapshot("token-b", identityB2)
+        if (abaRelogin) {
+            session = CommunitySessionSnapshot("token-a-relogin", identityA3)
+        }
+
+        releaseRead.complete(Unit)
+        val readResult = inFlightRead.await()
+        assertTrue(readResult is CommunityResult.Success)
+
+        offlineMode = true
+        val afterSwitch = subject.listGroups("haut")
+        assertTrue(afterSwitch is CommunityResult.Failure)
+        assertEquals("NETWORK_UNAVAILABLE", (afterSwitch as CommunityResult.Failure).error.code)
+    }
+
+    @Test
+    fun inFlightReadResponseFromIdentityAIsUnreadableAfterSwitchToB() = runTest {
+        verifyInFlightIdentitySwitchUnreadable(abaRelogin = false)
+    }
+
+    @Test
+    fun inFlightReadResponseFromIdentityAIsUnreadableAfterAbaRelogin() = runTest {
+        verifyInFlightIdentitySwitchUnreadable(abaRelogin = true)
+    }
+
+    @Test
     fun switchedCloudIdentityOrGenerationCannotReadPreviousGroupSnapshot() = runTest {
         val cloudUserA = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         val cloudUserB = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
@@ -310,7 +538,7 @@ class CommunityClientTest {
         val subject = client(
             transport,
             cacheStore = cache,
-            cacheIdentityProvider = { identity },
+            sessionSnapshotProvider = { CommunitySessionSnapshot("synthetic-access-token", identity) },
         )
 
         assertTrue(subject.listGroups("haut") is CommunityResult.Success)
@@ -328,17 +556,14 @@ class CommunityClientTest {
     }
 
     @Test
-    fun cacheStoreRequiresExplicitCloudIdentityProvider() {
-        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) {
-            CommunityClient(
-                baseUrl = "https://cloud.example.test",
-                scope = communityTestScope(),
-                accessTokenProvider = { "token" },
-                featureGate = CommunityFeatureGate.ENABLED,
-                cacheStore = InMemoryCommunityCacheStore(),
-                transport = RecordingCommunityTransport(),
-            )
-        }
+    fun sessionSnapshotStringRedactsTokenAndCloudIdentity() {
+        val snapshot = CommunitySessionSnapshot("synthetic-secret-token", communityTestCacheIdentity())
+
+        val rendered = snapshot.toString()
+
+        assertFalse(rendered.contains("synthetic-secret-token"))
+        assertFalse(rendered.contains("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"))
+        assertTrue(rendered.contains("authenticated=true"))
     }
 
     @Test
@@ -380,8 +605,9 @@ class CommunityClientTest {
                 filesDir = filesDir,
                 baseUrl = "https://cloud.example.test",
                 scope = communityTestScope(),
-                accessTokenProvider = { "synthetic-access-token" },
-                cacheIdentityProvider = { communityTestCacheIdentity() },
+                sessionSnapshotProvider = {
+                    CommunitySessionSnapshot("synthetic-access-token", communityTestCacheIdentity())
+                },
                 featureGate = CommunityFeatureGate.ENABLED,
                 transport = transport,
                 clock = fixedClock,
@@ -414,7 +640,7 @@ class CommunityClientTest {
             CommunityClient(
                 baseUrl = "http://cloud.example.test",
                 scope = communityTestScope(),
-                accessTokenProvider = { "token" },
+                sessionSnapshotProvider = { CommunitySessionSnapshot("token", communityTestCacheIdentity()) },
                 featureGate = CommunityFeatureGate.ENABLED,
                 transport = RecordingCommunityTransport(),
             )
@@ -422,7 +648,7 @@ class CommunityClientTest {
         CommunityClient(
             baseUrl = "http://127.0.0.1:8080",
             scope = communityTestScope(),
-            accessTokenProvider = { "token" },
+            sessionSnapshotProvider = { CommunitySessionSnapshot("token", communityTestCacheIdentity()) },
             featureGate = CommunityFeatureGate.ENABLED,
             transport = RecordingCommunityTransport(),
         )

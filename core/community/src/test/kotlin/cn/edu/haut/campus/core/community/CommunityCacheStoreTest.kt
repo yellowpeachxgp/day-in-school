@@ -211,16 +211,17 @@ class CommunityCacheStoreTest {
             val cacheKey = key()
             var failDeletion = true
             val store = FileCommunityCacheStore(
-                root.toPath(),
-                128,
-                2L * 1024L * 1024L,
-                512 * 1024,
-            ) { path ->
-                if (failDeletion) throw java.io.IOException("synthetic delete failure")
-                if (!path.toFile().deleteRecursively() && Files.exists(path)) {
-                    throw java.io.IOException("synthetic retry delete failure")
-                }
-            }
+                rootDir = root.toPath(),
+                maxEntries = 128,
+                maxBytes = 2L * 1024L * 1024L,
+                maxEntryBytes = 512 * 1024,
+                deleteTreeImpl = { path ->
+                    if (failDeletion) throw java.io.IOException("synthetic delete failure")
+                    if (!path.toFile().deleteRecursively() && Files.exists(path)) {
+                        throw java.io.IOException("synthetic retry delete failure")
+                    }
+                },
+            )
             store.write(cacheKey, envelope(), 11L)
             val responseFile = root.toPath().resolve("responses").resolve(cacheKey.storageId + ".json")
             assertTrue(Files.exists(responseFile))
@@ -238,6 +239,58 @@ class CommunityCacheStoreTest {
             val replacement = FileCommunityCacheStore(root)
             replacement.write(cacheKey, envelope("req-after-retry"), 12L)
             assertEquals("req-after-retry", replacement.read(cacheKey)?.envelope?.requestId)
+        } finally {
+            filesDir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidateDeletionFailurePersistsPoisonTombstoneUntilSuccessfulRetry() = runTest {
+        val filesDir = Files.createTempDirectory("community-cache-invalidate-failure-test").toFile()
+        try {
+            val root = CommunityCacheDirectories.rootForProfile(filesDir, "prof_invalidate_failure")
+            val cacheKey = key()
+            var failDeletion = true
+            val store = FileCommunityCacheStore(
+                rootDir = root.toPath(),
+                maxEntries = 128,
+                maxBytes = 2L * 1024L * 1024L,
+                maxEntryBytes = 512 * 1024,
+                deleteTreeImpl = { path ->
+                    if (!path.toFile().deleteRecursively() && Files.exists(path)) {
+                        throw java.io.IOException("synthetic tree delete failure")
+                    }
+                },
+                deleteResponseFileImpl = { file ->
+                    if (failDeletion) throw java.io.IOException("synthetic response delete failure")
+                    Files.deleteIfExists(file)
+                },
+            )
+            store.write(cacheKey, envelope(), 11L)
+            val responseFile = root.toPath().resolve("responses").resolve(cacheKey.storageId + ".json")
+            val tombstone = root.toPath().resolve(".invalidation-poisoned")
+            assertTrue(Files.exists(responseFile))
+
+            val failure = runCatching { store.invalidateAll() }.exceptionOrNull()
+
+            assertTrue(failure is java.io.IOException)
+            assertTrue("失败注入不删除文件，用于证明异常不得伪装成已清理", Files.exists(responseFile))
+            assertTrue("清理失败必须留下持久 tombstone", Files.exists(tombstone))
+            assertNull("清理失败后残留文件不得继续被读作缓存", store.read(cacheKey))
+            val blockedKey = key(marker = "blocked-write")
+            store.write(blockedKey, envelope("req-blocked"), 12L)
+            assertNull("清理失败后在重试成功前禁止写入新快照", store.read(blockedKey))
+            assertEquals(1, store.countEntries())
+
+            val replacement = FileCommunityCacheStore(root)
+            assertNull("tombstone 必须跨实例/进程重启语义阻断残留读取", replacement.read(cacheKey))
+
+            failDeletion = false
+            store.invalidateAll()
+            assertFalse(Files.exists(tombstone))
+            assertEquals(0, store.countEntries())
+            store.write(cacheKey, envelope("req-after-retry"), 13L)
+            assertEquals("req-after-retry", store.read(cacheKey)?.envelope?.requestId)
         } finally {
             filesDir.deleteRecursively()
         }

@@ -22,6 +22,16 @@ internal fun communityTestCacheIdentity(
     identityGeneration = identityGeneration,
 )
 
+internal fun communityListGroupsCacheKey(
+    identity: CommunityCacheIdentity = communityTestCacheIdentity(),
+): CommunityCacheKey = CommunityCacheKey(
+    cloudIdentity = identity,
+    apiBaseUrl = "https://cloud.example.test",
+    operationId = "listGroups",
+    resolvedPath = "/api/v1/groups",
+    queryParams = mapOf("school_id" to listOf("haut")),
+)
+
 private fun responseMeta(requestId: String): JsonValue.Obj = JsonValue.Obj(
     linkedMapOf(
         "request_id" to JsonValue.Str(requestId),

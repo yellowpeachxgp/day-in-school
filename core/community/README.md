@@ -16,7 +16,9 @@
 - 以 `filesDir/community-cache/account_<sha256(profileId)>` 做 Profile 隔离，文件名不包含学号或账号明文；缓存键另含当前 `cloudUserId`、`identityGeneration` 与规范化 cloud base URL 的规范键材料（整体哈希落盘），切云号、同号重登、解绑重绑或换云地址后旧键天然不可读；
 - 原子写入、单条/总字节/条数上限、损坏或异常放大文件 fail-closed 删除；
 - 进程内按 root 共享锁与 wipe generation：擦除前已在途的旧实例写入不得重新种回，擦除后新实例可正常使用；擦除失败会传播并阻断该 root 后续读写，重试成功后才解除；
-- `CommunityClientFactory.createFileBacked` 是唯一受支持的装配形状，且必须注入当前云身份/代际提供者；`CommunityClient` 在 cacheStore 与身份提供者缺失组合下直接构造失败；
+- mutation/403/404 清理使用单调 invalidation generation：读请求在网络发起前捕获代际，成功响应写缓存前用 `writeIfCurrent` 复核；在途迟到的旧快照会被丢弃而不是重新种回；
+- `invalidateAll` 先落持久 `.invalidation-poisoned` tombstone 再清理。清理失败会显式传播并毒化 root：重试清理或 wipe 成功前，残留文件在离线/5xx 降级中也不得读出，新实例同样 fail-closed；
+- `CommunityClientFactory.createFileBacked` 是唯一受支持的装配形状，且必须注入原子 `CommunitySessionSnapshot` 提供者；提供者须在同一身份一致性边界内同时读取 access token 与 cloud identity/generation，避免切号横跨两次 suspend 造成错配。快照对象 `toString` 已脱敏，仍不得写入日志/诊断；
 - 云身份登录、切号、同号重登与解绑经 `CloudIdentityRuntimePort` 钩子在身份变更生效前清空本 Profile community 缓存，失败会阻断身份变更；
 - 擦除链路经 `CommunityCacheWipeRegistration` 注册到 `ProfileDataWiper`，`CommunityCacheWipeTest` 断言当前 Profile 擦除后为 0、不跨 Profile 误删，且文件删除失败会传播而不是伪装成成功。
 
@@ -28,7 +30,8 @@ MASTER_PLAN §7 规定 W4「以云端为主，本地只缓存群组快照」；A
 - 离线或 408/429/5xx 时命中缓存会返回 `Staleness.STALE`、`cachedAtEpochMillis` 与明确 fallback reason，绝不伪装为云端新数据；
 - 忙闲、账本、值日/报修、地点状态等协作/众包读结果不长期保留；离线时显式 `NETWORK_UNAVAILABLE` 失败，避免绕过 TTL、撤回共享或成员移除语义；
 - 写请求发出前即保守清空快照，覆盖网络失败但服务端可能已提交的 `STORAGE_COMMIT_UNKNOWN` 类竞态；写成功后再次清理；普通纯 GET/查询成功不会误清缓存；
-- 任一 community operation 返回 403/404 权威失权/删除信号时，群组列表与详情因内容重叠而保守清空整个小型群组元数据缓存分区；清理失败返回 `CACHE_INVALIDATION_FAILED`，不让失权数据后续复活。
+- 任一 community operation 返回 403/404 权威失权/删除信号时，群组列表与详情因内容重叠而保守清空整个小型群组元数据缓存分区；清理失败返回 `CACHE_INVALIDATION_FAILED`，不让失权数据后续复活；
+- 并发回归覆盖确定性门控构造：在途读 × mutation、在途读 × 403/404、403 清理失败后的离线/5xx 残留阻断，以及在途 A→B 与 A→B→A 云身份切换后的旧响应不可读。
 
 ## AUTO-030 成员共享级别边界
 

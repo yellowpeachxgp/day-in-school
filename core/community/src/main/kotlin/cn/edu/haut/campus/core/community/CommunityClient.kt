@@ -19,20 +19,13 @@ import java.time.Instant
 class CommunityClient(
     baseUrl: String,
     private val scope: SchoolAccountScope,
-    private val accessTokenProvider: suspend () -> String?,
+    private val sessionSnapshotProvider: suspend () -> CommunitySessionSnapshot,
     private val featureGate: CommunityFeatureGate,
     private val cacheStore: CommunityCacheStore? = null,
-    private val cacheIdentityProvider: (suspend () -> CommunityCacheIdentity?)? = null,
     private val transport: CommunityTransport = OkHttpCommunityTransport(),
     private val clock: Clock = Clock.systemUTC(),
 ) {
     private val normalizedBaseUrl = validateAndNormalizeBaseUrl(baseUrl)
-
-    init {
-        require(cacheStore == null || cacheIdentityProvider != null) {
-            "启用 community 缓存时必须注入当前 cloudUserId/identityGeneration 提供者"
-        }
-    }
 
     /** 模块内部执行入口：外部调用方只能使用类型化 API 扩展，不能绕过请求类型校验注入任意 raw body。 */
     internal suspend fun execute(
@@ -46,13 +39,14 @@ class CommunityClient(
         if (!decision.enabled) {
             return CommunityResult.Disabled(operation.feature, decision.reason ?: "community feature disabled")
         }
-        val accessToken = accessTokenProvider().orEmpty()
+        val sessionSnapshot = sessionSnapshotProvider()
+        val accessToken = sessionSnapshot.accessToken.orEmpty()
         if (accessToken.isBlank()) return CommunityResult.AuthenticationRequired
         validateOperationShape(operation, pathParams, body, idempotencyKey)
 
         val resolvedPath = resolvePath(operation.pathTemplate, pathParams)
-        val cacheIdentity = if (operation.readOnly && operation.offlineCacheAllowed) {
-            cacheIdentityProvider?.invoke()
+        val cacheIdentity = if (cacheStore != null && operation.readOnly && operation.offlineCacheAllowed) {
+            sessionSnapshot.cacheIdentity
         } else {
             null
         }
@@ -84,6 +78,13 @@ class CommunityClient(
             invalidateSnapshotsOrNull(statusCode = null)?.let { return CommunityResult.Failure(it) }
         }
 
+        // 代际捕获必须贴近网络发起：mutation/403/404 在请求在途期间清理后，
+        // 迟到成功响应写缓存前会因代际不再当前而被丢弃。
+        val invalidationGenerationAtStart = if (cacheKey != null) {
+            cacheStore?.invalidationGeneration()
+        } else {
+            null
+        }
         val response = try {
             transport.execute(request)
         } catch (error: IOException) {
@@ -113,8 +114,16 @@ class CommunityClient(
                 )
             if (cacheKey != null) {
                 val store = cacheStore
-                if (store != null) {
-                    runCatching { store.write(cacheKey, envelope, clock.millis()) }
+                val expectedGeneration = invalidationGenerationAtStart
+                if (store != null && expectedGeneration != null) {
+                    runCatching {
+                        store.writeIfCurrent(
+                            key = cacheKey,
+                            envelope = envelope,
+                            cachedAtEpochMillis = clock.millis(),
+                            expectedInvalidationGeneration = expectedGeneration,
+                        )
+                    }
                 }
             } else if (!operation.readOnly) {
                 // 写前已保守清空；这里重复一次以覆盖写前清理自身失败但写成功的少见路径。

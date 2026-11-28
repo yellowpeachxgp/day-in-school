@@ -22,10 +22,11 @@ class CommunityClientDomainWireTest {
     ): CommunityClient = CommunityClient(
         baseUrl = "https://cloud.example.test",
         scope = communityTestScope(),
-        accessTokenProvider = { "synthetic-access-token" },
+        sessionSnapshotProvider = {
+            CommunitySessionSnapshot("synthetic-access-token", communityTestCacheIdentity())
+        },
         featureGate = CommunityFeatureGate.ENABLED,
         cacheStore = cacheStore,
-        cacheIdentityProvider = { communityTestCacheIdentity() },
         transport = transport,
         clock = fixedClock,
     )
