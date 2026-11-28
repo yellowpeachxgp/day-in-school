@@ -36,6 +36,6 @@ KnowledgeRuntimeFactory.create(database, scope, textExtractor) 返回 KnowledgeR
 2. **求解器复用**：每个任务的完整多次复习序列先合成候选方案，再编码为 W3-02 `TimetableSolver` 的 offering 候选。求解器统一处理跨任务互斥与固定 Timeline 占用，结果再经 `ScheduleVerifier` 独立校验；校验失败 fail-closed，不写新排程。
 3. **冲突语义**：课程、考试、个人日程和既有复习块都通过 Timeline busy interval 参与精确空闲计算；候选再投影到 30 分钟教学网格做独立硬约束验证。考试 deadline 通过 COURSE link 或考试标题与课程名精确匹配识别；任务 `dueAt` 与未来考试取最早者。
 4. **Timeline 集成**：`ReviewTask.schedule` 仍是 blob_store 中的权威状态；`upsertReviewTask` 把 PLANNED/DONE/MISSED 块投影为 `personal_events` 的 `REVIEW_BLOCK`，与任务写入共享 Vault writeGroup。撤销任务写入时派生事件按既有因果撤销一起恢复/删除。
-5. **重排与幂等**：重跑只替换未来 PLANNED 块；DONE/MISSED 历史块保留。过期未完成块先落库为 MISSED 并增加 lapseCount，再生成替代块，因此「重新安排不丢任务」。相同输入下重跑复用原 TimelineEventId，不制造重复 personal_events。
+5. **重排与幂等**：重跑只替换未来 PLANNED 块；DONE/MISSED 历史块保留，且历史块不占 32 个未来 PLANNED 块配额，连续漏做仍可重排。过期未完成块先落库为 MISSED 并增加 lapseCount，再生成替代块，因此「重新安排不丢任务」。相同实际系列/序号/start/end 下重跑复用原 planRevision 与 TimelineEventId；targetStart 的时钟漂移本身不改变身份，也不制造重复 personal_events。
 
 主导航、课程空间 UI 触发器与完成打卡交互不在本切片内；本切片交付的是可组合核心与 Timeline 投影。
