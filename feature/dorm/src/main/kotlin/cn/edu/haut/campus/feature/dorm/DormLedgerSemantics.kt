@@ -8,6 +8,7 @@ import cn.edu.haut.campus.core.ledger.Money
 import cn.edu.haut.campus.core.ledger.ParticipantId
 import cn.edu.haut.campus.core.ledger.SplitRule
 import java.math.BigDecimal
+import java.math.BigInteger
 
 /** 十进制字符串精确转分；不使用浮点，最多两位小数，且拒绝零与 Long.MIN_VALUE（避免 UI 取负溢出）。 */
 fun parseYuanToFen(input: String, requirePositive: Boolean = false): Long {
@@ -120,8 +121,8 @@ fun validateDormLedgerEntryInvariants(entry: DormLedgerEntry, knownMemberIds: Se
         val unknown = entry.shares.map { it.participantMemberId }.filter { it !in knownMemberIds }
         require(unknown.isEmpty()) { "分摊结果包含未知成员: " + unknown.joinToString(",") }
     }
-    val sum = entry.shares.fold(0L) { acc, share -> Math.addExact(acc, share.amountFen) }
-    require(sum == entry.amountFen) { "分摊总额不守恒" }
+    val sum = entry.shares.fold(BigInteger.ZERO) { acc, share -> acc.add(BigInteger.valueOf(share.amountFen)) }
+    require(sum == BigInteger.valueOf(entry.amountFen)) { "分摊总额不守恒" }
     if (entry.amountFen > 0L) {
         require(entry.shares.all { it.amountFen >= 0L }) { "正金额分摊不得含负份额" }
     } else {

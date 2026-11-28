@@ -453,8 +453,8 @@ private fun validateCloudSharesMatchCoreLedger(
 }
 
 private fun validateBalanceInvariant(balances: DormLedgerBalances) {
-    val sum = balances.members.fold(0L) { acc, member -> Math.addExact(acc, member.balanceFen) }
-    if (sum != 0L || balances.zeroSumCheckFen != 0L) {
+    val sum = balances.members.fold(java.math.BigInteger.ZERO) { acc, member -> acc.add(java.math.BigInteger.valueOf(member.balanceFen)) }
+    if (sum != java.math.BigInteger.ZERO || balances.zeroSumCheckFen != 0L) {
         throw DormCollaborationException(DormErrorKind.CONTRACT, "云端账本余额 zero-sum 校验失败", retryable = false)
     }
 }

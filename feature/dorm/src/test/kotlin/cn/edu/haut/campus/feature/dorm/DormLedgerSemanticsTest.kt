@@ -78,6 +78,14 @@ class DormLedgerSemanticsTest {
         }
     }
 
+    @Test
+    fun invariantUsesOverflowSafeAggregateArithmetic() {
+        validateDormLedgerEntryInvariants(previewEntry(amount = Long.MAX_VALUE, shares = listOf(Long.MAX_VALUE)))
+        assertThrows(IllegalArgumentException::class.java) {
+            validateDormLedgerEntryInvariants(previewEntry(amount = 1L, shares = listOf(Long.MAX_VALUE, 1L)))
+        }
+    }
+
     private fun settlement(
         status: DormSettlementStatus,
         debtorAt: String?,
