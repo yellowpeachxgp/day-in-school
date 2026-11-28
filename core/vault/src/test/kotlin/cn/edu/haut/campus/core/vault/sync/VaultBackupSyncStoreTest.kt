@@ -2,7 +2,9 @@ package cn.edu.haut.campus.core.vault.sync
 
 import androidx.room.Room
 import cn.edu.haut.campus.core.database.CourseEntity
+import cn.edu.haut.campus.core.database.FocusSessionEntity
 import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.LibraryBookingPlanEntity
 import cn.edu.haut.campus.core.database.PersonalEventEntity
 import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.core.model.AccountId
@@ -29,6 +31,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -114,6 +117,68 @@ class VaultBackupSyncStoreTest {
 
         store.applyDeletes(listOf(captured.table to captured.rowKey))
         assertNull(database.campusDao().getCourseById("course-room-sync"))
+    }
+
+    @Test
+    fun captureExcludesDeviceLocalAutomationExecutionRowsEvenWhenPresent() = runBlocking {
+        database.utilityAndFocusDao().upsertFocusSession(
+            FocusSessionEntity(
+                id = "focus-device-local",
+                generation = 1,
+                durationMinutes = 25,
+                startedAtEpochMs = 1L,
+                expectedEndAtEpochMs = 2L,
+                status = "RUNNING",
+                scheduleMode = "INEXACT",
+                completedAtEpochMs = null,
+                cancelledAtEpochMs = null,
+                completionSource = null,
+                notified = false,
+                cancelReason = null,
+                updatedAtEpochMs = 1L
+            )
+        )
+        database.cloudAndParcelDao().upsertLibraryBookingPlan(
+            LibraryBookingPlanEntity(
+                id = "plan-device-local",
+                schoolId = "haut",
+                executionMode = "LOCAL_DEVICE",
+                targetLocalDate = "2026-01-03",
+                targetLocalTime = "08:00:00",
+                timezoneId = "Asia/Shanghai",
+                precheckAtEpochMillis = 1L,
+                finalCheckAtEpochMillis = 2L,
+                fireAtEpochMillis = 3L,
+                precheckStatus = "PENDING",
+                finalCheckStatus = "PENDING",
+                fireStatus = "PENDING",
+                preferredAreaName = "五层中区",
+                preferredSeatLabel = "001",
+                allowAlternativeSeat = true,
+                cloudJobId = null,
+                externalBookingId = null,
+                evidenceSha256 = null,
+                priceMicropeach = 0L,
+                paymentState = "NOT_REQUIRED",
+                status = "ARMED",
+                stateVersion = 1,
+                generation = 1,
+                lastDiagnosticMessage = null,
+                createdAtEpochMillis = 1L,
+                updatedAtEpochMillis = 1L,
+                repeatDays = 1,
+                remainingDays = 1,
+                ownerCloudUserId = null,
+                ownerStudentId = null
+            )
+        )
+
+        val tables = store.captureRows().map { it.table }.toSet()
+
+        assertFalse(tables.contains("focus_sessions"))
+        assertFalse(tables.contains("library_booking_plans"))
+        assertTrue(BackupTableCatalog.policies.any { it.table == "focus_sessions" })
+        assertTrue(BackupTableCatalog.policies.any { it.table == "library_booking_plans" })
     }
 
     @Test
