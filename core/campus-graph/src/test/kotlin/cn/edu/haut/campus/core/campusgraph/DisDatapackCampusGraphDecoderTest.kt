@@ -100,7 +100,7 @@ class DisDatapackCampusGraphDecoderTest {
     """.trimIndent().toByteArray(Charsets.UTF_8)
 
     private fun indoorPackBytes(): ByteArray = """
-        {"format":"dis-datapack/v1","items":[{"id":"node-1","itemType":"node","latitude":34.0,"longitude":113.0,"nodeKind":"entrance","placeRef":"haut/lianhuajie/building/administration","title":"入口节点"}],"kind":"indoor-graph","maintainers":["github:example-maintainer"],"packId":"haut.indoor","reviewBy":"2027-05-20","schoolId":"haut","sources":[{"retrievedAt":"2026-11-20","title":"室内图公开页","url":"https://example.com/haut/indoor"}],"verificationLevel":"UNVERIFIED","verifiedAt":"2026-11-20","version":"2026.11.1"}
+        {"format":"dis-datapack/v1","items":[{"id":"node-1","itemType":"node","latitude":34,"longitude":113,"nodeKind":"entrance","placeRef":"haut/lianhuajie/building/administration","title":"入口节点"}],"kind":"indoor-graph","maintainers":["github:example-maintainer"],"packId":"haut.indoor","reviewBy":"2027-05-20","schoolId":"haut","sources":[{"retrievedAt":"2026-11-20","title":"室内图公开页","url":"https://example.com/haut/indoor"}],"verificationLevel":"UNVERIFIED","verifiedAt":"2026-11-20","version":"2026.11.1"}
     """.trimIndent().toByteArray(Charsets.UTF_8)
 
     private fun manifest(bundle: PackageBundle, id: String): PackageManifest = PackageManifest(
