@@ -70,8 +70,8 @@ class AutomationRuntime private constructor(
     private val dedupeStore = RoomAutomationDedupeStore(database)
     private val checkpointStore = RoomAutomationActionCheckpointStore(database)
     private val outbox = RoomEventOutbox(database)
-    private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope)
-    private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope)
+    private val geofenceMonitor = CoarseGeofenceMonitor(appContext, database, scope, outbox = outbox)
+    private val utilityBalanceProjector = UtilityBalanceEventProjector(database, scope, outbox = outbox)
     private val utilityBalanceHistoryProvider = RoomUtilityBalanceHistoryProvider(database, scope)
     private val wakeRunner = ExclusiveWakeRunner()
 
@@ -268,6 +268,8 @@ class AutomationRuntime private constructor(
             val old = synchronized(this) { instance.also { instance = null } } ?: return
             AutomationRuntimeCoordinator.cancelAll(context.applicationContext, AccountBackgroundScope.from(old.session))
             AutomationAlarmScheduler.cancel(context.applicationContext, AccountBackgroundScope.from(old.session))
+            // Runtime 独占一个 outbox 门面；账号切换时必须摘除强引用 observer，避免被长寿命数据库 tracker 钉住。
+            old.outbox.close()
         }
     }
 }

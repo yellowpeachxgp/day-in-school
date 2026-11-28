@@ -40,9 +40,9 @@ class CoarseGeofenceMonitor(
     private val context: Context,
     private val database: HautDatabase,
     private val scope: SchoolAccountScope,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    private val outbox: RoomEventOutbox = RoomEventOutbox(database)
 ) : CampusPresencePort {
-    private val outbox = RoomEventOutbox(database)
     private val codecRegistry = DomainEventCodecRegistry.DEFAULT
 
     suspend fun sampleAndPublish(): Int {

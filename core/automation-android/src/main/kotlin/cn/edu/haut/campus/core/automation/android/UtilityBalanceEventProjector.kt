@@ -47,9 +47,9 @@ class RoomUtilityBalanceHistoryProvider(
 class UtilityBalanceEventProjector(
     private val database: HautDatabase,
     private val scope: SchoolAccountScope,
-    private val clock: () -> Instant = Instant::now
+    private val clock: () -> Instant = Instant::now,
+    private val outbox: RoomEventOutbox = RoomEventOutbox(database)
 ) {
-    private val outbox = RoomEventOutbox(database)
     private val codecRegistry = DomainEventCodecRegistry.DEFAULT
 
     suspend fun publishChangedBalances(): Int {
