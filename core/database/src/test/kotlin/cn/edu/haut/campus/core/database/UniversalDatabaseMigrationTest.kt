@@ -36,7 +36,7 @@ class UniversalDatabaseMigrationTest {
         val before = createVersionFourDatabase()
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(13, sqlite.version)
+            assertEquals(14, sqlite.version)
             assertEquals(before, snapshot(sqlite))
             for (tableName in listOf(
                 "unscheduled_academic_courses",
@@ -44,7 +44,9 @@ class UniversalDatabaseMigrationTest {
                 "library_booking_plans",
                 "parcel_items",
                 "parcel_source_connections",
-                "installed_extension_plugins"
+                "installed_extension_plugins",
+                "inbox_items",
+                "inbox_proposals"
             )) {
                 sqlite.query("SELECT COUNT(*) FROM $tableName").use { cursor ->
                     assertTrue(cursor.moveToFirst())
@@ -82,7 +84,7 @@ class UniversalDatabaseMigrationTest {
         }
         withRoom { database ->
             val sqlite = database.openHelper.writableDatabase
-            assertEquals(13, sqlite.version)
+            assertEquals(14, sqlite.version)
             val cols = mutableSetOf<String>()
             sqlite.query("PRAGMA table_info(`library_booking_plans`)").use { cursor ->
                 val idx = cursor.getColumnIndex("name")
@@ -164,7 +166,7 @@ class UniversalDatabaseMigrationTest {
 
         assertEquals(4, source.oldVersion)
         assertEquals(4, evidence.oldVersion)
-        assertEquals(13, evidence.newVersion)
+        assertEquals(14, evidence.newVersion)
         assertEquals(before.keys, source.tableCounts.keys)
         assertEquals(source.serializedTableCounts, evidence.serializedTableCounts)
         factory.open(profile).databaseForAdoption().close()
@@ -173,7 +175,7 @@ class UniversalDatabaseMigrationTest {
             null,
             SQLiteDatabase.OPEN_READONLY
         ).use { database ->
-            assertEquals(13, database.version)
+            assertEquals(14, database.version)
             assertEquals(before, snapshot(database))
         }
     }
@@ -185,7 +187,7 @@ class UniversalDatabaseMigrationTest {
 
     private fun openRoom(): HautDatabase =
         Room.databaseBuilder(context, HautDatabase::class.java, databaseName)
-            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+            .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
             .allowMainThreadQueries()
             .build()
 
@@ -287,7 +289,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedProvable = Room.databaseBuilder(context, HautDatabase::class.java, dbProvable)
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -314,7 +316,7 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migratedUnprovable = Room.databaseBuilder(context, HautDatabase::class.java, dbUnprovable)
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -365,12 +367,12 @@ class UniversalDatabaseMigrationTest {
                 )
             }
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 // 新列存在且旧行保持 NULL
                 val cols = mutableSetOf<String>()
                 sqlite.query("PRAGMA table_info(`occurrence_overrides`)").use { cursor ->
@@ -437,12 +439,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 val cols = mutableSetOf<String>()
                 sqlite.query("PRAGMA table_info(period_times)").use { cursor ->
                     val idx = cursor.getColumnIndex("name")
@@ -479,11 +481,11 @@ class UniversalDatabaseMigrationTest {
             }
 
             val reopened = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
-                assertEquals(13, reopened.openHelper.writableDatabase.version)
+                assertEquals(14, reopened.openHelper.writableDatabase.version)
             } finally {
                 reopened.close()
             }
@@ -511,7 +513,7 @@ class UniversalDatabaseMigrationTest {
                         MIGRATION_10_11.migrate(db)
                         error("合成 v11 迁移中断")
                     }
-                }, MIGRATION_11_12, MIGRATION_12_13)
+                }, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
@@ -538,12 +540,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = retried.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 sqlite.query("SELECT startLocalTimeIso, endLocalTimeIso, schemeId FROM period_times WHERE id='pt_keep'").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals("08:00", cursor.getString(0))
@@ -603,12 +605,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 // 结构校验：mutationToken 非空列已建立
                 val cols = mutableSetOf<String>()
                 sqlite.query("PRAGMA table_info(occurrence_overrides)").use { cursor ->
@@ -670,12 +672,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 sqlite.query("SELECT startLocalTimeIso, endLocalTimeIso, userModified, updatedAtEpochMillis FROM period_times WHERE id='pt_v11_keep'").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals("08:30", cursor.getString(0))
@@ -704,11 +706,11 @@ class UniversalDatabaseMigrationTest {
             }
 
             val reopened = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
-                assertEquals(13, reopened.openHelper.writableDatabase.version)
+                assertEquals(14, reopened.openHelper.writableDatabase.version)
             } finally {
                 reopened.close()
             }
@@ -758,12 +760,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = retried.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v11_rollback_keep'").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals("08:00", cursor.getString(0))
@@ -791,12 +793,12 @@ class UniversalDatabaseMigrationTest {
             }
 
             val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_12_13)
+                .addMigrations(MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = migrated.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v12_keep'").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals("08:30", cursor.getString(0))
@@ -863,13 +865,162 @@ class UniversalDatabaseMigrationTest {
             }
 
             val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
-                .addMigrations(MIGRATION_12_13)
+                .addMigrations(MIGRATION_12_13, MIGRATION_13_14)
                 .allowMainThreadQueries()
                 .build()
             try {
                 val sqlite = retried.openHelper.writableDatabase
-                assertEquals(13, sqlite.version)
+                assertEquals(14, sqlite.version)
                 sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v12_rollback_keep'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                }
+            } finally {
+                retried.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+
+    @Test
+    fun migration13To14PreservesV13RowsAndCreatesInboxTables() {
+        val dbName = "migration_v13_inbox.db"
+        try {
+            createVersionedDatabase(dbName, 13) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO period_times
+                    (id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel)
+                    VALUES ('pt_v13_keep', 'haut_lianhuajie_default', 1, '08:30', '09:15', '上午')
+                    """.trimIndent()
+                )
+            }
+
+            val migrated = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_13_14)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = migrated.openHelper.writableDatabase
+                assertEquals(14, sqlite.version)
+                sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v13_keep'").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:30", cursor.getString(0))
+                }
+                for (tableName in listOf("inbox_items", "inbox_proposals")) {
+                    sqlite.query("SELECT COUNT(*) FROM " + tableName).use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals(0, cursor.getInt(0))
+                    }
+                }
+
+                sqlite.execSQL(
+                    """
+                    INSERT INTO inbox_items (
+                        id, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId,
+                        receivedAtEpochMs, referenceDateIso, origin, status, contentHash,
+                        originalBlobIdsJson, extractionBlobId, extractedTextPreview, parserError,
+                        createdAtEpochMs, updatedAtEpochMs
+                    ) VALUES (
+                        'item-migration-1', 'haut', 'acct', 'prof', NULL,
+                        1, NULL, 'CLIPBOARD', 'RECEIVED', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                        '[]', NULL, NULL, NULL, 1, 1
+                    )
+                    """.trimIndent()
+                )
+                assertTrue(
+                    "contentHash 唯一约束必须拒绝重复原件",
+                    runCatching {
+                        sqlite.execSQL(
+                            """
+                            INSERT INTO inbox_items (
+                                id, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId,
+                                receivedAtEpochMs, referenceDateIso, origin, status, contentHash,
+                                originalBlobIdsJson, extractionBlobId, extractedTextPreview, parserError,
+                                createdAtEpochMs, updatedAtEpochMs
+                            ) VALUES (
+                                'item-migration-2', 'haut', 'acct', 'prof', NULL,
+                                2, NULL, 'CLIPBOARD', 'RECEIVED', '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                                '[]', NULL, NULL, NULL, 2, 2
+                            )
+                            """.trimIndent()
+                        )
+                    }.isFailure
+                )
+                sqlite.query("SELECT COUNT(*) FROM inbox_items").use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals(1, cursor.getInt(0))
+                }
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(dbName)
+        }
+    }
+
+    @Test
+    fun migration13To14RollbackAfterTwoInboxDdlSectionsKeepsV13AndAllowsRetry() {
+        val dbName = "migration_v13_inbox_rollback.db"
+        try {
+            createVersionedDatabase(dbName, 13) { db ->
+                db.execSQL(
+                    """
+                    INSERT INTO period_times
+                    (id, timeTableId, periodNo, startLocalTimeIso, endLocalTimeIso, sectionLabel)
+                    VALUES ('pt_v13_rollback_keep', 'tt', 1, '08:00', '08:45', '上午')
+                    """.trimIndent()
+                )
+            }
+            val failing = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(object : Migration(13, 14) {
+                    override fun migrate(db: SupportSQLiteDatabase) {
+                        // 先完整执行 v14 的 inbox_items/inbox_proposals 两段 DDL 与索引，再合成失败；
+                        // Room 必须把整段 v13→v14 事务回滚，而不是留下半套 inbox 表或索引。
+                        MIGRATION_13_14.migrate(db)
+                        error("合成 v14 inbox 两段 DDL 后迁移中断")
+                    }
+                })
+                .allowMainThreadQueries()
+                .build()
+            try {
+                assertTrue(runCatching { failing.openHelper.writableDatabase }.isFailure)
+            } finally {
+                failing.close()
+            }
+            SQLiteDatabase.openDatabase(context.getDatabasePath(dbName).path, null, SQLiteDatabase.OPEN_READONLY).use { sqlite ->
+                assertEquals(13, sqlite.version)
+                sqlite.rawQuery(
+                    """
+                    SELECT name FROM sqlite_master
+                    WHERE name IN ('inbox_items', 'inbox_proposals') OR name LIKE 'index_inbox%'
+                    """.trimIndent(),
+                    null
+                ).use { cursor ->
+                    assertFalse("失败事务不得遗留 inbox 表或索引", cursor.moveToFirst())
+                }
+                sqlite.rawQuery("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v13_rollback_keep'", null).use { cursor ->
+                    assertTrue(cursor.moveToFirst())
+                    assertEquals("08:00", cursor.getString(0))
+                }
+            }
+
+            val retried = Room.databaseBuilder(context, HautDatabase::class.java, dbName)
+                .addMigrations(MIGRATION_13_14)
+                .allowMainThreadQueries()
+                .build()
+            try {
+                val sqlite = retried.openHelper.writableDatabase
+                assertEquals(14, sqlite.version)
+                for (tableName in listOf("inbox_items", "inbox_proposals")) {
+                    sqlite.query("SELECT COUNT(*) FROM " + tableName).use { cursor ->
+                        assertTrue(cursor.moveToFirst())
+                        assertEquals(0, cursor.getInt(0))
+                    }
+                }
+                sqlite.query("SELECT startLocalTimeIso FROM period_times WHERE id='pt_v13_rollback_keep'").use { cursor ->
                     assertTrue(cursor.moveToFirst())
                     assertEquals("08:00", cursor.getString(0))
                 }

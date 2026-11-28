@@ -19,6 +19,7 @@ class ExportedRoomSchemaConsistencyTest {
         val files = exportedSchemaFiles()
         assertTrue("必须发现已导出的 Room schema", files.isNotEmpty())
         assertTrue("回归必须覆盖 v13", files.any { it.name == "13.json" })
+        assertTrue("回归必须覆盖 v14", files.any { it.name == "14.json" })
 
         files.forEach { file ->
             val database = JSONObject(file.readText()).getJSONObject("database")
