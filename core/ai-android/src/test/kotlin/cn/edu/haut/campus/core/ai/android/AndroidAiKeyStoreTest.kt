@@ -147,6 +147,24 @@ class AndroidAiKeyStoreTest {
     }
 
     @Test
+    fun wipeStillDeletesFilesWhenKeyStoreDeleteFailsAndThenReportsFailure() = runTest {
+        val failingKeys = DeleteFailingAiAesKeyProvider()
+        val store = AndroidAiKeyStore(context, rootDir = testRoot("best-effort-clear"), keys = failingKeys)
+        store.put(scope, endpoint, keyCanary().toCharArray())
+        store.setEnabled(scope, true)
+        failingKeys.failDelete = true
+
+        assertThrows(IllegalStateException::class.java) {
+            kotlinx.coroutines.runBlocking { store.wipeAll(scope) }
+        }
+
+        assertTrue("KeyStore 删除失败时仍必须尝试删除密文和 enabled 标记", store.rootDir.listFiles()?.isEmpty() != false)
+        assertEquals(AiKeyStatus.NONE, store.status(scope).first())
+        failingKeys.failDelete = false
+        store.wipeAll(scope)
+    }
+
+    @Test
     fun wipeDeletesCiphertextEnabledFlagAndProfileKeyMaterial() = runTest {
         val store = AndroidAiKeyStore(context, rootDir = testRoot("clear"), keys = fakeKeys)
         store.put(scope, endpoint, keyCanary().toCharArray())
@@ -161,6 +179,18 @@ class AndroidAiKeyStoreTest {
     }
 
     private val fakeKeys = FakeAiAesKeyProvider()
+
+    private class DeleteFailingAiAesKeyProvider : AiAesKeyProvider {
+        private val delegate = FakeAiAesKeyProvider()
+        var failDelete = false
+
+        override fun existing(scope: SchoolAccountScope): SecretKey? = delegate.existing(scope)
+        override fun getOrCreate(scope: SchoolAccountScope): SecretKey = delegate.getOrCreate(scope)
+        override fun delete(scope: SchoolAccountScope) {
+            if (failDelete) throw IllegalStateException("synthetic keystore delete failure")
+            delegate.delete(scope)
+        }
+    }
 
     private class FakeAiAesKeyProvider : AiAesKeyProvider {
         private val keys = mutableMapOf<String, SecretKey>()

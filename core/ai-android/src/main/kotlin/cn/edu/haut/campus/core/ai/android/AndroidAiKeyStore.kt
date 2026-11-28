@@ -128,12 +128,14 @@ class AndroidAiKeyStore internal constructor(
 
     override suspend fun clear(scope: SchoolAccountScope) {
         withContext(Dispatchers.IO) {
+            var failure: Throwable? = null
             mutex.withLock {
-                deleteAtomic(envelopeFile(scope))
-                deleteAtomic(enabledFile(scope))
-                keys.delete(scope)
+                runCatching { deleteAtomic(envelopeFile(scope)) }.onFailure { if (failure == null) failure = it }
+                runCatching { deleteAtomic(enabledFile(scope)) }.onFailure { if (failure == null) failure = it }
+                runCatching { keys.delete(scope) }.onFailure { if (failure == null) failure = it }
             }
             publish(scope)
+            failure?.let { throw IllegalStateException("AI Key 安全擦除未完成", it) }
         }
     }
 
