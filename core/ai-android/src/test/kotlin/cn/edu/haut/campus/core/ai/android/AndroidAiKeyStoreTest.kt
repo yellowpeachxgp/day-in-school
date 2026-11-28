@@ -46,7 +46,7 @@ class AndroidAiKeyStoreTest {
         assertTrue(store.rootDir.canonicalPath.startsWith(context.noBackupFilesDir.canonicalPath))
         assertEquals(AiKeyStatus.CONFIGURED, store.status(scope).first())
         assertEquals(AiKeyStatus.NONE, store.status(otherScope).first())
-        val allBytes = store.rootDir.walkTopDown().filter { it.isFile }.flatMap { it.readBytes().toList() }.toByteArray()
+        val allBytes = store.rootDir.walkTopDown().filter { it.isFile }.flatMap { it.readBytes().toList() }.toList().toByteArray()
         assertFalse(allBytes.containsText(canary))
         assertFalse(allBytes.containsText(endpoint.baseUrl.withoutTrailingSlash))
 

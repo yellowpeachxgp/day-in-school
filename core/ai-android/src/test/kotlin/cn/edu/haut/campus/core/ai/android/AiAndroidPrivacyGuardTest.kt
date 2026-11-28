@@ -28,8 +28,7 @@ class AiAndroidPrivacyGuardTest {
         val sourceRoot = File(repoRoot, "core/ai-android/src/main/kotlin")
         val files = sourceRoot.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
         assertTrue(files.isNotEmpty())
-        val combined = files.joinToString("
-") { it.readText() }
+        val combined = files.joinToString("\n") { it.readText() }
 
         assertFalse(combined.contains("android.util.Log"))
         assertFalse(combined.contains("println("))
