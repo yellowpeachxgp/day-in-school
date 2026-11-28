@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.timeline.TimelineService
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
@@ -130,7 +131,9 @@ class DefaultAutomationEngine(
 
         val dedupeKey = AutomationKeys.dedupeKey(rule.id, boundInstance.triggerInstanceKey, rule.dedupe, boundInstance.firedAt)
         val runId = AutomationKeys.runId(rule.id, boundInstance.triggerInstanceKey)
-        val acquiredAt = clock.instant()
+        // Room v13 以 epochMilli 持久化；在进入 dedupe CAS 前统一截断，避免纳秒精度让同一 owner 在
+        // 持久层读回后被误判为 stale。内存实现同样按该精度接受语义验证。
+        val acquiredAt = clock.instant().truncatedTo(ChronoUnit.MILLIS)
         val executionOwner = executionOwnerFactory()
         requireAutomationToken(executionOwner, "executionOwner", 128)
         val acquire = dedupeStore.tryAcquire(
