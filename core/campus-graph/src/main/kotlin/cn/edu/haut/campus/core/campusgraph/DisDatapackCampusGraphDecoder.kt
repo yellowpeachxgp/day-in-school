@@ -1,6 +1,5 @@
 package cn.edu.haut.campus.core.campusgraph
 
-import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.PlaceRef
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.packages.bundle.PackageBundle
@@ -20,7 +19,7 @@ import java.time.LocalDate
  * 本解码器只做图投影，拒不完整或语义未对齐的输入，绝不静默丢弃边、层级或依赖语义。
  */
 class DisDatapackCampusGraphDecoder(
-    private val defaultCampusId: CampusId? = null
+    private val defaultCampusRef: PlaceRef? = null
 ) : CampusGraphDataPackageDecoder {
 
     override fun decode(manifest: PackageManifest, bundle: PackageBundle): List<CampusGraphEntity> {
@@ -61,8 +60,11 @@ class DisDatapackCampusGraphDecoder(
             explicitPlace != null -> throw IllegalArgumentException(
                 "procedure-guide placeRef 必须指向 service/campus 才能无损投影：" + explicitPlace.id
             )
-            defaultCampusId != null -> CampusGraphIds.build(school, defaultCampusId, CampusGraphEntityType.CAMPUS, defaultCampusId.value)
-            else -> throw IllegalArgumentException("procedure-guide 缺少 placeRef 且未提供 defaultCampusId")
+            defaultCampusRef != null -> defaultCampusRef.also { campusRef ->
+                require(campusRef.schoolId == school) { "defaultCampusRef 学校与 datapack 不一致：" + campusRef.id }
+                require(CampusGraphIds.typeOf(campusRef) == CampusGraphEntityType.CAMPUS) { "defaultCampusRef 必须是 campus 稳定 ID：" + campusRef.id }
+            }
+            else -> throw IllegalArgumentException("procedure-guide 缺少 placeRef 且未提供 defaultCampusRef")
         }
         require(item.dependsOn.isEmpty()) {
             "procedure-guide dependsOn 的 item-id/placeRef 语义尚未由 CT-06 明确，拒绝静默投影：" + item.id

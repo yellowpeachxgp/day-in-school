@@ -21,7 +21,9 @@ class DisDatapackCampusGraphDecoderTest {
 
     private val school = SchoolId("haut")
     private val campus = CampusId("lianhuajie")
-    private val decoder = DisDatapackCampusGraphDecoder(defaultCampusId = campus)
+    private val decoder = DisDatapackCampusGraphDecoder(
+        defaultCampusRef = CampusGraphIds.build(school, campus, CampusGraphEntityType.CAMPUS, campus.value)
+    )
 
     @Test
     fun procedureGuideProjectsToProcedureNodeWithExplicitServiceParent() {
