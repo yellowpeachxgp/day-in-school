@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.core.vault
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalJson
 import cn.edu.haut.campus.core.events.DomainEvent
@@ -21,14 +22,17 @@ import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -158,6 +162,51 @@ class RoomEventOutboxTest {
         withTimeout(2_000) { job.join() }
 
         assertEquals(listOf("event-live"), received.map { it.eventId })
+    }
+
+    @Test
+    fun nestedTransactionCommitNotifiesOnlyAfterOuterCommit() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val received = Channel<String>(capacity = Channel.UNLIMITED)
+        val unregister = outbox.addLiveListener { record -> received.trySend(record.envelope.eventId) }
+        try {
+            database.withTransaction {
+                database.withTransaction {
+                    outbox.append(envelope("event-nested-commit"))
+                }
+                assertTrue("内层返回不等于外层已提交", received.tryReceive().isFailure)
+            }
+
+            assertEquals("event-nested-commit", withTimeout(2_000) { received.receive() })
+            assertTrue(received.tryReceive().isFailure)
+        } finally {
+            unregister()
+            received.cancel()
+        }
+    }
+
+    @Test
+    fun nestedTransactionRollbackDoesNotNotifyLiveListener() = runBlocking {
+        val outbox = RoomEventOutbox(database)
+        val received = Channel<String>(capacity = Channel.UNLIMITED)
+        val unregister = outbox.addLiveListener { record -> received.trySend(record.envelope.eventId) }
+        try {
+            val error = runCatching {
+                database.withTransaction {
+                    database.withTransaction {
+                        outbox.append(envelope("event-nested-rollback"))
+                        throw IllegalStateException("合成嵌套事务回滚")
+                    }
+                }
+            }.exceptionOrNull()
+
+            assertTrue(error is IllegalStateException)
+            assertEquals(0, database.vaultDao().countDomainOutbox())
+            assertNull(withTimeoutOrNull(300) { received.receive() })
+        } finally {
+            unregister()
+            received.cancel()
+        }
     }
 
     @Test

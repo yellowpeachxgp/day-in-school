@@ -1,9 +1,12 @@
 package cn.edu.haut.campus.core.vault
 
+import androidx.room.InvalidationTracker
 import androidx.room.withTransaction
 import cn.edu.haut.campus.core.database.DomainOutboxEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.events.CanonicalEventEnvelopeCodec
+import cn.edu.haut.campus.core.events.CanonicalJson
+import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.events.EventAppendResult
 import cn.edu.haut.campus.core.events.EventAppendStatus
 import cn.edu.haut.campus.core.events.EventEnvelope
@@ -11,14 +14,18 @@ import cn.edu.haut.campus.core.events.EventIdConflictException
 import cn.edu.haut.campus.core.events.EventOutbox
 import cn.edu.haut.campus.core.events.OutboxEventRecord
 import cn.edu.haut.campus.core.events.UnknownEventException
-import cn.edu.haut.campus.core.events.CanonicalJson
-import cn.edu.haut.campus.core.events.DomainEventCodecRegistry
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/** Room 实现的 at-least-once outbox；sequence 由 SQLite 单调分配，ack 按 consumer group 持久化。 */
+/**
+ * Room 实现的 at-least-once outbox；sequence 由 SQLite 单调分配，ack 按 consumer group 持久化。
+ *
+ * live 通知不跟随 append 直接发出，而由 Room InvalidationTracker 在最外层事务 endTransaction
+ * 之后触发。Rollback 会一并回滚 invalidation shadow table，因此未提交事件不会通知进程内消费者；
+ * 已提交事件按 sequence 扫描去重，嵌套事务也只有最外层提交后才可见。
+ */
 class RoomEventOutbox(
     private val database: HautDatabase,
     private val clock: () -> Long = System::currentTimeMillis,
@@ -27,16 +34,26 @@ class RoomEventOutbox(
     private val dao = database.vaultDao()
     private val nextListenerId = AtomicLong(0)
     private val listeners = ConcurrentHashMap<Long, (OutboxEventRecord) -> Unit>()
+    private val flushLock = Any()
+    private var liveFloorInitialized = false
+    private var lastScannedSequence = 0L
 
-    override suspend fun append(envelope: EventEnvelope): EventAppendResult {
-        val outcome = appendDeferred(envelope)
-        if (outcome.status == EventAppendStatus.APPENDED) notifyAppended(outcome.record)
-        return outcome
+    private val invalidationObserver = object : InvalidationTracker.Observer("domain_outbox") {
+        override fun onInvalidated(tables: Set<String>) {
+            if ("domain_outbox" in tables) flushCommittedOutbox()
+        }
     }
 
+    init {
+        // WeakObserver 避免 outbox 门面比账号库生命周期更长；observer 本体仍由本对象强引用。
+        database.invalidationTracker.addWeakObserver(invalidationObserver)
+    }
+
+    override suspend fun append(envelope: EventEnvelope): EventAppendResult = appendDeferred(envelope)
+
     /**
-     * 只持久化不通知 live listener。RoomVaultJournal 在外层业务事务提交后统一补发通知，
-     * 避免嵌套事务最终回滚却把未提交事件先推给进程内消费者。
+     * 只持久化不立即通知 live listener。提交后的可见性通知由 Room invalidation 回调统一触发，
+     * 因此 direct append、journal 写入和嵌套 Room 事务都遵循同一条最外层提交边界。
      */
     internal suspend fun appendDeferred(envelope: EventEnvelope): EventAppendResult {
         // domain_outbox 是共享类型化总线，不是通用裸 envelope 通道。写入前必须能被 registry 解码，
@@ -109,13 +126,47 @@ class RoomEventOutbox(
         }
     }
 
-    internal fun addLiveListener(listener: (OutboxEventRecord) -> Unit): () -> Unit {
+    internal suspend fun addLiveListener(listener: (OutboxEventRecord) -> Unit): () -> Unit {
+        ensureLiveFloorInitialized()
         val id = nextListenerId.incrementAndGet()
         listeners[id] = listener
         return { listeners.remove(id) }
     }
 
-    internal fun notifyAppended(record: OutboxEventRecord) {
+    /**
+     * 订阅开始前把 high-water mark 放到当前已提交最大值。历史未 ack 行仍由 backlog 读取负责；
+     * live 扫描只承担注册之后新提交的事件，避免把 backlog 重复推成 live event。
+     */
+    private suspend fun ensureLiveFloorInitialized() {
+        val initialized = synchronized(flushLock) { liveFloorInitialized }
+        if (initialized) return
+        val maxCommittedSequence = dao.maxOutboxSequence()
+        synchronized(flushLock) {
+            if (!liveFloorInitialized) {
+                lastScannedSequence = maxOf(lastScannedSequence, maxCommittedSequence)
+                liveFloorInitialized = true
+            }
+        }
+    }
+
+    private fun flushCommittedOutbox() {
+        synchronized(flushLock) {
+            if (!liveFloorInitialized) {
+                // 还没有 live 订阅时只推进 high-water mark；历史事件由订阅 backlog 负责，避免重放为 live。
+                lastScannedSequence = maxOf(lastScannedSequence, dao.maxOutboxSequenceBlocking())
+                liveFloorInitialized = true
+                return
+            }
+            val committedRows = dao.getOutboxAfterBlocking(lastScannedSequence)
+            if (committedRows.isEmpty()) return
+            lastScannedSequence = maxOf(lastScannedSequence, committedRows.maxOf { it.sequence })
+            committedRows.forEach { row ->
+                notifyAppended(OutboxEventRecord(row.sequence, envelopeOf(row)))
+            }
+        }
+    }
+
+    private fun notifyAppended(record: OutboxEventRecord) {
         listeners.values.forEach { callback -> runCatching { callback(record) } }
     }
 

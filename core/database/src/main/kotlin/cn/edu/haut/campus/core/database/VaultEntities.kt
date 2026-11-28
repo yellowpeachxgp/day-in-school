@@ -224,6 +224,15 @@ interface VaultDao {
     @Query("SELECT * FROM domain_outbox ORDER BY sequence ASC")
     suspend fun getOutboxSnapshot(): List<DomainOutboxEntity>
 
+    @Query("SELECT * FROM domain_outbox WHERE sequence > :afterSequence ORDER BY sequence ASC")
+    fun getOutboxAfterBlocking(afterSequence: Long): List<DomainOutboxEntity>
+
+    @Query("SELECT COALESCE(MAX(sequence), 0) FROM domain_outbox")
+    suspend fun maxOutboxSequence(): Long
+
+    @Query("SELECT COALESCE(MAX(sequence), 0) FROM domain_outbox")
+    fun maxOutboxSequenceBlocking(): Long
+
     @Query("UPDATE domain_outbox SET ackedConsumerGroupsJson = :ackedConsumerGroupsJson WHERE eventId = :eventId")
     suspend fun updateOutboxAcks(eventId: String, ackedConsumerGroupsJson: String): Int
 
@@ -268,6 +277,9 @@ interface VaultDao {
 
     @Query("DELETE FROM search_docs")
     suspend fun clearSearchDocs(): Int
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertBlobOrAbort(entity: BlobStoreEntity): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBlob(entity: BlobStoreEntity)

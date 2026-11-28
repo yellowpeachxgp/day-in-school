@@ -1,5 +1,7 @@
 package cn.edu.haut.campus.core.vault
 
+import android.database.sqlite.SQLiteConstraintException
+import androidx.room.withTransaction
 import cn.edu.haut.campus.core.database.BlobStoreEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.EntityRef
@@ -38,11 +40,14 @@ class StoredBlob(
 
 /** 按 scope 隔离的内容寻址 blob store；blob_store 只存字节、摘要和 owner 引用，不存凭据元数据。 */
 class VaultBlobStore(
-    database: HautDatabase,
+    private val database: HautDatabase,
     private val clock: () -> Instant = Instant::now,
     private val maxBytes: Int = 16 * 1024 * 1024
 ) {
     private val dao = database.vaultDao()
+
+    /** 只在 core:vault 并发回归中使用的写入前探针；生产路径永远不得依赖它改变行为。 */
+    internal var beforeBlobWriteHook: suspend () -> Unit = {}
 
     suspend fun put(
         content: ByteArray,
@@ -62,35 +67,38 @@ class VaultBlobStore(
             byteCount = content.size.toLong(),
             owner = owner
         )
-        val existing = dao.getBlob(blobId)
-        if (existing == null) {
-            dao.upsertBlob(
-                BlobStoreEntity(
-                    blobId = blobId,
-                    scopeSchoolId = scope.schoolId.value,
-                    scopeAccountId = scope.accountId.value,
-                    scopeProfileId = scope.profileId.value,
-                    scopeCampusId = scope.campusId?.value,
-                    sha256 = sha256,
-                    mimeType = mimeType,
-                    byteCount = content.size.toLong(),
-                    content = content.copyOf(),
-                    ownerEntityType = owner?.type?.name,
-                    ownerEntityId = owner?.id,
-                    createdAtEpochMs = clock().toEpochMilli()
-                )
-            )
-        } else {
-            require(existing.sha256 == sha256) { "blobId 与 sha256 不一致" }
-            require(existing.byteCount == content.size.toLong()) { "blob byteCount 与内容不一致" }
-            // v1 每行只有单 mimeType/单 owner 元数据；遇到同字节不同元数据时 fail-closed，
-            // 不得返回一行与持久化事实不一致的 StoredBlobRef。多 owner 分享需后续显式建模。
-            require(existing.mimeType == mimeType) { "同内容 blob 的 mimeType 冲突" }
-            require(existing.ownerEntityType == owner?.type?.name && existing.ownerEntityId == owner?.id) {
-                "同内容 blob 的 owner 冲突"
+        val entity = BlobStoreEntity(
+            blobId = blobId,
+            scopeSchoolId = scope.schoolId.value,
+            scopeAccountId = scope.accountId.value,
+            scopeProfileId = scope.profileId.value,
+            scopeCampusId = scope.campusId?.value,
+            sha256 = sha256,
+            mimeType = mimeType,
+            byteCount = content.size.toLong(),
+            content = content.copyOf(),
+            ownerEntityType = owner?.type?.name,
+            ownerEntityId = owner?.id,
+            createdAtEpochMs = clock().toEpochMilli()
+        )
+        return database.withTransaction {
+            val existingBeforeInsert = dao.getBlob(blobId)
+            if (existingBeforeInsert != null) {
+                requireCompatibleBlob(existingBeforeInsert, sha256, mimeType, content.size.toLong(), owner)
+                return@withTransaction ref
             }
+
+            beforeBlobWriteHook()
+            try {
+                dao.insertBlobOrAbort(entity)
+            } catch (constraint: SQLiteConstraintException) {
+                // INSERT OR ABORT 是原子冲突检测：并发胜者提交后，负者绝不能 REPLACE 覆盖其
+                // mimeType/owner。负者在同一事务内复检胜者行；完全相同则保持幂等，不同元数据则 fail-closed。
+                val winner = dao.getBlob(blobId) ?: throw constraint
+                requireCompatibleBlob(winner, sha256, mimeType, content.size.toLong(), owner)
+            }
+            ref
         }
-        return ref
     }
 
     suspend fun get(blobId: String, scope: SchoolAccountScope): StoredBlob? {
@@ -125,6 +133,23 @@ class VaultBlobStore(
 
     suspend fun count(): Int = dao.countBlobStore()
     suspend fun totalBytes(): Long = dao.totalBlobBytes()
+
+    private fun requireCompatibleBlob(
+        existing: BlobStoreEntity,
+        sha256: String,
+        mimeType: String,
+        byteCount: Long,
+        owner: EntityRef?
+    ) {
+        require(existing.sha256 == sha256) { "blobId 与 sha256 不一致" }
+        require(existing.byteCount == byteCount) { "blob byteCount 与内容不一致" }
+        // v1 每行只有单 mimeType/单 owner 元数据；遇到同字节不同元数据时 fail-closed，
+        // 不得返回一行与持久化事实不一致的 StoredBlobRef。多 owner 分享需后续显式建模。
+        require(existing.mimeType == mimeType) { "同内容 blob 的 mimeType 冲突" }
+        require(existing.ownerEntityType == owner?.type?.name && existing.ownerEntityId == owner?.id) {
+            "同内容 blob 的 owner 冲突"
+        }
+    }
 
     private fun BlobStoreEntity.inScope(scope: SchoolAccountScope): Boolean =
         scopeSchoolId == scope.schoolId.value &&

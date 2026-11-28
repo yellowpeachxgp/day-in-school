@@ -10,7 +10,11 @@ import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import java.time.Instant
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
@@ -104,6 +108,39 @@ class VaultBlobStoreTest {
     }
 
     @Test
+    fun concurrentIdenticalPutsRemainIdempotent() = runBlocking {
+        val bytes = byteArrayOf(8, 8, 8)
+        installTwoWriterBarrier()
+
+        val first = async { runCatching { blobs.put(bytes, "text/plain", scope) } }
+        val second = async { runCatching { blobs.put(bytes, "text/plain", scope) } }
+        val results = listOf(first.await(), second.await())
+
+        assertEquals(2, results.count { it.isSuccess })
+        assertEquals(1, blobs.count())
+        val winner = results.mapNotNull { it.getOrNull() }.first()
+        assertEquals("text/plain", blobs.get(winner.blobId, scope)?.ref?.mimeType)
+    }
+
+    @Test
+    fun concurrentConflictingMetadataExactlyOneWriterFailsAndWinnerIsNotOverwritten() = runBlocking {
+        val bytes = byteArrayOf(9, 9, 9)
+        installTwoWriterBarrier()
+
+        val plainText = async { runCatching { blobs.put(bytes, "text/plain", scope) } }
+        val json = async { runCatching { blobs.put(bytes, "application/json", scope) } }
+        val results = listOf(plainText.await(), json.await())
+
+        assertEquals("并发同 blobId 不同元数据必须恰一方失败", 1, results.count { it.isSuccess })
+        assertEquals(1, results.count { it.isFailure })
+        assertEquals(1, blobs.count())
+        val winner = results.mapNotNull { it.getOrNull() }.single()
+        val stored = blobs.get(winner.blobId, scope)
+        assertEquals(winner.mimeType, stored?.ref?.mimeType)
+        assertEquals(null, stored?.ref?.owner)
+    }
+
+    @Test
     fun deleteIsScopedAndIdempotent() = runBlocking {
         val otherScope = scope.copy(accountId = AccountId("acct_other"), profileId = ProfileId("prof_other"))
         val ref = blobs.put(byteArrayOf(1, 2), "text/plain", scope)
@@ -114,5 +151,14 @@ class VaultBlobStoreTest {
         assertFalse(blobs.delete(ref.blobId, scope))
         assertNull(blobs.get(ref.blobId, scope))
         assertEquals(0, blobs.count())
+    }
+
+    private fun installTwoWriterBarrier() {
+        val started = AtomicInteger(0)
+        val bothStarted = CompletableDeferred<Unit>()
+        blobs.beforeBlobWriteHook = {
+            if (started.incrementAndGet() == 2) bothStarted.complete(Unit)
+            withTimeout(2_000) { bothStarted.await() }
+        }
     }
 }
