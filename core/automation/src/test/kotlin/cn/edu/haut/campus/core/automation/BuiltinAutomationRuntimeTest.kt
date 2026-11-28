@@ -141,7 +141,7 @@ class BuiltinAutomationRuntimeTest {
 
         assertNotNull(evaluate(listOf(outside)))
         assertNotNull("从高值经滞后带逐步下降仍必须触发", evaluate(listOf(recharge, insideBand)))
-        assertNull("滞后带内不能形成新的进入边沿", evaluate(listOf(insideBand)))
+        assertNull("已进入后在滞后带内波动不能重复触发", evaluate(listOf(stillBelow, insideBand)))
         assertNull("持续低于阈值不能重复触发", evaluate(listOf(stillBelow)))
         assertNull("冷却期内不能重新进入", evaluate(listOf(outside), now.minusSeconds(3600)))
         assertNotNull(evaluate(listOf(outside), now.minusSeconds(7 * 3600)))
