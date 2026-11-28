@@ -145,6 +145,31 @@ object LegacyCampusGraphMigration {
     private fun graphRef(campusId: CampusId, type: CampusGraphEntityType, slug: String): PlaceRef =
         CampusGraphIds.build(HAUT_SCHOOL_ID, campusId, type, slug)
 
+    /**
+     * legacy 入口没有独立稳定标识，唯一可用的事实是方向/位置标签。
+     * 因而稳定 key 只由楼宇 legacy ID 与规范化标签组成，绝不混入列表序号；
+     * 同一楼宇下重复或规范化后冲突的标签必须显式拒绝，等待上游补充可区分的语义标签。
+     */
+    internal fun stableEntranceKeysByLabel(
+        legacyBuildingId: String,
+        entrances: List<String>
+    ): LinkedHashMap<String, String> {
+        val duplicatedLabels = entrances.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        require(duplicatedLabels.isEmpty()) {
+            "同一楼宇的 legacy 入口标签重复，无法生成无位置序号稳定 ID：" + duplicatedLabels.joinToString()
+        }
+        val result = linkedMapOf<String, String>()
+        for (entrance in entrances) {
+            val semanticLabel = CampusGraphIds.normalizeSlug(entrance)
+            val stableKey = legacyBuildingId + "-entrance-" + semanticLabel
+            require(result.values.none { it == stableKey }) {
+                "同一楼宇的 legacy 入口标签规范化后冲突，无法生成稳定 ID：" + entrance
+            }
+            result[entrance] = stableKey
+        }
+        return result
+    }
+
     private fun provenance(
         campusId: CampusId,
         sourceSystem: String,
@@ -217,11 +242,11 @@ object LegacyCampusGraphMigration {
             )
         )
         entities += building
-        entrances.forEachIndexed { index, entrance ->
+        for ((entrance, stableKey) in stableEntranceKeysByLabel(legacyId, entrances)) {
             val entranceRef = graphRef(
                 campusId,
                 CampusGraphEntityType.ENTRANCE,
-                legacyId + "-entrance-" + (index + 1)
+                stableKey
             )
             entities += EntranceNode(
                 ref = entranceRef,
@@ -230,7 +255,9 @@ object LegacyCampusGraphMigration {
                 label = entrance,
                 location = location,
                 provenance = provenance.copy(
-                    provenance = provenance.provenance.copy(sourceRecordId = legacyId + "/entrance/" + (index + 1))
+                    provenance = provenance.provenance.copy(
+                        sourceRecordId = legacyId + "/entrance/" + CampusGraphIds.normalizeSlug(entrance)
+                    )
                 ),
                 attributes = mapOf(
                     "coordinatePrecision" to "building-center",

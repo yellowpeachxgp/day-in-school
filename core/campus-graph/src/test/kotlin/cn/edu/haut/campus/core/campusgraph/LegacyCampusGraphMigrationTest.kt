@@ -51,6 +51,31 @@ class LegacyCampusGraphMigrationTest {
     }
 
     @Test
+    fun entranceIdsUseSemanticStableKeysAcrossSnapshotRoundsAndSourceReorder() {
+        val building = snapshot.buildingByLegacyId("b_t1", LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)!!
+        val secondSnapshot = LegacyCampusGraphMigration.migrateHautLegacySnapshot()
+        val idsByLabel = snapshot.entrances(building.ref).associate { it.label to it.ref.id }
+        val secondIdsByLabel = secondSnapshot.entrances(building.ref).associate { it.label to it.ref.id }
+
+        assertEquals(idsByLabel, secondIdsByLabel)
+        assertEquals("haut/lianhuajie/entrance/b_t1-entrance-南侧正门", idsByLabel["南侧正门"])
+        assertEquals("haut/lianhuajie/entrance/b_t1-entrance-东连廊入口", idsByLabel["东连廊入口"])
+        assertFalse(idsByLabel.values.any { Regex("-entrance-\\d+$").containsMatchIn(it) })
+        assertEquals(
+            "b_t1/entrance/南侧正门",
+            snapshot.entrances(building.ref).single { it.label == "南侧正门" }.provenance.provenance.sourceRecordId
+        )
+
+        val originalLabels = listOf("南侧正门", "东连廊入口", "西侧楼梯口")
+        val reorderedWithInsertion = listOf("东连廊入口", "北侧新增入口", "西侧楼梯口", "南侧正门")
+        val originalKeys = LegacyCampusGraphMigration.stableEntranceKeysByLabel("b_t1", originalLabels)
+        val reorderedKeys = LegacyCampusGraphMigration.stableEntranceKeysByLabel("b_t1", reorderedWithInsertion)
+        for (label in originalLabels) {
+            assertEquals("label=" + label, originalKeys[label], reorderedKeys[label])
+        }
+    }
+
+    @Test
     fun studyRoomsPreserveBuildingFloorAndNonRealtimeAvailabilitySemantics() {
         val lhjRoom = snapshot.rooms(campusId = LegacyCampusGraphMigration.LIANHUAJIE_CAMPUS_ID)
             .single { it.roomNumber == "3101" }
@@ -148,6 +173,37 @@ class LegacyCampusGraphMigrationTest {
             ).map { it.item.id }
             assertEquals("query=" + query, legacyIds, graphIds)
         }
+    }
+
+    @Test
+    fun pharmacyCatalogSearchDoesNotMatchPriceContributorOrEvidenceMetadata() {
+        for (query in listOf("0.68", "Lollipop2233")) {
+            assertTrue("legacy query=" + query, CampusHospitalPharmacyCatalog.search(query).isEmpty())
+            assertTrue(
+                "graph query=" + query,
+                snapshot.searchCatalogItems(query, serviceKind = CampusGraphServiceKind.PHARMACY).isEmpty()
+            )
+        }
+
+        val approvalHit = snapshot.searchCatalogItems("H20043271", serviceKind = CampusGraphServiceKind.PHARMACY)
+        assertEquals(listOf("med_p1_1"), approvalHit.map { it.item.id })
+    }
+
+    @Test
+    fun diningCatalogSearchUsesLegacyTextFieldsButNotPriceOrReviewMetadata() {
+        val stallHits = snapshot.searchCatalogItems("二楼面食档", facilityKind = CampusGraphFacilityKind.DINING)
+        assertTrue(stallHits.any { it.item.id == "c1_huimian" })
+        assertTrue(
+            snapshot.searchCatalogItems("汤底浓郁", facilityKind = CampusGraphFacilityKind.DINING)
+                .any { it.item.id == "c1_huimian" }
+        )
+        assertTrue(
+            snapshot.searchCatalogItems("性价比高", facilityKind = CampusGraphFacilityKind.DINING).isNotEmpty()
+        )
+
+        assertTrue(snapshot.searchCatalogItems("11", facilityKind = CampusGraphFacilityKind.DINING).isEmpty())
+        assertTrue(snapshot.searchCatalogItems("4.8", facilityKind = CampusGraphFacilityKind.DINING).isEmpty())
+        assertTrue(snapshot.searchCatalogItems("BRUNCH", facilityKind = CampusGraphFacilityKind.DINING).isEmpty())
     }
 
     @Test

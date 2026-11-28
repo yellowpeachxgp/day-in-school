@@ -98,8 +98,10 @@ class CampusGraphSnapshot private constructor(
         entities.filterIsInstance<ProcedureNode>().filter { campusId == null || it.ref.campusId == campusId }
 
     /**
-     * 查询服务/设施挂载的目录项。空查询返回完整目录并保持迁移顺序；
-     * 非空查询匹配名称、类别、摘要与全部属性值，用于承接药品、菜品等 legacy 查询。
+     * 查询服务/设施挂载的目录项。空查询返回完整目录并保持迁移顺序。
+     * 非空查询只命中 legacy 兼容的显式字段集：药品为名称/规格/剂型/厂家/批准文号，
+     * 菜品为名称/档口位置/标签/示例评价；价格、贡献者、核验状态、评分计数等证据或
+     * 元数据字段绝不进入自由文本命中。尚未声明 legacy 字段集的目录项只按名称查询。
      */
     fun searchCatalogItems(
         query: String,
@@ -126,15 +128,26 @@ class CampusGraphSnapshot private constructor(
                 if (normalized.isEmpty()) {
                     return@mapNotNull CampusGraphCatalogItemHit(entity, item, item.name)
                 }
-                val candidates = buildList {
-                    add(item.name)
-                    item.category?.let(::add)
-                    item.summary?.let(::add)
-                    addAll(item.attributes.values)
-                }
+                val candidates = legacyCatalogSearchCandidates(entity, item)
                 val matched = candidates.firstOrNull { it.lowercase().contains(normalized) }
                 matched?.let { CampusGraphCatalogItemHit(entity, item, it) }
             }
+        }
+    }
+
+    private fun legacyCatalogSearchCandidates(
+        entity: CampusGraphEntity,
+        item: ServiceCatalogItem
+    ): List<String> {
+        fun attributeValues(keys: List<String>): List<String> = keys.mapNotNull { item.attributes[it] }
+        return when {
+            entity is ServiceNode && entity.kind == CampusGraphServiceKind.PHARMACY ->
+                listOf(item.name) + attributeValues(PHARMACY_LEGACY_SEARCH_ATTRIBUTE_KEYS)
+
+            entity is FacilityNode && entity.kind == CampusGraphFacilityKind.DINING ->
+                listOfNotNull(item.name, item.summary) + attributeValues(DINING_LEGACY_SEARCH_ATTRIBUTE_KEYS)
+
+            else -> listOf(item.name)
         }
     }
 
@@ -586,13 +599,26 @@ class CampusGraphSnapshot private constructor(
 
     companion object {
         private val ROOM_NUMBER_REGEX = Regex("([A-Za-z]?\\d{3,5})")
+        private val PHARMACY_LEGACY_SEARCH_ATTRIBUTE_KEYS = listOf(
+            "specification",
+            "dosageForm",
+            "manufacturer",
+            "approvalNumber"
+        )
+        private val DINING_LEGACY_SEARCH_ATTRIBUTE_KEYS = listOf(
+            "stallLocation",
+            "tags"
+        )
 
         fun of(entities: List<CampusGraphEntity>): CampusGraphSnapshot = CampusGraphSnapshot(entities)
 
         /**
          * 合并三层来源。高优先级覆盖低优先级；同优先级后到的修订覆盖先到版本。
-         * 输入层必须与其声明的 sourceLevel 一致；众包上报只在 reviewBy 当天及之前有效，
-         * 过期上报不会进入快照，避免临时纠错沉淀成永久事实。
+         * 合并粒度是整个实体而非字段级合并：高优先级同稳定 ID 实体完整替换低优先级实体，
+         * 不会从低优先级实体回填 location、aliases、attributes、catalogItems 等缺失字段。
+         * 本 API 不含 tombstone/删除标记语义；某层缺少实体只表示该层没有覆盖，不能表达
+         * “删除或隐藏低优先级实体”。输入层必须与其声明的 sourceLevel 一致；众包上报只在
+         * reviewBy 当天及之前有效，过期上报不会进入快照，避免临时纠错沉淀成永久事实。
          */
         fun merge(
             dataPackageEntities: List<CampusGraphEntity>,
