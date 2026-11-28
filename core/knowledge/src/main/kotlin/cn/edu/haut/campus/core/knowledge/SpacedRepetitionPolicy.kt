@@ -64,7 +64,7 @@ object SpacedRepetitionPolicy {
         }
 
         var nextIndex = task.successfulReviewCount.coerceAtMost(ladder.size)
-        var previousTarget = task.lastReviewedAt
+        var previousTarget = checkNotNull(task.lastReviewedAt) { "有成功复习次数时 lastReviewedAt 不能为空" }
         var extensionGap = if (ladder.size >= 2) ladder.last().minus(ladder[ladder.lastIndex - 1]) else Duration.ofDays(1)
         if (extensionGap.isZero || extensionGap.isNegative) extensionGap = Duration.ofDays(1)
         while (targets.size < MAX_SESSIONS_PER_TASK) {

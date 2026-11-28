@@ -218,7 +218,7 @@ class TimelineReviewScheduler(
             }
         }
 
-        if (chosen?.completion == SolveCompletion.BEST_FOUND_BUDGET_EXHAUSTED) {
+        if ((chosen?.result as? SolveResult.Solutions)?.completion == SolveCompletion.BEST_FOUND_BUDGET_EXHAUSTED) {
             warnings += "求解预算已用尽，返回当前最优可验证方案"
         }
         val status = when {
@@ -234,7 +234,7 @@ class TimelineReviewScheduler(
             solverStats = (chosen?.result as? SolveResult.Solutions)?.stats
                 ?: (latest?.result as? SolveResult.Solutions)?.stats
                 ?: (latest?.result as? SolveResult.Infeasible)?.stats,
-            completion = chosen?.completion,
+            completion = (chosen?.result as? SolveResult.Solutions)?.completion,
             conflictCore = (latest?.result as? SolveResult.Infeasible)?.conflictCore.orEmpty(),
             warnings = warnings.distinct()
         )
