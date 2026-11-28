@@ -70,7 +70,8 @@ internal object NoticeTextContext {
 
 /** 否定/辟谣守卫：只检查同一标点片段内的短窗口，不把跨句否定扩散到正向动作。 */
 internal object NoticeNegationGuard {
-    private val preNegatorPattern = Regex("""(并非|辟谣|不实|没有|没|未(?!来)|无(?!论)|不)""")
+    // 单字否定必须贴近被修饰动作；不能把课程名/普通词中的「不」在 10 字窗口内误当否定。
+    private val adjacentNegatorPattern = Regex("""(?:并非|没有|未(?!来)|无(?!论)|没|不)(?:用|需|要|是|再|必|会|真的)?s*$""")
 
     fun isNegated(text: String, start: Int, end: Int): Boolean {
         val bounds = NoticeTextContext.windowAround(text, start, end, before = 10, after = 10)
@@ -89,9 +90,10 @@ internal object NoticeNegationGuard {
         ) {
             return true
         }
+        if (beforeTail.contains("辟谣") || beforeTail.contains("不实")) return true
         // 「不得不停课」是双重否定后的正向停课，先移除该固定复合形式再查单否定词。
         val effectiveBefore = beforeTail.replace("不得不", "")
-        return preNegatorPattern.containsMatchIn(effectiveBefore)
+        return adjacentNegatorPattern.containsMatchIn(effectiveBefore)
     }
 }
 
@@ -176,10 +178,10 @@ internal object CourseMentionMatcher {
             )
             return CourseMentionSelection(mention = best)
         }
+        val clauseRefs = mentions.map { it.candidate.ref }.distinct()
+        if (clauseRefs.size > 1) return CourseMentionSelection(mention = null, ambiguous = true)
         val nearestDistance = mentions.minOf { distanceToAnchor(it.span, anchor) }
         val nearest = mentions.filter { distanceToAnchor(it.span, anchor) == nearestDistance }
-        val refs = nearest.map { it.candidate.ref }.distinct()
-        if (refs.size > 1) return CourseMentionSelection(mention = null, ambiguous = true)
         val best = nearest.sortedWith(
             compareByDescending<CourseMention> { it.span.endOffset - it.span.startOffset }
                 .thenBy { it.confidence.ordinal }
@@ -365,7 +367,7 @@ internal data class ParsedRoom(
 internal object NoticeRoomParser {
     // 教室标识优先要求楼宇字母或明确中文建筑/功能房间前缀；显式“教室/地点/在”后才接受三位纯数字房号。
     // 四位纯数字（如年份 2024、人数 1500）始终不当教室，四位房号必须带楼宇/建筑前缀。
-    private const val NAMED_ROOM_TOKEN = """(?:[A-Za-z]{1,3}[0-9]{2,4}[A-Za-z]?|[一-鿿]{0,6}(?:楼|栋|馆|区|中心|机房|实验室)[0-9]{2,4}[A-Za-z]?)"""
+    private const val NAMED_ROOM_TOKEN = """(?:[A-Za-z]{1,3}[0-9]{2,4}[A-Za-z]?|(?:[0-9]{1,3}号楼|[一-鿿]{0,6}(?:楼|栋|馆|区|座|中心|机房|实验室))[0-9]{2,5}[A-Za-z]?)"""
     private val explicitRoomPattern = Regex(
         """(?:教室|地点|机房|实验室|场地|在)(?:\s|为|是|：|:)*((?:""" + NAMED_ROOM_TOKEN + """)|(?:[0-9]{3}))(?![A-Za-z0-9])"""
     )

@@ -94,12 +94,17 @@ object CourseRescheduleRule : InboxRule {
                 marker.range.first,
                 NoticeTextContext.sentenceBoundaryChars
             )
+            val clauseBounds = NoticeTextContext.boundsAround(
+                input.plainText,
+                marker.range.first,
+                NoticeTextContext.clauseBoundaryChars
+            )
             val selection = CourseMentionMatcher.selectNear(
                 input,
                 ctx.courses,
                 marker.range.first,
-                sentenceBounds.first,
-                sentenceBounds.second
+                clauseBounds.first,
+                clauseBounds.second
             )
             if (selection.ambiguous) {
                 issues += ParseIssue(
@@ -226,12 +231,17 @@ object CourseRoomChangeRule : InboxRule {
             if (hasTargetDateMentionAfter) return@forEach
             val room = NoticeRoomParser.find(input, marker.range.last + 1, sentenceBounds.second)
                 ?: return@forEach
+            val clauseBounds = NoticeTextContext.boundsAround(
+                input.plainText,
+                marker.range.first,
+                NoticeTextContext.clauseBoundaryChars
+            )
             val selection = CourseMentionMatcher.selectNear(
                 input,
                 ctx.courses,
                 marker.range.first,
-                sentenceBounds.first,
-                sentenceBounds.second
+                clauseBounds.first,
+                clauseBounds.second
             )
             if (selection.ambiguous) {
                 issues += ParseIssue(
@@ -311,12 +321,17 @@ object CourseCancellationRule : InboxRule {
                 match.range.first,
                 NoticeTextContext.sentenceBoundaryChars
             )
+            val clauseBounds = NoticeTextContext.boundsAround(
+                input.plainText,
+                match.range.first,
+                NoticeTextContext.clauseBoundaryChars
+            )
             val selection = CourseMentionMatcher.selectNear(
                 input,
                 ctx.courses,
                 match.range.first,
-                sentenceBounds.first,
-                sentenceBounds.second
+                clauseBounds.first,
+                clauseBounds.second
             )
             if (selection.ambiguous) {
                 issues += ParseIssue(

@@ -87,6 +87,17 @@ class RuleNoticeParserTest {
     }
 
     @Test
+    fun uniqueCourseBeforeCommaStillAppliesToRescheduleMarker() {
+        val report = parseReport("高等数学本周五的课，调整到下周一晚上7点")
+
+        val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, action.courseRef)
+        val change = action.change as OccurrenceChange.Reschedule
+        assertEquals(LocalDate.of(2026, 11, 30), change.targetDate)
+        assertEquals(LocalTime.of(19, 0), change.startTime)
+    }
+
+    @Test
     fun parsesRoomChangeOnlyWhenNoTargetDateFollowsMarker() {
         val report = parseReport("下周三大学物理改到B302")
 
@@ -154,6 +165,14 @@ class RuleNoticeParserTest {
             val report = parseReport(text)
             assertTrue(text, report.actions.isEmpty())
         }
+    }
+
+    @Test
+    fun negationGuardRequiresAdjacentModifierAndKeepsPositiveCompounds() {
+        assertTrue(NoticeNegationGuard.isNegated("明天不停课", 3, 5))
+        assertTrue(NoticeNegationGuard.isNegated("明天不用提交", 4, 6))
+        assertFalse(NoticeNegationGuard.isNegated("不得不停课", 3, 5))
+        assertFalse(NoticeNegationGuard.isNegated("不动产法停课", 4, 6))
     }
 
     @Test
@@ -229,6 +248,7 @@ class RuleNoticeParserTest {
         assertEquals("101", NoticeRoomParser.find(ExtractedText.fromPlainText("地点101"))?.room)
         assertEquals("F01", NoticeRoomParser.find(ExtractedText.fromPlainText("地点F01"))?.room)
         assertEquals("教三楼302", NoticeRoomParser.find(ExtractedText.fromPlainText("地点教三楼302"))?.room)
+        assertEquals("32号楼32106", NoticeRoomParser.find(ExtractedText.fromPlainText("地点32号楼32106"))?.room)
     }
 
     @Test
@@ -246,6 +266,17 @@ class RuleNoticeParserTest {
         val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
         assertEquals(mathRef, action.courseRef)
         assertTrue(action.change is OccurrenceChange.Cancel)
+    }
+
+    @Test
+    fun cancellationUsesCommaActionClauseAndRejectsAmbiguousCourseClause() {
+        val report = parseReport("高数本周五停课，大学物理照常上课。")
+        val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, action.courseRef)
+
+        val ambiguous = parseReport("高等数学和大学物理本周五停课")
+        assertTrue(ambiguous.actions.isEmpty())
+        assertTrue(ambiguous.issues.any { it.kind == ParseIssueKind.COURSE_NOT_MATCHED })
     }
 
     @Test
