@@ -8,18 +8,18 @@ object AiLocalRedactor {
     private const val PLACEHOLDER_DORM = "[已脱敏:宿舍号]"
 
     private val nationalIdPattern = Regex(
-        "(?<![0-9A-Za-z])\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx](?![0-9A-Za-z])"
+        """(?<![0-9A-Za-z])\d{6}(?:18|19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])\d{3}[0-9Xx](?![0-9A-Za-z])"""
     )
-    private val phonePattern = Regex("(?<!\d)1[3-9]\d{9}(?!\d)")
+    private val phonePattern = Regex("""(?<!\d)1[3-9]\d{9}(?!\d)""")
     private val contextualStudentPattern = Regex(
-        "(?i)(?:学号|student(?:\s*id)?|sid)\s*[:：#=]?\s*([A-Za-z0-9_-]{6,24})"
+        """(?i)(?:学号|student(?:\s*id)?|sid)\s*[:：#=]?\s*([A-Za-z0-9_-]{6,24})"""
     )
-    private val bareStudentPattern = Regex("(?<!\d)\d{8,12}(?!\d)")
+    private val bareStudentPattern = Regex("""(?<!\d)\d{8,12}(?!\d)""")
     private val contextualDormPattern = Regex(
-        "(?i)(?:宿舍|寝室|房间|room)\s*[:：#=]?\s*([A-Za-z0-9\u4e00-\u9fff]{1,10}(?:栋|号楼|楼|舍|苑)?[-—]?[0-9A-Za-z]{2,5}室?)"
+        """(?i)(?:宿舍|寝室|房间|room)\s*[:：#=]?\s*([A-Za-z0-9\u4e00-\u9fff]{1,10}(?:栋|号楼|楼|舍|苑)?[-—]?[0-9A-Za-z]{2,5}室?)"""
     )
-    private val hyphenDormPattern = Regex("(?<![0-9A-Za-z])[A-Za-z]?\d{1,2}[-—][1-9]\d{2}(?![0-9A-Za-z])")
-    private val buildingDormPattern = Regex("(?<![0-9A-Za-z])\d{1,2}栋[1-9]\d{2}室?(?![0-9A-Za-z])")
+    private val hyphenDormPattern = Regex("""(?<![0-9A-Za-z])[A-Za-z]?\d{1,2}[-—][1-9]\d{2}(?![0-9A-Za-z])""")
+    private val buildingDormPattern = Regex("""(?<![0-9A-Za-z])\d{1,2}栋[1-9]\d{2}室?(?![0-9A-Za-z])""")
 
     fun redact(messages: List<AiMessage>): RedactedAiMessages {
         val counts = sortedMapOf<RedactionKind, Int>()
