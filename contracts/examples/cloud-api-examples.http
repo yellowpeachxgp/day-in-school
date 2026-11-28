@@ -220,6 +220,11 @@ Idempotency-Key: poll_create_demo_0001
   ]
 }
 
+### 23A. CT-02 List Group Polls With Optional Status Filter (planned)
+GET http://127.0.0.1:4100/api/v1/groups/55555555-5555-4555-8555-555555555555/polls?status=OPEN&limit=20
+Authorization: Bearer <cloud_access_token>
+Accept: application/json
+
 ### 24. CT-02 Get Poll Options Deadline And Results (planned)
 GET http://127.0.0.1:4100/api/v1/polls/99999999-9999-4999-8999-999999999999
 Authorization: Bearer <cloud_access_token>

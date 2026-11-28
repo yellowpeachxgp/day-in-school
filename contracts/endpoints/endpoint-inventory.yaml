@@ -570,6 +570,13 @@ endpoints:
     auth: bearer
     owner: availability
     status: active
+  - method: GET
+    path: /api/v1/groups/{groupId}/polls
+    operationId: listGroupPolls
+    auth: bearer
+    owner: availability
+    status: planned
+    contract_card: CT-02
   - method: POST
     path: /api/v1/groups/{groupId}/polls
     operationId: createGroupPoll

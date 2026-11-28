@@ -1479,6 +1479,45 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/groups/{groupId}/polls:
+    get:
+      operationId: listGroupPolls
+      x-dis-status: planned
+      x-dis-api-version: v1
+      x-dis-compatibility: Additive v1 contract closing the W4-07 poll-discovery gap; planned because the CT-02 runtime does not yet register this collection route. The implementation PR must atomically wire the runtime route and flip this operation to active.
+      x-dis-permissions: [group.poll.read]
+      x-dis-error-codes: [BAD_REQUEST, CLOUD_AUTH_REQUIRED, CAMPUS_BINDING_REQUIRED, SCHOOL_SCOPE_MISMATCH, GROUP_NOT_FOUND, GROUP_PERMISSION_DENIED]
+      tags: [polls]
+      security:
+        - bearerAuth: []
+      summary: List group polls with status filtering and cursor pagination
+      description: |
+        Returns polls visible under exactly the same membership and school-scope rules as the single-poll read endpoint: the caller must be an active member of the group in the same school_id scope. Polls never leak across groups, school scopes, or withdrawn/removed memberships. Each item is the full GroupPoll shape, including options, per-option results, caller-specific my_vote_option_id, and confirmation state, so member visibility remains identical to getGroupPoll rather than becoming a reduced secondary projection.
+        The optional status filter accepts exactly one OPEN, CLOSED, or CONFIRMED value; omitting it returns polls in every state. Results use deterministic keyset ordering by created_at descending with poll_id descending as the tie-breaker. cursor is opaque and server-issued, binds the group, school scope, status filter, and ordering, and must never be constructed by clients; malformed or mismatched cursors fail with BAD_REQUEST. A page contains at most limit items, and meta.next_cursor is null when no further page is available. Keyset pagination rather than offset pagination is required so newly created polls cannot shift continuation positions. Status filtering is evaluated at each read; a poll whose state changes during pagination may enter or leave later pages, and clients needing a stable view must restart the scan.
+      parameters:
+        - $ref: '#/components/parameters/GroupIdParam'
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/GroupPollStatus'
+          description: Optional exact poll-state filter. Repeating the parameter or using a lowercase/comma-separated value is invalid.
+        - $ref: '#/components/parameters/CursorParam'
+        - $ref: '#/components/parameters/LimitParam'
+      responses:
+        '200':
+          description: Group poll list page visible to an active member in the same school scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupPollListEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
     post:
       operationId: createGroupPoll
       x-dis-status: active
@@ -6887,6 +6926,24 @@ components:
           type: string
         data:
           $ref: '#/components/schemas/GroupPoll'
+        meta:
+          $ref: '#/components/schemas/ResponseMeta'
+    GroupPollListEnvelope:
+      type: object
+      required: [ok, code, request_id, data, meta]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        code:
+          type: string
+        request_id:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupPoll'
+          description: Page of full poll objects ordered by created_at descending with poll_id descending as tie-breaker. Personal fields such as my_vote_option_id are evaluated for the same authenticated caller on every item.
         meta:
           $ref: '#/components/schemas/ResponseMeta'
     UpsertGroupPollVoteRequest:
