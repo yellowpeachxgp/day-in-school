@@ -441,7 +441,7 @@ class E2eeSyncEngineTest {
 
         private fun rowKeyFor(id: String): String = courseSnapshot(id, "x").rowKey
 
-        private fun courseName(store: InMemoryBackupStore, id: String): String? {
+        private suspend fun courseName(store: InMemoryBackupStore, id: String): String? {
             val row = store.readRow("courses", rowKeyFor(id)) ?: return null
             return (row.row.cells["name"] as? BackupCell.TextValue)?.value
         }
