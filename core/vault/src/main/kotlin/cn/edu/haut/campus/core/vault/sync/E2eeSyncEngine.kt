@@ -9,7 +9,7 @@ import kotlinx.coroutines.sync.withLock
  * 行级 E2EE 同步引擎。它只操作 SyncBackupStore 暴露的 dis-backup 行模型；
  * 任何明文冲突、CAS 冲突或 logicalClock 回滚都必须进入用户可解决的 pending conflict。
  */
-class E2eeSyncEngine(
+internal class E2eeSyncEngine(
     private val stateStore: E2eeSyncStateStore,
     private val keyStore: E2eeSyncKeyStore,
     private val api: E2eeSyncApi,

@@ -63,18 +63,18 @@ data class E2eeSyncConflict(
 
 data class E2eeSyncState(
     val schemaVersion: Int = 1,
-    val enabled: Boolean = false,
+    var enabled: Boolean = false,
     val deviceId: String? = null,
     val consentId: String? = null,
     val syncSpaceId: String? = null,
     val keyId: String? = null,
     val deviceLabel: String? = null,
-    val cursor: String? = null,
+    var cursor: String? = null,
     val objects: MutableMap<String, E2eeSyncObjectState> = mutableMapOf(),
     val pendingWrites: MutableMap<String, E2eeSyncPendingWrite> = mutableMapOf(),
     val conflicts: MutableMap<String, E2eeSyncConflict> = mutableMapOf(),
-    val lastRunAtEpochMs: Long = 0L,
-    val lastRunSummary: String? = null
+    var lastRunAtEpochMs: Long = 0L,
+    var lastRunSummary: String? = null
 )
 
 interface E2eeSyncStateStore {

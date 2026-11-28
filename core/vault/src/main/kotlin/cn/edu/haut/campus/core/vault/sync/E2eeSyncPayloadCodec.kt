@@ -10,7 +10,7 @@ import cn.edu.haut.campus.core.vault.BackupValidationException
 import cn.edu.haut.campus.core.vault.encodeCell
 import java.util.Base64
 
-object SyncBackupObjectKeys {
+internal object SyncBackupObjectKeys {
     fun logicalKey(table: String, rowKey: String): String =
         table + ":" + Base64.getUrlEncoder().withoutPadding().encodeToString(rowKey.toByteArray(Charsets.UTF_8))
 
@@ -22,7 +22,7 @@ object SyncBackupObjectKeys {
 }
 
 /** 上传快照的模块边界：所有行都必须已经处于 sync-normalized scope 形态。 */
-data class SyncBackupRowSnapshot(
+internal data class SyncBackupRowSnapshot(
     val policy: BackupTablePolicy,
     val row: BackupRow,
     val blobs: Map<String, ByteArray>
@@ -33,7 +33,7 @@ data class SyncBackupRowSnapshot(
     val rowSha256: String get() = row.sha256()
 }
 
-interface SyncBackupStore {
+internal interface SyncBackupStore {
     val schemaVersion: Int
     suspend fun captureRows(): List<SyncBackupRowSnapshot>
     suspend fun readRow(table: String, rowKey: String): SyncBackupRowSnapshot?
@@ -41,7 +41,7 @@ interface SyncBackupStore {
     suspend fun applyDeletes(deletes: List<Pair<String, String>>)
 }
 
-object SyncBackupScopeNormalizer {
+internal object SyncBackupScopeNormalizer {
     const val SYNC_SCOPE_VALUE = "sync"
 
     fun normalize(policy: BackupTablePolicy, row: BackupRow): BackupRow {
@@ -80,7 +80,7 @@ object SyncBackupScopeNormalizer {
     }
 }
 
-data class E2eeSyncRowPayload(
+internal data class E2eeSyncRowPayload(
     val policy: BackupTablePolicy,
     val row: BackupRow,
     val blobs: Map<String, ByteArray>,
@@ -96,7 +96,7 @@ data class E2eeSyncRowPayload(
 }
 
 /** dis-backup typed-cell 行在同步 plaintext 内的 CanonicalJson 编解码。 */
-object E2eeSyncPayloadCodec {
+internal object E2eeSyncPayloadCodec {
     private const val MAX_PAYLOAD_JSON_CHARS = 2 * 1024 * 1024
 
     fun encode(input: E2eeSyncRowPayload): String {
@@ -250,7 +250,7 @@ object E2eeSyncPayloadCodec {
 }
 
 /** 把 dis-backup length-prefixed primaryKey 还原为按主键列排列的 typed-cell，供同步删除 WHERE 使用。 */
-object SyncBackupPrimaryKeyCodec {
+internal object SyncBackupPrimaryKeyCodec {
     fun decode(policy: BackupTablePolicy, rowKey: String): Map<String, BackupCell> {
         val identities = mutableListOf<String>()
         var index = 0

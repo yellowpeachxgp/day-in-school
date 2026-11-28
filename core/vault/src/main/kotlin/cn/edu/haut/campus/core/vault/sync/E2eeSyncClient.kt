@@ -5,7 +5,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /** 面向 UI/Worker 的高层同步客户端：显式同意、设备登记、手动/后台 runOnce 与冲突解决入口。 */
-class E2eeSyncClient(
+class E2eeSyncClient internal constructor(
     private val stateStore: E2eeSyncStateStore,
     private val keyStore: E2eeSyncKeyStore,
     private val backupStore: SyncBackupStore,

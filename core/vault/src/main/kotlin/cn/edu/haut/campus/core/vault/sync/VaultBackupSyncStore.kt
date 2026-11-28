@@ -9,7 +9,7 @@ import cn.edu.haut.campus.core.vault.BackupValidationException
 import cn.edu.haut.campus.core.vault.VaultBackupService
 
 /** dis-backup Room 实现与同步引擎之间的适配器：同步层只见 normalized rows，落库前恢复本机 scope。 */
-class VaultBackupSyncStore(
+internal class VaultBackupSyncStore(
     private val backupService: VaultBackupService
 ) : SyncBackupStore {
     override val schemaVersion: Int

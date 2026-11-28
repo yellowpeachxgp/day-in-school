@@ -50,7 +50,7 @@ object E2eeSyncProtocol {
         (FORMAT + "\n" + blobId.lowercase() + "\n" + keyId + "\n").toByteArray(Charsets.UTF_8)
 }
 
-class E2eeSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
+open class E2eeSyncException(message: String, cause: Throwable? = null) : Exception(message, cause)
 class E2eeSyncCryptoException(message: String, cause: Throwable? = null) : E2eeSyncException(message, cause)
 class E2eeSyncOversizeException(message: String) : E2eeSyncException(message)
 class E2eeSyncConsentException(message: String) : E2eeSyncException(message)
