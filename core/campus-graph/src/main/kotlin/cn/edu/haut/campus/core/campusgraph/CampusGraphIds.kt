@@ -43,8 +43,9 @@ object CampusGraphIds {
      *
      * datapack item 字符集是 lowercase alphanumeric + . _ / -。这里不用面向显示名的
      * normalizeSlug 折叠规则：. _ - 在稳定 ID 中本来合法所以逐字保留，唯一会切开
-     * 四段图 ID 的斜线映射为输入字符集不可能包含的冒号；输出再进入 dp- 专用命名空间。
-     * 该映射不依赖大小写，逐字符可逆且 injective，aid/forms 与 aid-forms 不会折叠。
+     * 四段图 ID 的斜线映射为输入字符集不可能包含的冒号；输出再进入 dp: 专用命名空间。
+     * normalizeSlug 永远不会生成冒号，因此即使 slashless item 也不能与人工/legacy slug
+     * 相撞；该映射不依赖大小写，逐字符可逆且 injective，aid/forms 与 aid-forms 不会折叠。
      */
     fun buildDatapackEntity(
         schoolId: SchoolId,
@@ -54,7 +55,7 @@ object CampusGraphIds {
     ): PlaceRef {
         val encoded = encodeDatapackItemId(itemId)
         require(itemId.length <= 120) { "datapack item ID 过长" }
-        val slug = "dp-" + encoded
+        val slug = "dp:" + encoded
         val ref = PlaceRef(
             schoolId.value + "/" + campusId.value + "/" + type.wireId + "/" + slug,
             schoolId,
