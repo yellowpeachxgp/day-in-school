@@ -26,35 +26,60 @@ internal object RequirementTreeMath {
         plan: TrainingPlan,
         directEarnedByGroup: Map<String, BigDecimal>
     ): Map<String, RequirementGroupTotals> {
-        val aggregateMemo = mutableMapOf<String, BigDecimal>()
-        val needMemo = mutableMapOf<String, BigDecimal>()
-        val childNeedMemo = mutableMapOf<String, BigDecimal>()
+        data class Computed(
+            val aggregateEarned: BigDecimal,
+            val additionalNeeded: BigDecimal,
+            val childAdditionalNeeded: BigDecimal
+        )
 
-        fun aggregate(group: RequirementGroup): BigDecimal {
-            aggregateMemo[group.id]?.let { return it }
-            val direct = directEarnedByGroup[group.id] ?: BigDecimal.ZERO
-            val total = group.children.fold(direct) { acc, child -> acc.add(aggregate(child)) }
-            aggregateMemo[group.id] = total
-            return total
-        }
-
-        fun childNeeds(group: RequirementGroup): BigDecimal {
-            childNeedMemo[group.id]?.let { return it }
-            val total = group.children.fold(BigDecimal.ZERO) { acc, child -> acc.add(need(child)) }
-            childNeedMemo[group.id] = total
-            return total
-        }
-
-        fun need(group: RequirementGroup): BigDecimal {
-            needMemo[group.id]?.let { return it }
-            val ownShortfall = (group.requiredCredits - aggregate(group)).max(BigDecimal.ZERO)
-            val total = maxOf(childNeeds(group), ownShortfall)
-            needMemo[group.id] = total
-            return total
+        val computed = mutableMapOf<String, Computed>()
+        fun compute(group: RequirementGroup): Computed {
+            computed[group.id]?.let { return it }
+            val childValues = group.children.map(::compute)
+            val aggregateEarned = childValues.fold(directEarnedByGroup[group.id] ?: BigDecimal.ZERO) { acc, child ->
+                acc.add(child.aggregateEarned)
+            }
+            val childNeedSum = childValues.fold(BigDecimal.ZERO) { acc, child ->
+                acc.add(child.additionalNeeded)
+            }
+            val ownShortfall = (group.requiredCredits - aggregateEarned).max(BigDecimal.ZERO)
+            val result = Computed(
+                aggregateEarned = aggregateEarned,
+                additionalNeeded = maxOf(childNeedSum, ownShortfall),
+                childAdditionalNeeded = childNeedSum
+            )
+            computed[group.id] = result
+            return result
         }
 
         return plan.allGroups().associate { group ->
+            val value = compute(group)
             val childrenMinimum = group.children.fold(BigDecimal.ZERO) { acc, child ->
                 acc.add(TrainingPlan.minimumRequiredCredits(child))
             }
             group.id to RequirementGroupTotals(
+                minimumRequiredCredits = maxOf(group.requiredCredits, childrenMinimum),
+                aggregateEarnedCredits = value.aggregateEarned,
+                additionalNeededCredits = value.additionalNeeded,
+                childAdditionalNeededCredits = value.childAdditionalNeeded
+            )
+        }
+    }
+
+    fun totalAdditionalNeeded(plan: TrainingPlan, totals: Map<String, RequirementGroupTotals>): BigDecimal =
+        plan.groups.fold(BigDecimal.ZERO) { acc, group ->
+            acc.add(totals[group.id]?.additionalNeededCredits ?: BigDecimal.ZERO)
+        }
+
+    /**
+     * 需要在毕业进度中稳定展示的组：全部叶子、带直接课程的混合组、以及
+     * 自身要求超过子组最少要求之和的汇总约束组。后者正是网关 root 总要求的承载形式。
+     */
+    fun isProgressVisible(group: RequirementGroup): Boolean {
+        if (group.isLeaf || group.courses.isNotEmpty()) return true
+        val childrenMinimum = group.children.fold(BigDecimal.ZERO) { acc, child ->
+            acc.add(TrainingPlan.minimumRequiredCredits(child))
+        }
+        return group.requiredCredits > childrenMinimum
+    }
+}

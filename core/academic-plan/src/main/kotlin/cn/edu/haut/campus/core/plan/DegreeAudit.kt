@@ -540,7 +540,8 @@ object DegreeAuditor {
         }
         val totalRemaining = RequirementTreeMath.totalAdditionalNeeded(plan, totals)
         val totalSurplus = visibleGroups.filter { it.isLeaf }.fold(BigDecimal.ZERO) { acc, group ->
-            acc.add(group.surplusCredits)
+            val groupTotals = totals.getValue(group.id)
+            acc.add((groupTotals.aggregateEarnedCredits - group.requiredCredits).max(BigDecimal.ZERO))
         }
         step(
             rule = "group-total",
