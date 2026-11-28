@@ -9,8 +9,10 @@ import androidx.room.Room
 import cn.edu.haut.campus.core.database.AccountProfileEntity
 import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.database.HautDatabase
+import cn.edu.haut.campus.core.database.toEntity
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.ClassStatus
+import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.TimelineOccurrenceState
 import cn.edu.haut.campus.core.reminder.AccountBackgroundScope
 import cn.edu.haut.campus.core.reminder.AlarmScheduler
@@ -28,6 +30,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
@@ -208,6 +211,194 @@ class TodayViewModelDurableWriteTest {
             releaseWrite.complete(Unit)
             writeScope.cancel()
             fixture.close()
+        }
+    }
+
+    @Test
+    fun legacyRestoreReviewSurvivesImmediateViewModelClearAndIsProfileIsolated() = runBlocking {
+        val fixture = DurableWriteViewModelFixture.create(
+            RuntimeEnvironment.getApplication(),
+            "prof_today_legacy_review_" + System.nanoTime()
+        )
+        val otherProfileFixture = DurableWriteViewModelFixture.create(
+            RuntimeEnvironment.getApplication(),
+            "prof_today_legacy_other_" + System.nanoTime()
+        )
+        val writeStarted = CompletableDeferred<Unit>()
+        val releaseWrite = CompletableDeferred<Unit>()
+        val writeFinished = CompletableDeferred<Unit>()
+        val writeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val termId = "2026-2027-1"
+            fixture.repository.addManualCourseWithRule(
+                termId = termId,
+                name = "旧版调课合成课",
+                teacher = null,
+                rawRoom = "旧版原教室",
+                weekday = DayOfWeek.MONDAY,
+                startPeriod = 1,
+                endPeriod = 2,
+                weeks = setOf(1),
+                colorArgb = 0xFF0072BC
+            )
+            val rule = fixture.dao.getRulesSnapshot().single { it.termId == termId }
+            val course = fixture.dao.getCoursesSnapshot().single { it.id == rule.courseId }
+            val sourceDate = LocalDate.of(2026, 10, 12)
+            val targetDate = LocalDate.of(2026, 10, 14)
+            fixture.dao.upsertOccurrenceOverrides(
+                listOf(
+                    OccurrenceOverride(
+                        id = "ov_legacy_src",
+                        termId = termId,
+                        courseId = course.id,
+                        courseRuleId = rule.id,
+                        date = sourceDate,
+                        canceled = true,
+                        reason = "已调至 2026-10-14"
+                    ).toEntity(),
+                    OccurrenceOverride(
+                        id = "ov_legacy_tgt_a",
+                        termId = termId,
+                        courseId = course.id,
+                        courseRuleId = null,
+                        date = targetDate,
+                        startPeriod = 1,
+                        endPeriod = 2,
+                        room = "旧教室A",
+                        canceled = false,
+                        reason = "由 2026-10-12 调入"
+                    ).toEntity(),
+                    OccurrenceOverride(
+                        id = "ov_legacy_tgt_b",
+                        termId = termId,
+                        courseId = course.id,
+                        courseRuleId = null,
+                        date = targetDate,
+                        startPeriod = 5,
+                        endPeriod = 6,
+                        room = "旧教室B",
+                        canceled = false,
+                        reason = "由 2026-10-12 调入"
+                    ).toEntity()
+                )
+            )
+            val actionSnapshot = fixture.dao.getOccurrenceOverridesSnapshot().map { it.toDomain() }
+            val gatedExecutor = TodayWriteExecutor(
+                writeScope = writeScope,
+                runner = object : TodaySessionWriteRunner {
+                    override suspend fun <T : Any> withActiveSessionWrite(
+                        profileId: String,
+                        sessionGeneration: Long,
+                        write: suspend () -> T
+                    ): T? {
+                        writeStarted.complete(Unit)
+                        releaseWrite.await()
+                        return write()
+                    }
+                },
+                afterSuccessfulWrite = { writeFinished.complete(Unit) }
+            )
+            val firstViewModel = TodayViewModel(
+                repository = fixture.repository,
+                reminderCoordinator = createReminderCoordinator(fixture),
+                writeExecutor = gatedExecutor
+            )
+
+            firstViewModel.onAction(
+                TodayUiAction.RestoreCanceledOccurrence(
+                    termId = termId,
+                    date = sourceDate,
+                    courseName = course.name,
+                    overrideId = null,
+                    mergedRuleIds = listOf(rule.id),
+                    occurrenceOverrides = actionSnapshot,
+                    writeToken = "legacy-restore-owner-clear"
+                )
+            )
+            withTimeout(2_000) { writeStarted.await() }
+            clearViewModelForNavigationRace(firstViewModel)
+            releaseWrite.complete(Unit)
+            withTimeout(2_000) { writeFinished.await() }
+
+            val rowsAfterRestore = fixture.dao.getOccurrenceOverridesSnapshot()
+            assertTrue(rowsAfterRestore.none { it.id == "ov_legacy_src" })
+            assertTrue(rowsAfterRestore.any { it.id == "ov_legacy_tgt_a" })
+            assertTrue(rowsAfterRestore.any { it.id == "ov_legacy_tgt_b" })
+            val expectedTargetIds = setOf("ov_legacy_tgt_a", "ov_legacy_tgt_b")
+            assertEquals(
+                expectedTargetIds,
+                withTimeout(2_000) {
+                    fixture.repository.timetableRepository.legacyRestoreReviewTargetsFlow.first().map { it.id }.toSet()
+                }
+            )
+            assertTrue(
+                "另一 Profile 的 DataStore/journal 不得看到本 Profile 核对候选",
+                withTimeout(2_000) {
+                    otherProfileFixture.repository.timetableRepository.legacyRestoreReviewTargetsFlow.first()
+                }.isEmpty()
+            )
+
+            val passthroughExecutor = TodayWriteExecutor(
+                writeScope = writeScope,
+                runner = object : TodaySessionWriteRunner {
+                    override suspend fun <T : Any> withActiveSessionWrite(
+                        profileId: String,
+                        sessionGeneration: Long,
+                        write: suspend () -> T
+                    ): T? = write()
+                }
+            )
+            val restoredViewModel = TodayViewModel(
+                repository = fixture.repository,
+                reminderCoordinator = createReminderCoordinator(fixture),
+                writeExecutor = passthroughExecutor
+            )
+            try {
+                withTimeout(2_000) {
+                    while (restoredViewModel.uiState.value.pendingLegacyRestoreTargets.map { it.id }.toSet() != expectedTargetIds) {
+                        yield()
+                    }
+                }
+
+                val deleteToken = "legacy-review-delete-a"
+                restoredViewModel.onAction(
+                    TodayUiAction.DeleteLegacyOccurrenceOverride(
+                        overrideId = "ov_legacy_tgt_a",
+                        writeToken = deleteToken
+                    )
+                )
+                withTimeout(2_000) {
+                    while (!restoredViewModel.uiState.value.writeCompletions.containsKey(deleteToken)) yield()
+                }
+                assertTrue(restoredViewModel.uiState.value.writeCompletions.getValue(deleteToken).isSuccess)
+                assertTrue(fixture.dao.getOccurrenceOverridesSnapshot().none { it.id == "ov_legacy_tgt_a" })
+                withTimeout(2_000) {
+                    while (restoredViewModel.uiState.value.pendingLegacyRestoreTargets.map { it.id } != listOf("ov_legacy_tgt_b")) {
+                        yield()
+                    }
+                }
+                assertEquals(
+                    listOf("ov_legacy_tgt_b"),
+                    fixture.repository.timetableRepository.legacyRestoreReviewTargetsFlow.first().map { it.id }
+                )
+
+                restoredViewModel.onAction(TodayUiAction.ClearLegacyRestoreTargets)
+                withTimeout(2_000) {
+                    while (fixture.repository.timetableRepository.legacyRestoreReviewTargetsFlow.first().isNotEmpty()) {
+                        yield()
+                    }
+                }
+                withTimeout(2_000) {
+                    while (restoredViewModel.uiState.value.pendingLegacyRestoreTargets.isNotEmpty()) yield()
+                }
+            } finally {
+                clearViewModelForNavigationRace(restoredViewModel)
+            }
+        } finally {
+            releaseWrite.complete(Unit)
+            writeScope.cancel()
+            fixture.close()
+            otherProfileFixture.close()
         }
     }
 
