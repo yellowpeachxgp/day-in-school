@@ -51,6 +51,12 @@ class VaultDegreeRepository internal constructor(
         val parsed = TrainingPlanImporter.import(input)
         val importId = "tpl-" + parsed.contentDigest.take(16)
         val now = clock()
+        // 幂等：同一内容重复导入不重写文档，避免 revision 递增制造 journal 审计噪声。
+        val existing = planDocuments.readDocument(importId)
+        if (existing != null && !isDeletedDocument(existing) && existing.str("contentDigest") == parsed.contentDigest) {
+            val record = listImports().firstOrNull { it.importId == importId }
+            if (record != null) return record
+        }
         val ref = EntityRef(EntityType.TRAINING_PLAN_IMPORT, importId, scope)
         writer.write(
             ref = ref,

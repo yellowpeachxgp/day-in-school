@@ -120,10 +120,12 @@ class VaultDegreeRepositoryTest {
         val plan = repository.loadPlan(record.importId)
         assertNotNull(plan)
         assertEquals(2, plan!!.allGroups().first { it.id == "basic" }.courses.size)
-        // 重复导入同一内容：同一 importId，不产生第二条记录
+        // 重复导入同一内容：同一 importId，不产生第二条记录，也不新增 journal 噪声
+        val journalBefore = database.vaultDao().countEntityJournal()
         val again = repository.importPlan(ImportInput.JsonDocument(sampleJson()), Actor.USER)
         assertEquals(record.importId, again.importId)
         assertEquals(1, repository.listImports().size)
+        assertEquals(journalBefore, database.vaultDao().countEntityJournal())
     }
 
     @Test
