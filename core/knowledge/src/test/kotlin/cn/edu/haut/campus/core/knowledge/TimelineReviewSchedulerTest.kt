@@ -36,6 +36,7 @@ import java.time.Duration
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -206,6 +207,28 @@ class TimelineReviewSchedulerTest {
     }
 
     @Test
+    fun revertingScheduleWriteRestoresTaskAndDerivedReviewEventsTogether() = runBlocking {
+        insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
+        val scheduler = schedulerWith(staticEvents = emptyList())
+        val result = scheduler.schedule(request())
+        assertEquals(ReviewScheduleResultStatus.SCHEDULED, result.status)
+        val task = repository.listReviewTasks(scope).single { it.id == "review-linear" }
+        val eventIds = result.placements.map { it.timelineEventId }
+        assertTrue(eventIds.isNotEmpty())
+
+        val journal = createKnowledgeJournal()
+        val history = journal.history(task.ref).first()
+        assertEquals("任务创建与首次排程应各有一条根实体 journal", 2, history.size)
+        journal.revert(history.last().changeId, Actor.USER)
+
+        val restored = repository.listReviewTasks(scope).single { it.id == "review-linear" }
+        assertEquals(null, restored.schedule)
+        assertTrue("因果撤销必须删除首次排程派生的 REVIEW_BLOCK", eventIds.all {
+            database.vaultDao().getPersonalEvent(it.value) == null
+        })
+    }
+
+    @Test
     fun completingBlockUpdatesMasteryAndNextRunContinuesWithLongerInterval() = runBlocking {
         insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
         val scheduler = schedulerWith(staticEvents = emptyList())
@@ -259,6 +282,39 @@ class TimelineReviewSchedulerTest {
                 masteryPercent = masteryPercent
             ),
             actor = Actor.USER
+        )
+    }
+
+    private fun createKnowledgeJournal(): cn.edu.haut.campus.core.vault.RoomVaultJournal {
+        val blobStore = cn.edu.haut.campus.core.vault.VaultBlobStore(database, clock = { now })
+        val searchIndex = cn.edu.haut.campus.core.vault.RoomSearchIndex(database, clock = { now })
+        val materialDocuments = VersionedBlobDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = EntityType.COURSE_MATERIAL,
+            mimeType = VersionedBlobDocumentStore.MATERIAL_MIME,
+            clock = { now }
+        )
+        val reviewDocuments = VersionedBlobDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = EntityType.REVIEW_ITEM,
+            mimeType = VersionedBlobDocumentStore.REVIEW_TASK_MIME,
+            clock = { now }
+        )
+        val projector = KnowledgeSearchProjector(scope, searchIndex, blobStore)
+        return cn.edu.haut.campus.core.vault.RoomVaultJournal(
+            database = database,
+            outbox = cn.edu.haut.campus.core.vault.RoomEventOutbox(database),
+            snapshotStores = listOf(
+                CourseMaterialSnapshotStore(materialDocuments, scope, projector, { now }),
+                ReviewTaskSnapshotStore(reviewDocuments, scope, { now }),
+                cn.edu.haut.campus.core.vault.PersonalEventSnapshotStore(database, searchIndex)
+            ),
+            clock = { now },
+            searchIndex = searchIndex
         )
     }
 
