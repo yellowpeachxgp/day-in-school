@@ -273,32 +273,146 @@ class CourseCancellationConditionEvaluator : ConditionEvaluator {
     override suspend fun evaluate(spec: ConditionSpec, ctx: RunContext): ConditionResult {
         val event = ctx.triggerEvent as? DomainEvent.CourseChanged
             ?: return unknown(type, "触发上下文缺少 CourseChanged 事件，无法确认临时停课")
-        val cancellationSignals = event.diff.changes.count { change ->
-            val path = change.path.lowercase()
-            val cancellationPath = path.contains("cancel") || path.endsWith("/status") || path.contains("occurrenceoverride")
-            val explicitValue = when (val value = change.after) {
-                is JsonValue.Bool -> value.value && path.contains("cancel")
-                is JsonValue.Str -> {
-                    val normalized = value.value.lowercase()
-                    normalized.contains("cancelled") || normalized.contains("canceled") || normalized.contains("停课")
-                }
-                else -> false
-            }
-            cancellationPath && explicitValue
+        val assessment = assessCourseCancellation(event)
+        val evidence = listOf(
+            Evidence(
+                source = "course-change-diff",
+                detail = "event=course.changed,positive=" + assessment.positiveSignals +
+                    ",negative=" + assessment.negativeSignals + ",unsupported=" + assessment.unsupportedSignals,
+                at = event.occurredAt
+            )
+        )
+        if (assessment.unsupportedSignals > 0) {
+            return ConditionResult(
+                conditionType = type,
+                passed = false,
+                certainty = Certainty.UNKNOWN,
+                reason = "课程状态字段包含未识别的枚举或类型，不能确认是否为停课",
+                evidence = evidence
+            )
         }
-        val passed = cancellationSignals > 0
+        if (assessment.positiveSignals > 0 && assessment.negativeSignals > 0) {
+            return ConditionResult(
+                conditionType = type,
+                passed = false,
+                certainty = Certainty.UNKNOWN,
+                reason = "课程变更同时包含停课与复课/正常状态证据，无法确定最终状态",
+                evidence = evidence
+            )
+        }
+        val passed = assessment.positiveSignals > 0
         return ConditionResult(
             conditionType = type,
             passed = passed,
             certainty = Certainty.CERTAIN,
             reason = if (passed) null else "课程变更差异中没有明确停课证据",
-            evidence = listOf(
-                Evidence(
-                    source = "course-change-diff",
-                    detail = "event=course.changed,cancellationSignals=" + cancellationSignals,
-                    at = event.occurredAt
-                )
-            )
+            evidence = evidence
+        )
+    }
+
+    private data class CancellationAssessment(
+        val positiveSignals: Int,
+        val negativeSignals: Int,
+        val unsupportedSignals: Int
+    )
+
+    /**
+     * 结构化判定：只接受明确字段末段与精确枚举值。任何 substring 文本匹配都不会被视为证据，
+     * 因此 uncancelled/not_cancelled/未停课 不会命中 cancelled/停课；无法识别的状态值按 UNKNOWN。
+     */
+    private fun assessCourseCancellation(event: DomainEvent.CourseChanged): CancellationAssessment {
+        var positive = 0
+        var negative = 0
+        var unsupported = 0
+        event.diff.changes.forEach { change ->
+            val leaf = jsonPointerSegments(change.path).lastOrNull()?.lowercase() ?: return@forEach
+            val booleanCancellationField = leaf in BOOLEAN_CANCELLATION_FIELD_NAMES
+            val statusField = leaf in STATUS_FIELD_NAMES
+            if (!booleanCancellationField && !statusField) return@forEach
+
+            if (booleanCancellationField) {
+                when (val after = change.after) {
+                    is JsonValue.Bool -> if (after.value) positive++ else negative++
+                    null -> {
+                        val beforeWasCancelled = change.before as? JsonValue.Bool
+                        if (change.kind == cn.edu.haut.campus.core.model.FieldChangeKind.REMOVED && beforeWasCancelled?.value == true) {
+                            negative++
+                        } else {
+                            unsupported++
+                        }
+                    }
+                    else -> unsupported++
+                }
+                return@forEach
+            }
+
+            when (val after = change.after) {
+                is JsonValue.Str -> when (normalizeCourseStatusToken(after.value)) {
+                    in POSITIVE_COURSE_STATUS_TOKENS -> positive++
+                    in NEGATIVE_COURSE_STATUS_TOKENS -> negative++
+                    else -> unsupported++
+                }
+                else -> unsupported++
+            }
+        }
+        return CancellationAssessment(positive, negative, unsupported)
+    }
+
+    private fun jsonPointerSegments(path: String): List<String> {
+        if (!path.startsWith('/')) return emptyList()
+        return path.substring(1).split('/').map { segment ->
+            segment.replace("~1", "/").replace("~0", "~")
+        }
+    }
+
+    private fun normalizeCourseStatusToken(value: String): String =
+        value.trim().uppercase().replace('-', '_').replace(' ', '_')
+
+    private companion object {
+        val BOOLEAN_CANCELLATION_FIELD_NAMES: Set<String> = setOf(
+            "canceled",
+            "cancelled",
+            "iscanceled",
+            "iscancelled",
+            "canceledtoday",
+            "cancelledtoday"
+        )
+        val STATUS_FIELD_NAMES: Set<String> = setOf(
+            "status",
+            "eventstatus",
+            "occurrencestatus"
+        )
+        val POSITIVE_COURSE_STATUS_TOKENS: Set<String> = setOf(
+            "CANCELLED",
+            "CANCELED",
+            "CANCELLED_TODAY",
+            "CANCELED_TODAY",
+            "TEMPORARILY_CANCELLED",
+            "TEMPORARILY_CANCELED",
+            "SCHOOL_CANCELLED",
+            "CANCELLED_BY_SCHOOL",
+            "CANCELED_BY_SCHOOL",
+            "停课",
+            "临时停课"
+        )
+        val NEGATIVE_COURSE_STATUS_TOKENS: Set<String> = setOf(
+            "SCHEDULED",
+            "NORMAL",
+            "ACTIVE",
+            "RESTORED",
+            "RESUMED",
+            "RESCHEDULED",
+            "TENTATIVE",
+            "DONE",
+            "UNCANCELLED",
+            "UNCANCELED",
+            "UN_CANCELLED",
+            "UN_CANCELED",
+            "NOT_CANCELLED",
+            "NOT_CANCELED",
+            "复课",
+            "未停课",
+            "不停课"
         )
     }
 }

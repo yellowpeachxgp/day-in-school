@@ -55,6 +55,42 @@ class WeatherProviderTest {
     }
 
     @Test
+    fun http429IsRateLimitedAndDoesNotBecomeEvidence() = runTest {
+        val transport = RecordingTransport(statusCode = 429)
+        val provider = MetNorwayWeatherProvider(
+            transport = transport,
+            clock = Clock.fixed(now, ZoneOffset.UTC)
+        )
+
+        val result = provider.forecast(request(termsAccepted = true))
+
+        val unavailable = result as WeatherProviderResult.Unavailable
+        assertEquals(WeatherUnavailableReason.RATE_LIMITED, unavailable.reason)
+    }
+
+    @Test
+    fun corruptedCachedResponseIsInvalidAndDoesNotNetworkAgain() = runTest {
+        val transport = RecordingTransport()
+        val corrupted = WeatherCachedResponse(
+            body = "not-json",
+            fetchedAt = now.minusSeconds(600),
+            cacheExpiresAt = now.plusSeconds(3600),
+            nextRequestAt = now.plusSeconds(3 * 3600)
+        )
+        val provider = MetNorwayWeatherProvider(
+            transport = transport,
+            cacheStore = StaticWeatherCacheStore(corrupted),
+            clock = Clock.fixed(now, ZoneOffset.UTC)
+        )
+
+        val result = provider.forecast(request(termsAccepted = true))
+
+        val unavailable = result as WeatherProviderResult.Unavailable
+        assertEquals(WeatherUnavailableReason.INVALID_RESPONSE, unavailable.reason)
+        assertEquals(0, transport.urls.size)
+    }
+
+    @Test
     fun malformedWeatherResponseIsUnavailableRatherThanEvidence() = runTest {
         val transport = RecordingTransport(body = "{\"properties\":{\"meta\":{}}}")
         val provider = MetNorwayWeatherProvider(
@@ -77,15 +113,23 @@ class WeatherProviderTest {
         campusId = scope.campusId
     )
 
+    private class StaticWeatherCacheStore(
+        private val cached: WeatherCachedResponse
+    ) : WeatherResponseCacheStore {
+        override suspend fun read(key: String): WeatherCachedResponse = cached
+        override suspend fun write(key: String, value: WeatherCachedResponse) = Unit
+    }
+
     private class RecordingTransport(
-        private val body: String = COMPACT_FIXTURE
+        private val body: String = COMPACT_FIXTURE,
+        private val statusCode: Int = 200
     ) : WeatherHttpTransport {
         val urls = ArrayList<String>()
 
         override suspend fun get(url: String, userAgent: String): WeatherHttpResponse {
             urls += url
             return WeatherHttpResponse(
-                statusCode = 200,
+                statusCode = statusCode,
                 body = body,
                 headers = mapOf("expires" to "Mon, 02 Mar 2026 03:00:00 GMT")
             )

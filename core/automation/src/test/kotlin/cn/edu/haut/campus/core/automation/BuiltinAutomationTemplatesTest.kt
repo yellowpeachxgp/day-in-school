@@ -167,6 +167,100 @@ class BuiltinAutomationTemplatesTest {
     }
 
     @Test
+    fun restorationAndNegatedCancellationValuesDoNotPassTemplateCondition() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
+        val negativeCases = listOf(
+            FieldChange(
+                path = "/occurrence/status",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Str("CANCELLED_TODAY"),
+                after = JsonValue.Str("SCHEDULED")
+            ),
+            FieldChange(
+                path = "/occurrence/status",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Str("SCHEDULED"),
+                after = JsonValue.Str("NOT_CANCELLED")
+            ),
+            FieldChange(
+                path = "/occurrence/status",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Str("CANCELLED_TODAY"),
+                after = JsonValue.Str("uncancelled")
+            ),
+            FieldChange(
+                path = "/occurrence/status",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Str("停课"),
+                after = JsonValue.Str("未停课")
+            ),
+            FieldChange(
+                path = "/occurrenceOverride/canceled",
+                kind = FieldChangeKind.MODIFIED,
+                before = JsonValue.Bool(true),
+                after = JsonValue.Bool(false)
+            )
+        )
+        negativeCases.forEach { change ->
+            val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
+            val event = courseEventWithChanges(mondayMorning, listOf(change))
+
+            val run = engine.dryRun(rule, mondayMorning, triggerEvent = event)
+
+            assertEquals("否定/复课值不得触发: " + change.after, RunStatus.CONDITIONS_NOT_MET, run.status)
+            val evaluation = run.evaluations.single()
+            assertEquals("否定/复课值应给出确定不通过: " + change.after, Certainty.CERTAIN, evaluation.certainty)
+            assertFalse(evaluation.effectivePassed)
+        }
+    }
+
+    @Test
+    fun mixedOrUnsupportedCancellationEvidenceIsUnknownRatherThanTriggering() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
+        val mixedEvent = courseEventWithChanges(
+            mondayMorning,
+            listOf(
+                FieldChange(
+                    path = "/occurrenceOverride/canceled",
+                    kind = FieldChangeKind.MODIFIED,
+                    before = JsonValue.Bool(false),
+                    after = JsonValue.Bool(true)
+                ),
+                FieldChange(
+                    path = "/occurrence/status",
+                    kind = FieldChangeKind.MODIFIED,
+                    before = JsonValue.Str("CANCELLED_TODAY"),
+                    after = JsonValue.Str("SCHEDULED")
+                )
+            )
+        )
+        val unsupportedEvent = courseEventWithChanges(
+            mondayMorning,
+            listOf(
+                FieldChange(
+                    path = "/occurrence/status",
+                    kind = FieldChangeKind.MODIFIED,
+                    before = JsonValue.Str("SCHEDULED"),
+                    after = JsonValue.Str("PENDING_REVIEW")
+                )
+            )
+        )
+        listOf(mixedEvent, unsupportedEvent).forEach { event ->
+            val engine = engineAt(at = mondayMorning, timelineService = StaticTimelineService(emptyList()))
+
+            val run = engine.dryRun(rule, mondayMorning, triggerEvent = event)
+
+            assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+            val evaluation = run.evaluations.single()
+            assertEquals(Certainty.UNKNOWN, evaluation.certainty)
+            assertFalse(evaluation.effectivePassed)
+            assertTrue(run.outcomes.isEmpty())
+        }
+    }
+
+    @Test
     fun expiredWeatherCacheIsUnknownAndDoesNotTriggerTemplate() = runTest {
         val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_EARLY_RAIN_UMBRELLA)!!
         val rule = acceptWeatherAndEnable(template.instantiate(scope))
@@ -209,6 +303,61 @@ class BuiltinAutomationTemplatesTest {
         val weather = run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION }
         assertEquals(Certainty.UNKNOWN, weather.certainty)
         assertFalse(weather.effectivePassed)
+    }
+
+    @Test
+    fun rateLimitedWeatherIsUnknownAndDoesNotTriggerTemplate() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_EARLY_RAIN_UMBRELLA)!!
+        val rule = acceptWeatherAndEnable(template.instantiate(scope))
+        val engine = engineAt(
+            at = mondayMorning,
+            timelineService = StaticTimelineService(listOf(timelineEvent(mondayMorning.plusSeconds(3600)))),
+            weatherProvider = StaticWeatherProvider(
+                WeatherProviderResult.Unavailable(
+                    providerId = "met-norway",
+                    reason = WeatherUnavailableReason.RATE_LIMITED,
+                    detail = "合成限流"
+                )
+            )
+        )
+
+        val run = engine.dryRun(rule, mondayMorning)
+
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        assertEquals(
+            Certainty.UNKNOWN,
+            run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION }.certainty
+        )
+        assertTrue(run.outcomes.isEmpty())
+    }
+
+    @Test
+    fun missingPrecipitationFieldsAreUnknownAndDoNotTriggerTemplate() = runTest {
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_EARLY_RAIN_UMBRELLA)!!
+        val rule = acceptWeatherAndEnable(template.instantiate(scope))
+        val base = weatherSnapshot(mondayMorning)
+        val missingFields = base.copy(
+            periods = listOf(
+                base.periods.single().copy(
+                    precipitationProbabilityPercent = null,
+                    precipitationAmountMillimeters = null,
+                    weatherSymbol = null
+                )
+            )
+        )
+        val engine = engineAt(
+            at = mondayMorning,
+            timelineService = StaticTimelineService(listOf(timelineEvent(mondayMorning.plusSeconds(3600)))),
+            weatherProvider = StaticWeatherProvider(WeatherProviderResult.Success(missingFields))
+        )
+
+        val run = engine.dryRun(rule, mondayMorning)
+
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        val weather = run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_WEATHER_PRECIPITATION }
+        assertEquals(Certainty.UNKNOWN, weather.certainty)
+        assertTrue(weather.reason?.contains("降水") == true)
+        assertTrue(run.outcomes.isEmpty())
     }
 
     private fun acceptWeatherAndEnable(rule: AutomationRule): AutomationRule = rule.copy(
@@ -304,6 +453,9 @@ class BuiltinAutomationTemplatesTest {
         sampledAt = at,
         provenance = provenance(at)
     )
+
+    private fun courseEventWithChanges(at: Instant, changes: List<FieldChange>): DomainEvent.CourseChanged =
+        courseCancellationEvent(at).copy(diff = FieldDiff(changes))
 
     private fun courseCancellationEvent(at: Instant): DomainEvent.CourseChanged {
         val ref = EntityRef(EntityType.COURSE, "course-1", scope)
