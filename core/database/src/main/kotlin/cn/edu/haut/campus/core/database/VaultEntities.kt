@@ -165,6 +165,21 @@ data class BlobStoreEntity(
     val createdAtEpochMs: Long
 )
 
+/** 不携带 content 大字段的 blob 元数据投影；配合分块读取避免 Android CursorWindow 上限。 */
+data class BlobStoreMetadataRow(
+    val blobId: String,
+    val scopeSchoolId: String,
+    val scopeAccountId: String,
+    val scopeProfileId: String,
+    val scopeCampusId: String?,
+    val sha256: String,
+    val mimeType: String,
+    val byteCount: Long,
+    val ownerEntityType: String?,
+    val ownerEntityId: String?,
+    val createdAtEpochMs: Long
+)
+
 @Dao
 interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -284,11 +299,23 @@ interface VaultDao {
     @Query("SELECT * FROM blob_store WHERE blobId = :blobId LIMIT 1")
     suspend fun getBlob(blobId: String): BlobStoreEntity?
 
+    @Query("SELECT blobId, scopeSchoolId, scopeAccountId, scopeProfileId, scopeCampusId, sha256, mimeType, byteCount, ownerEntityType, ownerEntityId, createdAtEpochMs FROM blob_store WHERE blobId = :blobId LIMIT 1")
+    suspend fun getBlobMetadata(blobId: String): BlobStoreMetadataRow?
+
+    @Query("SELECT substr(content, :startOffset, :byteCount) FROM blob_store WHERE blobId = :blobId")
+    suspend fun readBlobContentChunk(blobId: String, startOffset: Long, byteCount: Int): ByteArray?
+
     @Query("DELETE FROM blob_store WHERE blobId = :blobId")
     suspend fun deleteBlob(blobId: String): Int
 
     @Query("SELECT * FROM blob_store ORDER BY createdAtEpochMs ASC, blobId ASC")
     suspend fun getBlobsSnapshot(): List<BlobStoreEntity>
+
+    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType ORDER BY rowid ASC")
+    suspend fun getBlobsByOwnerType(schoolId: String, accountId: String, profileId: String, ownerEntityType: String): List<BlobStoreEntity>
+
+    @Query("SELECT * FROM blob_store WHERE scopeSchoolId = :schoolId AND scopeAccountId = :accountId AND scopeProfileId = :profileId AND ownerEntityType = :ownerEntityType AND ownerEntityId = :ownerEntityId ORDER BY rowid ASC")
+    suspend fun getBlobsForOwner(schoolId: String, accountId: String, profileId: String, ownerEntityType: String, ownerEntityId: String): List<BlobStoreEntity>
 
     @Query("DELETE FROM blob_store")
     suspend fun clearBlobStore(): Int
