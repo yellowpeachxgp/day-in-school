@@ -37,11 +37,12 @@ object AutomationAlarmScheduler {
         cancel(context, accountScope)
         if (next == null) return
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+        val pending = pendingIntent(context, accountScope, noCreate = false) ?: return
         runCatching {
             alarmManager.setAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 next.fireAt.toEpochMilli(),
-                pendingIntent(context, accountScope, noCreate = false)
+                pending
             )
         }
     }
