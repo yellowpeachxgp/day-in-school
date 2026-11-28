@@ -48,6 +48,12 @@ internal interface CloudIdentityRuntimePort {
 
     /** 测试传输钩子逐次现读（生产恒 null），语义与门面 @Volatile var 一致。 */
     fun cloudHttpTransportForTest(): CloudHttpTransportForTest?
+
+    /**
+     * 云身份登录、切号、同号重登或解绑提交前清理 community 群组快照缓存。
+     * 该钩子必须 fail-closed：清理抛错时身份变更不得继续生效。
+     */
+    suspend fun wipeCommunityCacheForCloudIdentityChange()
 }
 
 /**
@@ -441,6 +447,8 @@ class CloudIdentityRepository internal constructor(
     ): CloudIdentityBindingEntity {
         val now = System.currentTimeMillis()
         val previousBinding = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
+        // 在任何本地 token/binding 变化前完成缓存清理；失败则登录/切号/同号重登整体不生效。
+        runtimePort.wipeCommunityCacheForCloudIdentityChange()
         val isSwitchingIdentity =
             previousBinding == null || previousBinding.cloudUserId != profile.cloudUserId
         val tokenBeforeSwitch = if (previousBinding != null && previousBinding.cloudUserId != profile.cloudUserId) {
@@ -661,6 +669,8 @@ class CloudIdentityRepository internal constructor(
 
     suspend fun unlinkXpeachCloudAccountAndRevokeCloudPlans() {
         val now = System.currentTimeMillis()
+        // 在远端登出与本地解绑之前先清理 community 快照；失败时不得继续宣称解绑/擦除完成。
+        runtimePort.wipeCommunityCacheForCloudIdentityChange()
         val bindingBeforeUnlink = cloudAndParcelDao.getCloudIdentityBindingSnapshot()
         val prevCloudUserId = bindingBeforeUnlink?.cloudUserId
         val tokenBeforeUnlink = resolveValidCloudAccessToken(forceRefresh = false)

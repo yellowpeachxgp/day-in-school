@@ -60,7 +60,7 @@ class UtilityBalanceEventProjector(
             if (room.failed) continue
             val devices = runCatching { decodeOnlineDevicesJson(room.devicesJson) }.getOrDefault(emptyList())
             for (device in devices) {
-                val balanceCents = parseBalanceCents(device.balanceRaw) ?: continue
+                val balanceCents = parseUtilityBalanceCents(device.balanceRaw) ?: continue
                 val meterId = "online/" + device.category.name.lowercase() + "/" + room.roomId + "/" + device.name
                 if (existing[meterId] == balanceCents) continue
                 val updatedAt = Instant.ofEpochMilli(room.updatedAtEpochMs)
@@ -105,21 +105,22 @@ class UtilityBalanceEventProjector(
             .mapValues { (_, events) -> events.maxByOrNull { it.occurredAt }?.balanceCents ?: Long.MIN_VALUE }
     }
 
-    private fun parseBalanceCents(raw: String): Long? {
-        val match = NUMBER_REGEX.find(raw) ?: return null
-        return runCatching {
-            BigDecimal(match.groupValues[1])
-                .movePointRight(2)
-                .setScale(0, RoundingMode.HALF_UP)
-                .longValueExact()
-                .takeIf { it >= 0L }
-        }.getOrNull()
-    }
-
     private fun eventIdFor(meterId: String, balanceCents: Long, updatedAtEpochMs: Long): String =
         "utility-" + AutomationKeys.sha256Hex(meterId + "|" + balanceCents + "|" + updatedAtEpochMs).substring(0, 32)
 
-    private companion object {
-        val NUMBER_REGEX = Regex("(-?[0-9]+(?:[.][0-9]+)?)")
+    companion object {
+        internal val NUMBER_REGEX = Regex("(-?[0-9]+(?:[.][0-9]+)?)")
     }
+}
+
+/** 解析万校在线水电缓存中的原生表计单位并整数化为 ×100；读数读取与事件发布共用同一保守口径。 */
+internal fun parseUtilityBalanceCents(raw: String): Long? {
+    val match = UtilityBalanceEventProjector.NUMBER_REGEX.find(raw) ?: return null
+    return runCatching {
+        BigDecimal(match.groupValues[1])
+            .movePointRight(2)
+            .setScale(0, RoundingMode.HALF_UP)
+            .longValueExact()
+            .takeIf { it >= 0L }
+    }.getOrNull()
 }

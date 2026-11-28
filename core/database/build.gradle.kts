@@ -42,6 +42,7 @@ dependencies {
     api(project(":core:domain"))
     api(project(":core:academic"))
     api(project(":core:campusservices"))
+    implementation(project(":core:community"))
     implementation(project(":core:school-packages"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)

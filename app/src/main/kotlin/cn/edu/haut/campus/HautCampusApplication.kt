@@ -1,6 +1,7 @@
 package cn.edu.haut.campus
 
 import android.app.Application
+import cn.edu.haut.campus.core.ai.android.AiByokWipeRegistration
 import cn.edu.haut.campus.core.automation.HomeRefreshActionPort
 import cn.edu.haut.campus.core.automation.android.AutomationRuntime
 import cn.edu.haut.campus.core.automation.android.AutomationRuntimeCoordinator
@@ -47,6 +48,13 @@ class HautCampusApplication : Application() {
                     active.repository,
                     ExtensionPluginWipeRegistration.rootForProfile(filesDir, active.profileId)
                 )
+            }
+        )
+        sessions.registerLifecycleHook(
+            key = AiByokWipeRegistration.HOOK_KEY,
+            beforeSwitch = { },
+            afterSwitch = { active ->
+                AiByokWipeRegistration.register(this@HautCampusApplication, active.repository)
             }
         )
         sessions.registerLifecycleHook(
