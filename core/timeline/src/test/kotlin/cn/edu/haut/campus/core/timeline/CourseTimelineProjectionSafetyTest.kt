@@ -36,7 +36,7 @@ class CourseTimelineProjectionSafetyTest {
 
     @Test
     fun longAndControlCourseNameUsesSafeEnvelopeAndRoundTripsExactly() {
-        val rawName = "手工\u0001\n" + "长".repeat(5_000) + "\u0007结尾"
+        val rawName = "手工\u0001\n\u0085" + "长".repeat(5_000) + "\u0007\u007F结尾"
 
         val (event, decoded) = projectCourseName(rawName)
 
@@ -52,7 +52,7 @@ class CourseTimelineProjectionSafetyTest {
 
     @Test
     fun allControlCourseNameStillProducesNonBlankEnvelopeAndExactRestore() {
-        val rawName = "\u0001\u0007\n"
+        val rawName = "\u0001\u0007\n\u0085\u007F"
 
         val (event, decoded) = projectCourseName(rawName)
 

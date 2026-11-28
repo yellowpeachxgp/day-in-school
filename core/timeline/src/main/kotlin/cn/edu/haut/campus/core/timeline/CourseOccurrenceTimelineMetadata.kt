@@ -54,6 +54,20 @@ object CourseOccurrenceTimelineMetadata {
         return if (nonBlank.length <= 256) nonBlank else nonBlank.take(255) + "…"
     }
 
+    /** canonical JSON 只强制转义 C0；Timeline metadata 额外禁止 C1/DEL，这里补齐为 ASCII Unicode 转义。 */
+    private fun metadataJsonString(raw: String): String {
+        val canonical = Json.canonical(JsonValue.Str(raw))
+        return buildString(canonical.length) {
+            canonical.forEach { ch ->
+                if (ch.isISOControl()) {
+                    append("\\u" + ch.code.toString(16).padStart(4, '0'))
+                } else {
+                    append(ch)
+                }
+            }
+        }
+    }
+
     fun encode(occurrence: ClassOccurrence): Map<String, String> = buildMap {
         put(OCCURRENCE_ID, occurrence.occurrenceId)
         put(COURSE_ID, occurrence.courseId)
@@ -78,10 +92,10 @@ object CourseOccurrenceTimelineMetadata {
         )
         put(TIME_EVIDENCE, occurrence.timeEvidence.name)
 
-        // 只有信封标题无法无损表达时才写课程名原文。canonical JSON 会把控制字符
-        // 转成 ASCII 转义；按 sourceMetadata 单值上限分片，且绝不突破事件 64 条上限。
+        // 只有信封标题无法无损表达时才写课程名原文。metadataJsonString 会把全部
+        // ISO 控制字符转成 ASCII Unicode 转义；按 sourceMetadata 单值上限分片，且绝不突破事件 64 条上限。
         if (safeTimelineTitle(occurrence.courseName) != occurrence.courseName) {
-            val encodedCourseName = Json.canonical(JsonValue.Str(occurrence.courseName))
+            val encodedCourseName = metadataJsonString(occurrence.courseName)
             val encodedChunks = encodedCourseName.chunked(COURSE_NAME_CHUNK_SIZE)
             val baseEntryCount = this.size
             val maxChunks = (METADATA_ENTRY_LIMIT - baseEntryCount - 2).coerceAtLeast(0)

@@ -168,7 +168,7 @@ class TimelineScheduleAdapterEquivalenceTest {
 
     @Test
     fun longAndControlManualCourseNamesRoundTripExactly() {
-        val rawName = "手工\u0001\n" + "长".repeat(300) + "\u0007"
+        val rawName = "手工\u0001\n\u0085" + "长".repeat(300) + "\u0007\u007F"
         val weirdCourse = Course(
             id = "c-weird-manual",
             externalId = "manual-weird",
