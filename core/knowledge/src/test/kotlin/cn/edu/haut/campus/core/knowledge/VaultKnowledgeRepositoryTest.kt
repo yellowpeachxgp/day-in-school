@@ -36,6 +36,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -215,12 +216,95 @@ class VaultKnowledgeRepositoryTest {
         assertEquals(1, database.vaultDao().countEntityJournal())
     }
 
+    @Test
+    fun revertMaterialCreationRemovesLogicalDocumentAndSearchProjection() = runBlocking {
+        val material = repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.NOTE,
+                title = "撤销测试笔记",
+                note = null,
+                fileName = "undo.txt",
+                mimeType = "text/plain",
+                contentBytes = "撤销搜索投影关键词".toByteArray(Charsets.UTF_8)
+            )
+        )
+        assertEquals(1, repository.searchMaterials(scope, "撤销搜索").size)
+
+        val journal = createKnowledgeJournal()
+        val ref = cn.edu.haut.campus.core.model.EntityRef(
+            cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            material.id,
+            scope
+        )
+        val history = journal.history(ref).first()
+        assertEquals(1, history.size)
+        journal.revert(history[0].changeId, Actor.USER)
+
+        assertNull(repository.getMaterial(scope, material.id))
+        assertTrue(repository.searchMaterials(scope, "撤销搜索").isEmpty())
+    }
+
+    @Test
+    fun materialsAndSearchAreInvisibleAcrossProfileScopes() = runBlocking {
+        repository.archiveMaterial(
+            ArchiveMaterialRequest(
+                scope = scope,
+                course = course,
+                kind = CourseMaterialKind.NOTE,
+                title = "隔离测试笔记",
+                note = null,
+                fileName = "isolation.txt",
+                mimeType = "text/plain",
+                contentBytes = "隔离关键词".toByteArray(Charsets.UTF_8)
+            )
+        )
+        val otherScope = scope.copy(profileId = ProfileId("prof_other"))
+        val otherRepository = KnowledgeRuntimeFactory.create(database, otherScope, extractor, clock = { now })
+        assertTrue(otherRepository.listMaterials(otherScope).isEmpty())
+        assertTrue(otherRepository.searchMaterials(otherScope, "隔离关键词").isEmpty())
+    }
+
     private fun knowledgeJournalForTimeline(database: HautDatabase): cn.edu.haut.campus.core.vault.RoomVaultJournal {
         val searchIndex = cn.edu.haut.campus.core.vault.RoomSearchIndex(database)
         return cn.edu.haut.campus.core.vault.RoomVaultJournal(
             database = database,
             outbox = cn.edu.haut.campus.core.vault.RoomEventOutbox(database),
             snapshotStores = listOf(cn.edu.haut.campus.core.vault.PersonalEventSnapshotStore(database, searchIndex)),
+            searchIndex = searchIndex
+        )
+    }
+
+    private fun createKnowledgeJournal(): cn.edu.haut.campus.core.vault.RoomVaultJournal {
+        val blobStore = cn.edu.haut.campus.core.vault.VaultBlobStore(database, clock = { now })
+        val searchIndex = cn.edu.haut.campus.core.vault.RoomSearchIndex(database, clock = { now })
+        val materialDocuments = VersionedBlobDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = cn.edu.haut.campus.core.model.EntityType.COURSE_MATERIAL,
+            mimeType = VersionedBlobDocumentStore.MATERIAL_MIME,
+            clock = { now }
+        )
+        val reviewDocuments = VersionedBlobDocumentStore(
+            database = database,
+            blobStore = blobStore,
+            scope = scope,
+            ownerType = cn.edu.haut.campus.core.model.EntityType.REVIEW_ITEM,
+            mimeType = VersionedBlobDocumentStore.REVIEW_TASK_MIME,
+            clock = { now }
+        )
+        val projector = KnowledgeSearchProjector(scope, searchIndex, blobStore)
+        return cn.edu.haut.campus.core.vault.RoomVaultJournal(
+            database = database,
+            outbox = cn.edu.haut.campus.core.vault.RoomEventOutbox(database),
+            snapshotStores = listOf(
+                CourseMaterialSnapshotStore(materialDocuments, scope, projector, { now }),
+                ReviewTaskSnapshotStore(reviewDocuments, scope, { now }),
+                cn.edu.haut.campus.core.vault.PersonalEventSnapshotStore(database, searchIndex)
+            ),
+            clock = { now },
             searchIndex = searchIndex
         )
     }
