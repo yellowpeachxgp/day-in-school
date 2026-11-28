@@ -5,7 +5,6 @@ import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.AttemptType
-import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.ProfileId

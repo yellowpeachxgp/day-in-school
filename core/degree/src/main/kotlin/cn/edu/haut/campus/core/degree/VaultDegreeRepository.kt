@@ -5,7 +5,6 @@ import cn.edu.haut.campus.core.model.EntityRef
 import cn.edu.haut.campus.core.model.EntityType
 import cn.edu.haut.campus.core.model.GradeAttempt
 import cn.edu.haut.campus.core.model.SchoolAccountScope
-import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.plan.AuditContext
@@ -19,7 +18,6 @@ import cn.edu.haut.campus.core.plan.TrainingPlan
 import cn.edu.haut.campus.core.plan.TrainingPlanCodec
 import cn.edu.haut.campus.core.plan.TrainingPlanImporter
 import cn.edu.haut.campus.core.vault.EntityWriter
-import java.math.BigDecimal
 import java.time.Instant
 import java.time.LocalDate
 import java.util.UUID
@@ -28,8 +26,8 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * W3-01 毕业审计的 Vault 实现（AUTO-042 过渡）。
  *
- * 方案导入与人工认定都是版本化 canonical JSON 文档，物理保存在既有 blob_store，
- * 全部写操作经 EntityWriter 进 journal：人工认定的依据、操作者与时间可在变更历史展开，
+ * 方案导入与人工认定都是版本化 canonical JSON 文档，原件保存在既有 blob_store，
+ * journal 快照只保存引用/摘要；全部写操作经 EntityWriter 进 journal：人工认定的依据、操作者与时间可在变更历史展开，
  * 也可按 journal 撤销。激活指针是小型非实体状态，不进 journal（语义类似 UI 偏好），
  * 同样随 profile 擦除。
  */
