@@ -240,6 +240,41 @@ class TimelineReviewScheduler(
         )
     }
 
+    /**
+     * 记录一次复习完成并更新掌握度/记忆状态。
+     *
+     * 只允许完成当前 PLANNED 或已被判 MISSED 的块；重复完成不会重复累计次数。
+     * 完成后的下一次 schedule() 会从 lastReviewedAt 与新掌握度继续推进间隔阶梯。
+     */
+    suspend fun completeReviewBlock(
+        taskId: String,
+        blockId: String,
+        masteryPercent: Int,
+        actor: Actor = Actor.USER
+    ): ReviewTask {
+        require(masteryPercent in 0..100) { "掌握度必须在 0..100" }
+        val task = repository.listReviewTasks(scope).firstOrNull { it.id == taskId }
+            ?: throw IllegalArgumentException("复习任务不存在: " + taskId)
+        require(task.state == ReviewTaskState.TODO) { "只有 TODO 复习任务能完成复习块" }
+        val schedule = task.schedule ?: throw IllegalArgumentException("复习任务还没有排程: " + taskId)
+        val block = schedule.blocks.firstOrNull { it.id == blockId }
+            ?: throw IllegalArgumentException("复习块不存在: " + blockId)
+        require(block.state != ReviewBlockState.DONE) { "复习块已完成，不能重复累计: " + blockId }
+        val now = clock()
+        val blocks = schedule.blocks.map { current ->
+            if (current.id == blockId) current.copy(state = ReviewBlockState.DONE) else current
+        }
+        val updated = task.copy(
+            masteryPercent = masteryPercent,
+            successfulReviewCount = task.successfulReviewCount + 1,
+            lastReviewedAt = now,
+            schedule = schedule.copy(blocks = blocks),
+            revision = task.revision + 1L,
+            updatedAt = now
+        )
+        return repository.upsertReviewTask(updated, actor)
+    }
+
     /** 过期仍未完成的 PLANNED 块转为 MISSED；该转换本身也是 Vault 审计写入，绝不做内存态静默丢失。 */
     private suspend fun markExpiredBlocksMissed(task: ReviewTask, now: Instant, actor: Actor): Pair<ReviewTask, Int> {
         val schedule = task.schedule ?: return task to 0

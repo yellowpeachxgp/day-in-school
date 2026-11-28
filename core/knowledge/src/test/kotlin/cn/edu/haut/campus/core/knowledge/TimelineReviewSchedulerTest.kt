@@ -205,6 +205,38 @@ class TimelineReviewSchedulerTest {
         )
     }
 
+    @Test
+    fun completingBlockUpdatesMasteryAndNextRunContinuesWithLongerInterval() = runBlocking {
+        insertTask(id = "review-linear", masteryPercent = 20, estimatedMinutes = 120, dueAt = null)
+        val scheduler = schedulerWith(staticEvents = emptyList())
+        val first = scheduler.schedule(request())
+        assertEquals(4, first.placements.size)
+        val firstBlock = first.placements.minByOrNull { it.start }!!
+
+        val completed = scheduler.completeReviewBlock(
+            taskId = "review-linear",
+            blockId = firstBlock.blockId,
+            masteryPercent = 90,
+            actor = Actor.USER
+        )
+
+        assertEquals(90, completed.masteryPercent)
+        assertEquals(1, completed.successfulReviewCount)
+        assertEquals(now, completed.lastReviewedAt)
+        assertEquals(EventStatus.DONE.name, database.vaultDao().getPersonalEvent(firstBlock.timelineEventId.value)?.status)
+
+        val second = scheduler.schedule(request())
+
+        assertEquals(ReviewScheduleResultStatus.SCHEDULED, second.status)
+        val task = repository.listReviewTasks(scope).single { it.id == "review-linear" }
+        val blocks = task.schedule!!.blocks
+        assertTrue("完成块必须保留为历史", blocks.any { it.state == ReviewBlockState.DONE && it.id == firstBlock.blockId })
+        val planned = blocks.filter { it.state == ReviewBlockState.PLANNED }
+        assertEquals("掌握度提高后只需要继续一次长间隔复习", 1, planned.size)
+        assertEquals(now.plus(Duration.ofDays(7)), planned.single().targetStart)
+        assertTrue("完成后的重跑仍不得丢任务", task.state == ReviewTaskState.TODO)
+    }
+
     private suspend fun insertTask(id: String, masteryPercent: Int, estimatedMinutes: Int, dueAt: Instant?): ReviewTask {
         val taskCourse = when (id) {
             "review-high" -> course.copy(courseId = "advanced-algebra", courseName = "高等代数")
