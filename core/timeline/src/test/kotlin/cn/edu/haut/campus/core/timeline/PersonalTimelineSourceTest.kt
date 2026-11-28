@@ -77,6 +77,28 @@ class PersonalTimelineSourceTest {
     }
 
     @Test
+    fun 不确定个人日程显式传递时间语义且不是截止点() = runTest {
+        val record = record(
+            id = "uncertain-personal",
+            end = null,
+            status = EventStatus.TENTATIVE,
+            busy = BusyLevel.FREE,
+            timeSemantics = TimelineTimeSemantics.UNCERTAIN
+        )
+        val source = PersonalTimelineSource(PersonalEventTimelineInputProvider { _, _ -> flowOf(listOf(record)) })
+
+        val event = source.observe(
+            scope,
+            TimeWindow(Instant.parse("2026-09-14T00:00:00Z"), Instant.parse("2026-09-15T00:00:00Z"))
+        ).first().single()
+
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, event.timeSemantics)
+        assertEquals(false, event.isDeadline)
+        assertEquals(true, event.isTimeUncertain)
+        assertEquals(BusyLevel.FREE, event.busy)
+    }
+
+    @Test
     fun 个人日程记录scope与请求不一致时failclosed() {
         val foreignScope = scope.copy(profileId = ProfileId("other-profile"))
         val bad = record(id = "bad-scope", scope = foreignScope)
@@ -126,7 +148,7 @@ class PersonalTimelineSourceTest {
 
     @Test
     fun 取消的个人日程状态原样进入时间流() = runTest {
-        val record = record(id = "cancelled-personal").copy(status = EventStatus.CANCELLED_TODAY, end = null)
+        val record = record(id = "cancelled-personal", end = null).copy(status = EventStatus.CANCELLED_TODAY, busy = BusyLevel.FREE)
         val source = PersonalTimelineSource(PersonalEventTimelineInputProvider { _, _ -> flowOf(listOf(record)) })
 
         val event = source.observe(
@@ -135,6 +157,7 @@ class PersonalTimelineSourceTest {
         ).first().single()
 
         assertEquals(EventStatus.CANCELLED_TODAY, event.status)
+        assertEquals(BusyLevel.FREE, event.busy)
         assertNull(event.end)
     }
 
@@ -160,6 +183,9 @@ class PersonalTimelineSourceTest {
         kind: TimelineKind = TimelineKind.PERSONAL,
         start: Instant = Instant.parse("2026-09-14T09:00:00Z"),
         end: Instant? = Instant.parse("2026-09-14T10:00:00Z"),
+        status: EventStatus = EventStatus.SCHEDULED,
+        busy: BusyLevel = BusyLevel.BUSY,
+        timeSemantics: TimelineTimeSemantics? = null,
         sourceEntity: EntityRef? = null
     ): PersonalEventRecord = PersonalEventRecord(
         id = TimelineEventId("personal:" + id),
@@ -168,10 +194,11 @@ class PersonalTimelineSourceTest {
         title = "个人日程",
         start = start,
         end = end,
+        timeSemantics = timeSemantics ?: if (end == null) TimelineTimeSemantics.DEADLINE else TimelineTimeSemantics.TIMED,
         zone = zone,
         place = null,
-        status = EventStatus.SCHEDULED,
-        busy = BusyLevel.BUSY,
+        status = status,
+        busy = busy,
         revision = 9,
         provenance = fixture.provenance(),
         sourceEntity = sourceEntity
