@@ -10,16 +10,18 @@ enum class CommunityOperation(
     val successEnvelope: String,
     val readOnly: Boolean = false,
     val idempotencyRequired: Boolean = false,
+    /** MASTER_PLAN W4 只允许群组快照离线缓存；其他协作/众包数据离线时必须显式失败而非长期保留。 */
+    val offlineCacheAllowed: Boolean = false,
 ) {
-    LIST_GROUPS("listGroups", "GET", "/api/v1/groups", CommunityFeature.GROUPS, successEnvelope = "GroupListEnvelope", readOnly = true),
+    LIST_GROUPS("listGroups", "GET", "/api/v1/groups", CommunityFeature.GROUPS, successEnvelope = "GroupListEnvelope", readOnly = true, offlineCacheAllowed = true),
     CREATE_GROUP("createGroup", "POST", "/api/v1/groups", CommunityFeature.GROUPS, requestSchema = "CreateGroupRequest", successEnvelope = "GroupEnvelope", idempotencyRequired = true),
-    GET_GROUP("getGroup", "GET", "/api/v1/groups/{groupId}", CommunityFeature.GROUPS, successEnvelope = "GroupEnvelope", readOnly = true),
+    GET_GROUP("getGroup", "GET", "/api/v1/groups/{groupId}", CommunityFeature.GROUPS, successEnvelope = "GroupEnvelope", readOnly = true, offlineCacheAllowed = true),
     UPDATE_GROUP("updateGroup", "PATCH", "/api/v1/groups/{groupId}", CommunityFeature.GROUPS, requestSchema = "UpdateGroupRequest", successEnvelope = "GroupEnvelope", idempotencyRequired = true),
     DELETE_GROUP("deleteGroup", "DELETE", "/api/v1/groups/{groupId}", CommunityFeature.GROUPS, successEnvelope = "ActionAckEnvelope", idempotencyRequired = true),
     CREATE_GROUP_INVITE("createGroupInvite", "POST", "/api/v1/groups/{groupId}/invites", CommunityFeature.GROUPS, requestSchema = "CreateGroupInviteRequest", successEnvelope = "GroupInviteEnvelope", idempotencyRequired = true),
     ACCEPT_GROUP_INVITE("acceptGroupInvite", "POST", "/api/v1/group-invites/{code}/accept", CommunityFeature.GROUPS, successEnvelope = "GroupMemberEnvelope", idempotencyRequired = true),
     REVOKE_GROUP_INVITE("revokeGroupInvite", "DELETE", "/api/v1/groups/{groupId}/invites/{inviteId}", CommunityFeature.GROUPS, successEnvelope = "ActionAckEnvelope", idempotencyRequired = true),
-    LIST_GROUP_MEMBERS("listGroupMembers", "GET", "/api/v1/groups/{groupId}/members", CommunityFeature.GROUPS, successEnvelope = "GroupMemberListEnvelope", readOnly = true),
+    LIST_GROUP_MEMBERS("listGroupMembers", "GET", "/api/v1/groups/{groupId}/members", CommunityFeature.GROUPS, successEnvelope = "GroupMemberListEnvelope", readOnly = true, offlineCacheAllowed = true),
     UPDATE_GROUP_MEMBER("updateGroupMember", "PATCH", "/api/v1/groups/{groupId}/members/{memberId}", CommunityFeature.GROUPS, requestSchema = "UpdateGroupMemberRequest", successEnvelope = "GroupMemberEnvelope", idempotencyRequired = true),
     REMOVE_GROUP_MEMBER("removeGroupMember", "DELETE", "/api/v1/groups/{groupId}/members/{memberId}", CommunityFeature.GROUPS, successEnvelope = "ActionAckEnvelope", idempotencyRequired = true),
 
@@ -79,6 +81,10 @@ enum class CommunityOperation(
         require(!readOnly || method == "GET" || operationId == "queryGroupAvailability") {
             "除忙闲交集查询外，只有 GET 可标记为只读"
         }
+        require(!offlineCacheAllowed || readOnly) { "离线缓存只允许用于只读 operation" }
+        require(
+            !offlineCacheAllowed || operationId in setOf("listGroups", "getGroup", "listGroupMembers"),
+        ) { "W4 隐私边界只允许群组/成员快照离线缓存" }
     }
 
     companion object {

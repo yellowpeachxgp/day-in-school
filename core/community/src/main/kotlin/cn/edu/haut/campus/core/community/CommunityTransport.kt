@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.community
 
+import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
@@ -51,10 +52,21 @@ class OkHttpCommunityTransport(
             .header("Accept", "application/json")
         request.headers.forEach { (name, value) -> builder.header(name, value) }
         client.newCall(builder.build()).execute().use { response ->
-            val bodyText = response.body?.string().orEmpty()
-            if (bodyText.toByteArray(Charsets.UTF_8).size > maxResponseBytes) {
-                throw IOException("community response exceeds " + maxResponseBytes + " bytes")
-            }
+            val bodyText = response.body?.let { body ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8 * 1024)
+                body.byteStream().use { input ->
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        if (output.size() + read > maxResponseBytes) {
+                            throw IOException("community response exceeds " + maxResponseBytes + " bytes")
+                        }
+                        output.write(buffer, 0, read)
+                    }
+                }
+                output.toString(Charsets.UTF_8.name())
+            }.orEmpty()
             CommunityHttpResponse(statusCode = response.code, body = bodyText)
         }
     }

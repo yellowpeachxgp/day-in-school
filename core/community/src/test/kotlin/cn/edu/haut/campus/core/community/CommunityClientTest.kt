@@ -79,8 +79,8 @@ class CommunityClientTest {
             jsonResponse(successBody("{}")),
         )
         val subject = client(transport)
-        val groupId = "group/with unicode 组"
-        val memberId = "member/成员 1"
+        val groupId = "11111111-1111-4111-8111-111111111111"
+        val memberId = "22222222-2222-4222-8222-222222222222"
 
         val update = subject.updateGroupMember(
             groupId = groupId,
@@ -96,11 +96,11 @@ class CommunityClientTest {
 
         assertTrue(update is CommunityResult.Success)
         assertTrue(remove is CommunityResult.Success)
-        val encoded = "/api/v1/groups/group%2Fwith%20unicode%20%E7%BB%84/members/member%2F%E6%88%90%E5%91%98%20"
-        assertTrue(transport.requests[0].url.endsWith(encoded + "1"))
+        val expectedPath = "/api/v1/groups/" + groupId + "/members/" + memberId
+        assertTrue(transport.requests[0].url.endsWith(expectedPath))
         assertEquals("PATCH", transport.requests[0].method)
         assertEquals("idem-member-1", transport.requests[0].headers["Idempotency-Key"])
-        assertTrue(transport.requests[1].url.endsWith(encoded + "1"))
+        assertTrue(transport.requests[1].url.endsWith(expectedPath))
         assertEquals("DELETE", transport.requests[1].method)
         assertEquals("idem-remove-1", transport.requests[1].headers["Idempotency-Key"])
     }

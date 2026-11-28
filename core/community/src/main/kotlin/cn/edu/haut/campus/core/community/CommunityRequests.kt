@@ -134,6 +134,14 @@ data class ReplaceGroupAvailabilityRequest(
     init {
         require(blocks.size <= 200) { "blocks 数量不能超过 200" }
         require(ttlSeconds in 1800..7_776_000) { "ttl_seconds 必须在 1800..7776000" }
+        val ordered = blocks.sortedWith(compareBy({ epochMillisIsoDateTime(it.startAt) }, { epochMillisIsoDateTime(it.endAt) }))
+        for (index in 1 until ordered.size) {
+            val previous = ordered[index - 1]
+            val current = ordered[index]
+            require(epochMillisIsoDateTime(current.startAt) >= epochMillisIsoDateTime(previous.endAt)) {
+                "blocks 必须互不重叠且不得包含重复窗口"
+            }
+        }
     }
 
     override fun toJson(): JsonValue.Obj = jsonObject(
@@ -153,14 +161,14 @@ data class GroupAvailabilityQueryRequest(
     val granularityMinutes: Int = 30,
 ) : CommunityRequestBody {
     init {
-        requireAlignedInstantRange(windowStartAt, windowEndAt, "window_start_at", "window_end_at")
+        require(granularityMinutes >= 30 && granularityMinutes % 30 == 0) { "granularity_minutes 必须是 30 的正整数倍" }
+        requireAlignedInstantRange(windowStartAt, windowEndAt, "window_start_at", "window_end_at", granularityMinutes)
         require(durationMinutes >= 30 && durationMinutes % 30 == 0) { "duration_minutes 必须是 30 的正整数倍" }
         require(minAttendees >= 1) { "min_attendees 至少为 1" }
-        require(granularityMinutes >= 30 && granularityMinutes % 30 == 0) { "granularity_minutes 必须是 30 的正整数倍" }
         require(memberIds.size <= 100 && memberIds.distinct().size == memberIds.size) {
             "member_ids 必须唯一且不超过 100 个"
         }
-        memberIds.forEach { requireText(it, "member_ids[]") }
+        memberIds.forEach { requireUuid(it, "member_ids[]") }
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -184,6 +192,10 @@ data class CreateGroupPollRequest(
         requireText(title, "title", 120)
         require(options.size in 2..10 && options.distinct().size == options.size) { "options 必须有 2..10 个互不相同的候选时段" }
         requireIsoDateTime(votingDeadlineAt, "voting_deadline_at")
+        val earliestStart = options.minOf { epochMillisIsoDateTime(it.startAt) }
+        require(epochMillisIsoDateTime(votingDeadlineAt) <= earliestStart) {
+            "voting_deadline_at 不得晚于最早候选开始时间"
+        }
     }
 
     override fun toJson(): JsonValue.Obj = jsonObject(
@@ -210,7 +222,7 @@ data class LedgerRatioWeightInput(
     val weight: Long,
 ) {
     init {
-        requireText(memberId, "member_id")
+        requireUuid(memberId, "member_id")
         require(weight in 0..1_000_000L) { "weight 必须在 0..1000000" }
     }
 
@@ -227,7 +239,7 @@ data class LedgerStayDaysInput(
     val days: Long,
 ) {
     init {
-        requireText(memberId, "member_id")
+        requireUuid(memberId, "member_id")
         require(days in 0..366L) { "days 必须在 0..366" }
     }
 
@@ -264,9 +276,13 @@ data class LedgerSplitRuleInput(
         require(participantMemberIds.size <= 100 && participantMemberIds.distinct().size == participantMemberIds.size) {
             "participant_member_ids 必须唯一且不超过 100 个"
         }
-        participantMemberIds.forEach { requireText(it, "participant_member_ids[]") }
+        participantMemberIds.forEach { requireUuid(it, "participant_member_ids[]") }
         require(ratioWeights.size <= 100) { "ratio_weights 不能超过 100 个" }
+        require(ratioWeights.distinctBy { it.memberId }.size == ratioWeights.size) { "ratio_weights 不得重复 member_id" }
+        if (type == "RATIOS") require(ratioWeights.any { it.weight > 0L }) { "ratio_weights 至少一个正权重" }
         require(stayDays.size <= 100) { "stay_days 不能超过 100 个" }
+        require(stayDays.distinctBy { it.memberId }.size == stayDays.size) { "stay_days 不得重复 member_id" }
+        if (type == "STAY_DAYS") require(stayDays.any { it.days > 0L }) { "stay_days 至少一个正天数" }
     }
 
     fun toJson(): JsonValue.Obj {
@@ -293,7 +309,7 @@ data class CreateLedgerEntryRequest(
         requireText(title, "title", 120)
         requireOptionalText(note, "note", 500)
         require(amountFen != 0L) { "amount_fen 不能为 0" }
-        requireText(paidByMemberId, "paid_by_member_id")
+        requireUuid(paidByMemberId, "paid_by_member_id")
         requireIsoDateTime(occurredAt, "occurred_at")
     }
 
@@ -322,7 +338,7 @@ data class AmendLedgerEntryRequest(
         requireText(reason, "reason", 240)
         requireOptionalText(title, "title", 120)
         require(amountFen != 0L) { "amount_fen 不能为 0" }
-        requireText(paidByMemberId, "paid_by_member_id")
+        requireUuid(paidByMemberId, "paid_by_member_id")
         requireIsoDateTime(occurredAt, "occurred_at")
     }
 
@@ -346,8 +362,8 @@ data class CreateSettlementRequest(
     val note: String? = null,
 ) : CommunityRequestBody {
     init {
-        requireText(debtorMemberId, "debtor_member_id")
-        requireText(creditorMemberId, "creditor_member_id")
+        requireUuid(debtorMemberId, "debtor_member_id")
+        requireUuid(creditorMemberId, "creditor_member_id")
         require(debtorMemberId != creditorMemberId) { "结算双方不能是同一成员" }
         require(amountFen >= 1L) { "amount_fen 至少为 1" }
         require(basisBalanceRevision >= 0L) { "basis_balance_revision 不能为负" }
@@ -399,14 +415,17 @@ data class CreateDutyRotaRequest(
         require(rotationMemberIds.size in 2..100 && rotationMemberIds.distinct().size == rotationMemberIds.size) {
             "rotation_member_ids 必须唯一且包含 2..100 个成员"
         }
-        rotationMemberIds.forEach { requireText(it, "rotation_member_ids[]") }
+        rotationMemberIds.forEach { requireUuid(it, "rotation_member_ids[]") }
         requireWireEnum(frequency, setOf("DAILY", "WEEKLY"), "frequency")
         require(daysOfWeek.size <= 7 && daysOfWeek.distinct().size == daysOfWeek.size && daysOfWeek.all { it in 1..7 }) {
             "days_of_week 必须是唯一的 ISO 1..7 星期值"
         }
         if (frequency == "WEEKLY") require(daysOfWeek.isNotEmpty()) { "WEEKLY 值日必须提供 days_of_week" }
         requireIsoDate(startDate, "start_date")
-        endDate?.let { requireIsoDate(it, "end_date") }
+        endDate?.let {
+            requireIsoDate(it, "end_date")
+            require(java.time.LocalDate.parse(it) >= java.time.LocalDate.parse(startDate)) { "end_date 不得早于 start_date" }
+        }
         runCatching { java.time.ZoneId.of(timeZone) }.getOrElse {
             throw IllegalArgumentException("time_zone 必须是有效 IANA 时区", it)
         }
@@ -449,7 +468,7 @@ data class UpdateDutyRotaRequest(
             require(it.size in 2..100 && it.distinct().size == it.size) {
                 "rotation_member_ids 必须唯一且包含 2..100 个成员"
             }
-            it.forEach { member -> requireText(member, "rotation_member_ids[]") }
+            it.forEach { member -> requireUuid(member, "rotation_member_ids[]") }
         }
         frequency?.let { requireWireEnum(it, setOf("DAILY", "WEEKLY"), "frequency") }
         daysOfWeek?.let {
@@ -513,9 +532,9 @@ data class RequestDutySwapRequest(
     val reason: String? = null,
 ) : CommunityRequestBody {
     init {
-        requireText(dutyTaskId, "duty_task_id")
+        requireUuid(dutyTaskId, "duty_task_id")
         requireWireEnum(type, setOf("SWAP", "COVER"), "type")
-        requireText(targetMemberId, "target_member_id")
+        requireUuid(targetMemberId, "target_member_id")
         requireOptionalText(reason, "reason", 240)
     }
 
@@ -603,7 +622,7 @@ data class TransitionRepairStatusRequest(
     init {
         requireWireEnum(toStatus, setOf("OPEN", "TRIAGED", "IN_PROGRESS", "RESOLVED", "REJECTED", "CLOSED"), "to_status")
         requireOptionalText(note, "note", 500)
-        requireOptionalText(assignedMemberId, "assigned_member_id")
+        assignedMemberId?.let { requireUuid(it, "assigned_member_id") }
     }
 
     override fun toJson(): JsonValue.Obj {
@@ -653,7 +672,7 @@ data class CreatePlaceStatusReportRequest(
         requireWireEnum(reportKind, setOf("OBSERVATION", "CORRECTION"), "report_kind")
         if (reportKind == "CORRECTION") {
             require(!correctsReportId.isNullOrBlank()) { "CORRECTION 必须提供 corrects_report_id" }
-            correctsReportId?.let { requireText(it, "corrects_report_id") }
+            correctsReportId?.let { requireUuid(it, "corrects_report_id") }
         } else {
             require(correctsReportId == null) { "OBSERVATION 不允许 corrects_report_id" }
         }
@@ -704,7 +723,7 @@ data class PlaceStatusSubscriptionTargetInput(
         requireWireEnum(type, setOf("PLACE", "AREA"), "target.type")
         if (type == "PLACE") {
             require(!placeRef.isNullOrBlank()) { "PLACE target 必须提供 place_ref" }
-            placeRef?.let { requireText(it, "target.place_ref") }
+            placeRef?.let { requirePlaceRef(it, "target.place_ref") }
             require(bbox == null) { "PLACE target 不允许 bbox" }
         } else {
             requireNotNull(bbox) { "AREA target 必须提供 bbox" }

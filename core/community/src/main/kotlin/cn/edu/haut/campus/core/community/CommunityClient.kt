@@ -47,7 +47,7 @@ class CommunityClient(
             operationId = operation.operationId,
             resolvedPath = resolvedPath,
             queryParams = queryParams,
-            body = if (operation.readOnly) body else null,
+            body = if (operation.readOnly && operation.offlineCacheAllowed) body else null,
         )
         val url = normalizedBaseUrl + resolvedPath + encodeQuery(queryParams)
         val headers = linkedMapOf("Authorization" to "Bearer " + accessToken)
@@ -66,7 +66,7 @@ class CommunityClient(
         } catch (error: IOException) {
             return cachedOrFailure(
                 cacheKey = cacheKey,
-                cacheable = operation.readOnly,
+                cacheable = operation.readOnly && operation.offlineCacheAllowed,
                 fallbackReason = CommunityCacheFallbackReason.NETWORK_UNAVAILABLE,
                 error = CommunityError(
                     kind = CommunityErrorKind.NETWORK,
@@ -88,7 +88,7 @@ class CommunityClient(
                         retryable = false,
                     ),
                 )
-            if (operation.readOnly) {
+            if (operation.readOnly && operation.offlineCacheAllowed) {
                 val store = cacheStore
                 if (store != null) {
                     runCatching { store.write(cacheKey, envelope, clock.millis()) }
@@ -104,12 +104,13 @@ class CommunityClient(
             )
         }
 
+        if (response.statusCode == 401) return CommunityResult.AuthenticationRequired
         val error = parseErrorBody(response.statusCode, response.body)
         val serverUnavailable = response.statusCode == 408 || response.statusCode == 429 || response.statusCode >= 500
         if (serverUnavailable) {
             return cachedOrFailure(
                 cacheKey = cacheKey,
-                cacheable = operation.readOnly,
+                cacheable = operation.readOnly && operation.offlineCacheAllowed,
                 fallbackReason = CommunityCacheFallbackReason.SERVER_UNAVAILABLE,
                 error = error,
             )

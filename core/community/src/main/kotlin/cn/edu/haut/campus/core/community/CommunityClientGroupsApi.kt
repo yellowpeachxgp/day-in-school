@@ -8,10 +8,10 @@ suspend fun CommunityClient.listGroups(
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.LIST_GROUPS,
     queryParams = communityQueryParams(
-        "school_id" to schoolId,
-        "type" to type,
+        "school_id" to requireText(schoolId, "school_id"),
+        "type" to type?.let { requireWireEnum(it, setOf("study", "dorm", "club", "project"), "type") },
         "cursor" to cursor,
-        "limit" to limit,
+        "limit" to requireLimit(limit),
     ),
 )
 
@@ -26,7 +26,7 @@ suspend fun CommunityClient.createGroup(
 
 suspend fun CommunityClient.getGroup(groupId: String): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.GET_GROUP,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
 )
 
 suspend fun CommunityClient.updateGroup(
@@ -35,7 +35,7 @@ suspend fun CommunityClient.updateGroup(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.UPDATE_GROUP,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -45,7 +45,7 @@ suspend fun CommunityClient.deleteGroup(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.DELETE_GROUP,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     idempotencyKey = idempotencyKey,
 )
 
@@ -55,7 +55,7 @@ suspend fun CommunityClient.createGroupInvite(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.CREATE_GROUP_INVITE,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -65,7 +65,7 @@ suspend fun CommunityClient.acceptGroupInvite(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.ACCEPT_GROUP_INVITE,
-    pathParams = mapOf("code" to code),
+    pathParams = mapOf("code" to requireGroupInviteCode(code)),
     idempotencyKey = idempotencyKey,
 )
 
@@ -75,7 +75,7 @@ suspend fun CommunityClient.revokeGroupInvite(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.REVOKE_GROUP_INVITE,
-    pathParams = mapOf("groupId" to groupId, "inviteId" to inviteId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId"), "inviteId" to requireUuid(inviteId, "inviteId")),
     idempotencyKey = idempotencyKey,
 )
 
@@ -85,8 +85,8 @@ suspend fun CommunityClient.listGroupMembers(
     limit: Int? = null,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.LIST_GROUP_MEMBERS,
-    pathParams = mapOf("groupId" to groupId),
-    queryParams = communityQueryParams("cursor" to cursor, "limit" to limit),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
+    queryParams = communityQueryParams("cursor" to cursor, "limit" to requireLimit(limit)),
 )
 
 suspend fun CommunityClient.updateGroupMember(
@@ -96,7 +96,7 @@ suspend fun CommunityClient.updateGroupMember(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.UPDATE_GROUP_MEMBER,
-    pathParams = mapOf("groupId" to groupId, "memberId" to memberId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId"), "memberId" to requireUuid(memberId, "memberId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -107,7 +107,7 @@ suspend fun CommunityClient.removeGroupMember(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.REMOVE_GROUP_MEMBER,
-    pathParams = mapOf("groupId" to groupId, "memberId" to memberId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId"), "memberId" to requireUuid(memberId, "memberId")),
     idempotencyKey = idempotencyKey,
 )
 
@@ -117,7 +117,7 @@ suspend fun CommunityClient.replaceMyGroupAvailability(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.REPLACE_MY_GROUP_AVAILABILITY,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -127,7 +127,7 @@ suspend fun CommunityClient.deleteMyGroupAvailability(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.DELETE_MY_GROUP_AVAILABILITY,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     idempotencyKey = idempotencyKey,
 )
 
@@ -137,7 +137,7 @@ suspend fun CommunityClient.queryGroupAvailability(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.QUERY_GROUP_AVAILABILITY,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -148,14 +148,14 @@ suspend fun CommunityClient.createGroupPoll(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.CREATE_GROUP_POLL,
-    pathParams = mapOf("groupId" to groupId),
+    pathParams = mapOf("groupId" to requireUuid(groupId, "groupId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
 
 suspend fun CommunityClient.getGroupPoll(pollId: String): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.GET_GROUP_POLL,
-    pathParams = mapOf("pollId" to pollId),
+    pathParams = mapOf("pollId" to requireUuid(pollId, "pollId")),
 )
 
 suspend fun CommunityClient.upsertGroupPollVote(
@@ -164,7 +164,7 @@ suspend fun CommunityClient.upsertGroupPollVote(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.UPSERT_GROUP_POLL_VOTE,
-    pathParams = mapOf("pollId" to pollId),
+    pathParams = mapOf("pollId" to requireUuid(pollId, "pollId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )
@@ -175,7 +175,7 @@ suspend fun CommunityClient.confirmGroupPoll(
     idempotencyKey: String,
 ): CommunityResult<CommunityEnvelope> = execute(
     CommunityOperation.CONFIRM_GROUP_POLL,
-    pathParams = mapOf("pollId" to pollId),
+    pathParams = mapOf("pollId" to requireUuid(pollId, "pollId")),
     body = request.toJson(),
     idempotencyKey = idempotencyKey,
 )

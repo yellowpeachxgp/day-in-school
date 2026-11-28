@@ -47,6 +47,14 @@ class CommunityContractParityTest {
     }
 
     @Test
+    fun offlineCacheWhitelistIsExactlyGroupAndMemberSnapshots() {
+        assertEquals(
+            setOf("listGroups", "getGroup", "listGroupMembers"),
+            CommunityOperation.all.filter { it.offlineCacheAllowed }.map { it.operationId }.toSet(),
+        )
+    }
+
+    @Test
     fun everyWriteOperationRequiresIdempotencyAndEveryGetIsReadOnly() {
         for (operation in CommunityOperation.all) {
             if (operation.method == "GET") {
