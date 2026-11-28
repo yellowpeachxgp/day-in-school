@@ -368,11 +368,11 @@ class VaultKnowledgeRepositoryEdgeTest {
             ArchiveMaterialRequest(
                 scope = scope,
                 course = course,
-                kind = CourseMaterialKind.SLIDES,
+                kind = CourseMaterialKind.NOTE,
                 title = "恶意文件名课件",
                 note = null,
                 fileName = "../../evil\\payload\"'.txt",
-                mimeType = "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                mimeType = "text/plain",
                 contentBytes = bytes
             )
         )
@@ -381,7 +381,8 @@ class VaultKnowledgeRepositoryEdgeTest {
         val entries = zipEntries(output.toByteArray())
 
         assertEquals(2, summary.fileCount)
-        assertEquals(2, entries.size)
+        assertEquals("zip 条目数必须等于 manifest + 原文 + 抽取 payload", summary.fileCount + 1, entries.size)
+        assertTrue(entries.contains("extractions/" + material.id + ".json"))
         val materialEntryName = entries.keys.single { it.startsWith("materials/") }
         val exportFileName = materialEntryName.removePrefix("materials/" + material.id + "/")
         assertTrue(exportFileName.none { it == '/' || it == '\\' })
