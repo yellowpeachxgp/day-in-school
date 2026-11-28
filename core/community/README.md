@@ -52,3 +52,10 @@ ssh "$CIS_DEVBOX" "$CIS_CAMPUS_ROOT/bin/cis-gate" day-in-school feat/cis-w4-05-c
 ```
 
 论坛/私信不属于本模块实现范围；W4-06 只提供 reserved/disabled Port，且默认无 UI 入口。
+
+## W4-06 论坛/私信接口预留（D2）
+
+- `CommunityForumPort` 只定义保留接口形状；占位类型 `Board/PostPage/PostDraft/PostRef/ReportReason` 不发明 CT-05 故意留空的成功 schema。
+- `DisabledForumPort` 是当前唯一实现：`availability` 恒为 `Disabled(NOT_ENABLED)`，所有方法直接返回 `CommunityResult.NotEnabled`；不触网、不落盘、不校验输入、不产生事件。
+- 开关键固定登记为 `community.forum`，默认值为 `false`；本卡不提供任何设置项、导航或 UI 入口。
+- 插件槽 `community.boards` 在运行时 host matrix 的 `reserved_ui_slots` 中登记为保留；它不在 `supported_ui_slots` 中，插件声明该槽位仍按未知槽位 fail-closed。

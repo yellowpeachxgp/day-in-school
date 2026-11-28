@@ -17,6 +17,9 @@
         "parcel.providers",
         "settings.entries"
       ],
+      "reserved_ui_slots": [
+        "community.boards"
+      ],
       "signature_algorithm": "Ed25519",
       "dynamic_code_loading_allowed": false
     }
