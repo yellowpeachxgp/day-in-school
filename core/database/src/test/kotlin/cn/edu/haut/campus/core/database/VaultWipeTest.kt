@@ -39,6 +39,7 @@ class VaultWipeTest {
                 note = null,
                 startAtEpochMs = 1L,
                 endAtEpochMs = null,
+                timeSemantics = "DEADLINE",
                 zoneId = "Asia/Shanghai",
                 placeText = null,
                 placeRefId = null,

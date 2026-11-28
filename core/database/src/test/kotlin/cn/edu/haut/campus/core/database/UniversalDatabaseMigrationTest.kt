@@ -693,6 +693,12 @@ class UniversalDatabaseMigrationTest {
                     assertTrue(cursor.moveToFirst())
                     assertEquals(0, cursor.getInt(0))
                 }
+                sqlite.query("PRAGMA table_info(personal_events)").use { cursor ->
+                    val columns = generateSequence {
+                        if (cursor.moveToNext()) cursor.getString(1) else null
+                    }.toList()
+                    assertTrue(columns.contains("timeSemantics"))
+                }
             } finally {
                 migrated.close()
             }

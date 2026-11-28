@@ -20,6 +20,7 @@ import cn.edu.haut.campus.core.timeline.PersonalEventTimelineInputProvider
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineEventId
 import cn.edu.haut.campus.core.timeline.TimelineKind
+import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import java.time.Instant
 import java.time.ZoneId
 import java.util.UUID
@@ -66,6 +67,7 @@ class RoomPersonalEventStore(
                 note = event.note,
                 startAtEpochMs = event.start.toEpochMilli(),
                 endAtEpochMs = event.end?.toEpochMilli(),
+                timeSemantics = event.timeSemantics.name,
                 zoneId = event.zone.id,
                 placeText = event.placeText,
                 placeRefId = event.place?.id,
@@ -125,6 +127,7 @@ class RoomPersonalEventStore(
             note == other.note &&
             startAtEpochMs == other.startAtEpochMs &&
             endAtEpochMs == other.endAtEpochMs &&
+            timeSemantics == other.timeSemantics &&
             zoneId == other.zoneId &&
             placeText == other.placeText &&
             placeRefId == other.placeRefId &&
@@ -165,6 +168,7 @@ internal fun PersonalEventEntity.toPersonalEventRecord(): PersonalEventRecord {
         title = title,
         start = Instant.ofEpochMilli(startAtEpochMs),
         end = endAtEpochMs?.let(Instant::ofEpochMilli),
+        timeSemantics = TimelineTimeSemantics.valueOf(timeSemantics),
         zone = ZoneId.of(zoneId),
         place = place,
         status = EventStatus.valueOf(status),

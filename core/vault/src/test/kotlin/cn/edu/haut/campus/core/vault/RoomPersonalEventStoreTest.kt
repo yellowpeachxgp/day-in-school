@@ -18,6 +18,7 @@ import cn.edu.haut.campus.core.timeline.PersonalEventDraft
 import cn.edu.haut.campus.core.timeline.PersonalTimelineSource
 import cn.edu.haut.campus.core.timeline.TimeWindow
 import cn.edu.haut.campus.core.timeline.TimelineKind
+import cn.edu.haut.campus.core.timeline.TimelineTimeSemantics
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.flow.first
@@ -96,6 +97,8 @@ class RoomPersonalEventStoreTest {
         assertEquals(1, records.size)
         assertEquals(TimelineKind.REVIEW_BLOCK, records[0].kind)
         assertEquals(BusyLevel.BUSY, records[0].busy)
+        assertEquals(TimelineTimeSemantics.TIMED, records[0].timeSemantics)
+        assertEquals("TIMED", row?.timeSemantics)
 
         val timeline = PersonalTimelineSource(store).observe(scope, window).first()
         assertEquals(1, timeline.size)
@@ -108,6 +111,29 @@ class RoomPersonalEventStoreTest {
         store.upsert(draft.copy(id = id), Actor.USER)
         assertEquals(1, database.vaultDao().countEntityJournal())
         assertEquals(1L, database.vaultDao().getPersonalEvent(id.value)?.revision)
+    }
+
+    @Test
+    fun uncertainPersonalEventRoundTripsWithoutFabricatingBusyWindow() = runBlocking {
+        val id = store.upsert(
+            draft(
+                title = "时间待定的复习",
+                end = null,
+                busy = BusyLevel.FREE,
+                timeSemantics = TimelineTimeSemantics.UNCERTAIN
+            ),
+            Actor.USER
+        )
+
+        assertEquals("UNCERTAIN", database.vaultDao().getPersonalEvent(id.value)?.timeSemantics)
+        val window = TimeWindow(Instant.parse("2026-01-10T00:00:00Z"), Instant.parse("2026-01-11T00:00:00Z"))
+        val record = store.observe(scope, window).first().single()
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, record.timeSemantics)
+        val event = PersonalTimelineSource(store).observe(scope, window).first().single()
+        assertTrue(event.isTimeUncertain)
+        assertEquals(BusyLevel.FREE, event.busy)
+        assertNull(event.end)
+        assertEquals(id.value, event.provenance.sourceRecordId)
     }
 
     @Test
@@ -157,7 +183,14 @@ class RoomPersonalEventStoreTest {
 
     private fun draft(
         id: cn.edu.haut.campus.core.timeline.TimelineEventId? = null,
-        title: String
+        title: String,
+        end: Instant? = Instant.parse("2026-01-10T02:00:00Z"),
+        busy: BusyLevel = BusyLevel.BUSY,
+        timeSemantics: TimelineTimeSemantics = if (end == null) {
+            TimelineTimeSemantics.DEADLINE
+        } else {
+            TimelineTimeSemantics.TIMED
+        }
     ) = PersonalEventDraft(
         id = id,
         scope = scope,
@@ -165,11 +198,12 @@ class RoomPersonalEventStoreTest {
         title = title,
         note = "第 3 章习题",
         start = Instant.parse("2026-01-10T01:00:00Z"),
-        end = Instant.parse("2026-01-10T02:00:00Z"),
+        end = end,
+        timeSemantics = timeSemantics,
         zone = ZoneId.of("Asia/Shanghai"),
         placeText = "图书馆",
         status = EventStatus.SCHEDULED,
-        busy = BusyLevel.BUSY,
+        busy = busy,
         termId = "2025-2026-1",
         provenance = DataProvenance(
             providerId = "unit-test",
