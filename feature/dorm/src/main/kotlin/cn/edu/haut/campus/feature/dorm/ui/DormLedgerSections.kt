@@ -215,13 +215,13 @@ private fun SettlementSection(state: DormUiState, snapshot: DormSnapshot?, onAct
         }
         snapshot?.settlements.orEmpty().forEach { settlement ->
             XPeachInsetDivider(verticalPadding = 10.dp)
-            SettlementRow(settlement, members, state.currentCloudUserId, state.actionInFlight, onAction)
+            SettlementRow(settlement, members, state.currentCloudUserId, balances?.balanceRevision, state.actionInFlight, onAction)
         }
     }
 }
 
 @Composable
-private fun SettlementRow(settlement: DormSettlement, members: List<DormMember>, currentCloudUserId: String?, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
+private fun SettlementRow(settlement: DormSettlement, members: List<DormMember>, currentCloudUserId: String?, currentBalanceRevision: Long?, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
     val currentMemberId = members.firstOrNull { it.cloudUserId == currentCloudUserId }?.memberId
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -243,6 +243,14 @@ private fun SettlementRow(settlement: DormSettlement, members: List<DormMember>,
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+        val staleBasis = currentBalanceRevision != null && currentBalanceRevision != settlement.basisBalanceRevision
+        if (staleBasis) {
+            Text(
+                "账本已更正/变化：此结算基于旧 revision，需两方重新确认或重新提出",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
         if (settlement.status != DormSettlementStatus.CONFIRMED && settlement.status != DormSettlementStatus.CANCELLED) {
             val currentPartyConfirmed = when (currentMemberId) {
                 settlement.debtorMemberId -> settlement.debtorConfirmedAt != null
@@ -252,7 +260,7 @@ private fun SettlementRow(settlement: DormSettlement, members: List<DormMember>,
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = { onAction(DormUiAction.ConfirmSettlement(settlement.settlementId)) },
-                    enabled = !actionInFlight && currentMemberId != null && !currentPartyConfirmed,
+                    enabled = !actionInFlight && !staleBasis && currentMemberId != null && !currentPartyConfirmed,
                     shape = RoundedCornerShape(10.dp),
                 ) { Text(if (currentPartyConfirmed) "本方已确认" else "确认到账记录") }
                 TextButton(onClick = { onAction(DormUiAction.CancelSettlement(settlement.settlementId)) }, enabled = !actionInFlight) { Text("取消") }

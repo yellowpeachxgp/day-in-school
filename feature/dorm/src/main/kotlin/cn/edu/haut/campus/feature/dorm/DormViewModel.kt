@@ -31,6 +31,7 @@ class DormViewModel(
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(DormUiState())
     val uiState: StateFlow<DormUiState> = mutableState.asStateFlow()
+    private var refreshSequence = 0L
 
     init {
         viewModelScope.launch {
@@ -72,6 +73,7 @@ class DormViewModel(
     }
 
     private fun refresh(preferredGroupId: String? = null, notice: String? = null) {
+        val requestSequence = ++refreshSequence
         mutableState.update {
             it.copy(
                 loading = true,
@@ -89,10 +91,11 @@ class DormViewModel(
                 )
                 val status = when {
                     snapshot.groups.isEmpty() -> DormScreenStatus.EMPTY
-                    snapshot.partialWarnings.isNotEmpty() -> DormScreenStatus.PARTIAL
                     snapshot.staleness == Staleness.STALE -> DormScreenStatus.STALE
+                    snapshot.partialWarnings.isNotEmpty() -> DormScreenStatus.PARTIAL
                     else -> DormScreenStatus.CONTENT
                 }
+                if (requestSequence != refreshSequence) return@launch
                 mutableState.update {
                     it.copy(
                         loading = false,
@@ -110,7 +113,7 @@ class DormViewModel(
                 }
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-                applyError(error)
+                if (requestSequence == refreshSequence) applyError(error)
             }
         }
     }

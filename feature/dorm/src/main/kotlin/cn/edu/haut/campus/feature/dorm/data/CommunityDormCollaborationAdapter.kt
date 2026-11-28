@@ -98,6 +98,15 @@ class CommunityDormCollaborationAdapter(
             )
         }
         val selected = groups.firstOrNull { it.groupId == preferredGroupId } ?: groups.first()
+        if (groupsResult.staleness == Staleness.STALE) {
+            return@coroutineScope DormSnapshot(
+                groups = groups,
+                selectedGroupId = selected.groupId,
+                staleness = groupsResult.staleness,
+                cachedAtEpochMillis = groupsResult.cachedAtEpochMillis,
+                partialWarnings = listOf("群组元数据来自本地缓存；成员、账本、值日和报修明细不落地缓存，离线/云端不可用时不展示陈旧副本"),
+            )
+        }
         val membersDeferred = async { client.listGroupMembers(selected.groupId, limit = 100).unwrap("listGroupMembers") }
         val entriesDeferred = async { client.listLedgerEntries(selected.groupId, limit = 100).unwrap("listLedgerEntries") }
         val balancesDeferred = async { client.getLedgerBalances(selected.groupId).unwrap("getLedgerBalances") }

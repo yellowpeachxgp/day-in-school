@@ -1,6 +1,12 @@
 package cn.edu.haut.campus.feature.dorm
 
+import cn.edu.haut.campus.core.community.CommunityCacheIdentity
+import cn.edu.haut.campus.core.community.CommunityCacheKey
+import cn.edu.haut.campus.core.community.CommunityCacheStore
+import cn.edu.haut.campus.core.community.CommunityCachedEnvelope
 import cn.edu.haut.campus.core.community.CommunityClient
+import cn.edu.haut.campus.core.community.CommunityEnvelope
+import cn.edu.haut.campus.core.community.listGroups
 import cn.edu.haut.campus.core.community.CommunityFeatureGate
 import cn.edu.haut.campus.core.community.CommunityHttpRequest
 import cn.edu.haut.campus.core.community.CommunityHttpResponse
@@ -11,9 +17,11 @@ import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.json.Json
+import cn.edu.haut.campus.core.model.Staleness
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.feature.dorm.data.CommunityDormCollaborationAdapter
 import kotlinx.coroutines.test.runTest
+import java.io.IOException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -78,18 +86,75 @@ class CommunityDormCollaborationAdapterTest {
         }
     }
 
-    private fun client(transport: CommunityTransport): CommunityClient = CommunityClient(
+    @Test
+    fun staleGroupCacheDegradesWithoutInventingUncachedCollaborationDetails() = runTest {
+        val cache = MemoryCommunityCacheStore()
+        val onlineTransport = QueueTransport(CommunityHttpResponse(200, envelope(jsonGroups())))
+        val onlineClient = client(onlineTransport, cache)
+        val firstRead = onlineClient.listGroups("haut", type = "dorm", limit = 100)
+        assertTrue(firstRead is cn.edu.haut.campus.core.community.CommunityResult.Success)
+
+        val offlineTransport = CommunityTransport { throw IOException("synthetic offline") }
+        val adapter = CommunityDormCollaborationAdapter(client(offlineTransport, cache))
+        val snapshot = adapter.loadSnapshot("haut", groupId)
+
+        assertEquals(Staleness.STALE, snapshot.staleness)
+        assertEquals(groupId, snapshot.selectedGroupId)
+        assertEquals(1, snapshot.groups.size)
+        assertTrue(snapshot.members.isEmpty())
+        assertTrue(snapshot.ledgerEntries.isEmpty())
+        assertTrue(snapshot.partialWarnings.single().contains("不展示陈旧副本"))
+    }
+
+    private fun client(
+        transport: CommunityTransport,
+        cacheStore: CommunityCacheStore? = null,
+    ): CommunityClient = CommunityClient(
         baseUrl = "https://campus.example.test",
         scope = SchoolAccountScope(
             schoolId = SchoolId("haut"),
             accountId = AccountId("synthetic-account"),
             profileId = ProfileId("synthetic-profile"),
         ),
-        sessionSnapshotProvider = { CommunitySessionSnapshot("synthetic-token", null) },
+        sessionSnapshotProvider = {
+            CommunitySessionSnapshot(
+                "synthetic-token",
+                CommunityCacheIdentity("10000000-0000-4000-8000-000000000001", 1L).takeIf { cacheStore != null },
+            )
+        },
         featureGate = CommunityFeatureGate.ENABLED,
-        cacheStore = null,
+        cacheStore = cacheStore,
         transport = transport,
     )
+
+    private class MemoryCommunityCacheStore : CommunityCacheStore {
+        private val values = mutableMapOf<CommunityCacheKey, CommunityCachedEnvelope>()
+        private var generation = 0L
+        override suspend fun read(key: CommunityCacheKey): CommunityCachedEnvelope? = values[key]
+        override suspend fun write(key: CommunityCacheKey, envelope: CommunityEnvelope, cachedAtEpochMillis: Long) {
+            values[key] = CommunityCachedEnvelope(envelope, cachedAtEpochMillis)
+        }
+        override suspend fun invalidationGeneration(): Long = generation
+        override suspend fun writeIfCurrent(
+            key: CommunityCacheKey,
+            envelope: CommunityEnvelope,
+            cachedAtEpochMillis: Long,
+            expectedInvalidationGeneration: Long,
+        ): Boolean {
+            if (expectedInvalidationGeneration != generation) return false
+            write(key, envelope, cachedAtEpochMillis)
+            return true
+        }
+        override suspend fun invalidateAll() {
+            generation += 1L
+            values.clear()
+        }
+        override suspend fun wipe() {
+            generation += 1L
+            values.clear()
+        }
+        override suspend fun countEntries(): Int = values.size
+    }
 
     private class QueueTransport(vararg responses: CommunityHttpResponse) : CommunityTransport {
         val requests = mutableListOf<CommunityHttpRequest>()
@@ -116,6 +181,25 @@ class CommunityDormCollaborationAdapterTest {
             ),
         )
     }
+
+    private fun jsonGroups(): String = Json.canonical(
+        JsonValue.Arr(
+            listOf(
+                obj(
+                    "group_id" to str(groupId),
+                    "school_id" to str("haut"),
+                    "type" to str("dorm"),
+                    "name" to str("合成宿舍"),
+                    "status" to str("ACTIVE"),
+                    "created_by" to str(member1),
+                    "created_at" to str("2026-11-01T00:00:00Z"),
+                    "updated_at" to str("2026-11-01T00:00:00Z"),
+                    "member_count" to num(3L),
+                    "my_role" to str("OWNER"),
+                ),
+            ),
+        ),
+    )
 
     private fun jsonMembers(): String = Json.canonical(
         JsonValue.Arr(
