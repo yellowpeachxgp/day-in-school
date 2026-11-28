@@ -41,8 +41,14 @@ class BackupCenterSectionTest {
     @Test
     fun restorePreviewShowsCountsConflictAndRunsRestore() {
         val actions = RecordingActions()
+        val conflictKey = BackupCenterPreviewFixtures.samplePreview.conflicts.single().key
+        val resolvedState = BackupCenterPreviewFixtures.restorePreview.copy(
+            restoreWizard = BackupCenterPreviewFixtures.restorePreview.restoreWizard.copy(
+                resolutions = mapOf(conflictKey to BackupConflictResolution.USE_BACKUP)
+            )
+        )
         composeRule.setContent {
-            BackupCenterSection(state = BackupCenterPreviewFixtures.restorePreview, actions = actions)
+            BackupCenterSection(state = resolvedState, actions = actions)
         }
 
         composeRule.onNodeWithText("格式 v1 · schema v12 · 42 条目").assertIsDisplayed()
