@@ -123,7 +123,6 @@ import cn.edu.haut.campus.feature.automation.AutomationRoute
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
-import cn.edu.haut.campus.feature.settings.AiServiceScreen
 import cn.edu.haut.campus.feature.settings.CampusCommunityScreen
 import cn.edu.haut.campus.feature.settings.CampusMomentsScreen
 import cn.edu.haut.campus.feature.settings.DormElectricityScreen
@@ -629,12 +628,6 @@ fun HautCampusRootApp(
                     onBack = { overlayScreen = null }
                 )
             }
-            "ai_service" -> {
-                AiServiceScreen(
-                    repository = repository,
-                    onBack = { overlayScreen = null }
-                )
-            }
             "automation" -> {
                 AutomationRoute(
                     activeSession = activeSession,
@@ -812,7 +805,6 @@ fun HautCampusRootApp(
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
                                 onNavigateToAutomation = { overlayScreen = "automation" },
-                                onNavigateToAiService = { overlayScreen = "ai_service" },
                                 activeSchool = activeSession.school,
                                 activeProfileLabel = activeSession.label,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0

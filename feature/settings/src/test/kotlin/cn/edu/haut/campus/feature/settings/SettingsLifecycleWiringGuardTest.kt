@@ -109,7 +109,7 @@ class SettingsLifecycleWiringGuardTest {
     @Test
     fun everyRouteUsesCompositionScopedOwnerAndNeverBareViewModel() {
         val routes = routeFiles()
-        assertEquals("W0-06c+W1-04+W2-06 当前 18 组 Route 都必须纳入扫描", 18, routes.size)
+        assertEquals("W0-06c+W1-04 当前 17 组 Route 都必须纳入扫描", 17, routes.size)
 
         for (file in routes) {
             val relative = file.relativeTo(repoRoot).invariantSeparatorsPath
@@ -133,8 +133,7 @@ class SettingsLifecycleWiringGuardTest {
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/moments/CampusMomentsRoute.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/parcel/ParcelHubRoute.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/emptyclassroom/EmptyClassroomRoute.kt",
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/hub/CampusCommunityRoute.kt",
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/ai/AiServiceRoute.kt"
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/hub/CampusCommunityRoute.kt"
         )
         for (relative in localOwnerRoutes) {
             val source = read(relative)
@@ -185,8 +184,7 @@ class SettingsLifecycleWiringGuardTest {
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/library/seat/LibrarySeatViewModel.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/moments/CampusMomentsViewModel.kt",
             "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/parcel/ParcelHubViewModel.kt",
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeViewModel.kt",
-            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/ai/AiServiceViewModel.kt"
+            "feature/settings/src/main/kotlin/cn/edu/haut/campus/feature/settings/root/home/SettingsHomeViewModel.kt"
         )
         for (relative in viewModels) {
             val source = read(relative)

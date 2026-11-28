@@ -38,7 +38,6 @@ fun SettingsHomeRouteSection(
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
     onNavigateToAutomation: () -> Unit,
-    onNavigateToAiService: () -> Unit,
     onFeedback: (String) -> Unit,
     onRefreshWidgets: () -> Unit,
     onShowImportHistory: () -> Unit,
@@ -105,7 +104,6 @@ fun SettingsHomeRouteSection(
         onNavigateToParcelHub = onNavigateToParcelHub,
         onNavigateToXpeachCloud = onNavigateToXpeachCloud,
         onNavigateToAutomation = onNavigateToAutomation,
-        onNavigateToAiService = onNavigateToAiService,
         onShowImportHistory = onShowImportHistory,
         settingsEntriesContent = settingsEntriesContent
     )
