@@ -317,6 +317,47 @@ class VaultBackupService(
         )
     }
 
+    /** W4-12 专用一致性快照入口；仍是 dis-backup 表目录，不改成云同步专用数据模型。 */
+    internal suspend fun captureArchiveForSync(): PreparedBackupArchive = database.withTransaction {
+        captureArchive(BackupTableCatalog.policies)
+    }
+
+    internal fun currentSchemaVersionForSync(): Int = currentSchemaVersion()
+
+    /** 按 typed primary key 精准读取一行；返回值仍含本机 scope，sync 层负责规范化/本地化。 */
+    internal fun readRowForSync(
+        policy: BackupTablePolicy,
+        primaryKeyCells: Map<String, BackupCell>
+    ): Pair<BackupRow, Map<String, ByteArray>>? {
+        if (primaryKeyCells.keys != policy.primaryKeys.toSet()) {
+            throw BackupValidationException("同步读取主键列集合不一致: " + policy.table)
+        }
+        val schema = readTableSchema(policy)
+        val selectColumns = schema.backupColumns.joinToString(",") { quoteIdentifier(it.name) }
+        val where = policy.primaryKeys.joinToString(" AND ") { quoteIdentifier(it) + " = ?" }
+        val args = policy.primaryKeys.map { column ->
+            when (val cell = primaryKeyCells.getValue(column)) {
+                BackupCell.NullValue -> null
+                is BackupCell.LongValue -> cell.value
+                is BackupCell.DoubleValue -> cell.value
+                is BackupCell.TextValue -> cell.value
+                is BackupCell.BlobValue -> throw BackupValidationException("blob 不能作为同步读取主键")
+            }
+        }.toTypedArray()
+        val blobs = LinkedHashMap<String, ByteArray>()
+        sqlite.query(
+            "SELECT " + selectColumns + " FROM " + quoteIdentifier(policy.table) + " WHERE " + where + " LIMIT 1",
+            args
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            val cells = LinkedHashMap<String, BackupCell>()
+            schema.backupColumns.forEachIndexed { index, column ->
+                cells[column.name] = readCell(cursor, index, blobs)
+            }
+            return BackupRow(cells) to blobs
+        }
+    }
+
     private suspend fun collectRestoreRefs(prepared: PreparedBackupArchive): List<EntityRef> {
         val courseIds = linkedSetOf<String>()
         val ruleToCourse = linkedMapOf<String, String>()
@@ -562,17 +603,84 @@ class VaultBackupService(
         return blobs
     }
 
+    /** 应用一批已通过客户端冲突检查的远端同步行；业务行、逐行 journal、outbox 与可用搜索投影保持同事务。 */
+    internal suspend fun writeRowsForE2eeSync(
+        upserts: List<BackupSyncRowUpsert>,
+        deletes: List<BackupSyncRowDelete>
+    ): Int {
+        if (upserts.isEmpty() && deletes.isEmpty()) return 0
+        val targets = linkedMapOf<EntityRef, BackupSyncEntityRefs.Target>()
+        upserts.forEach { input ->
+            val target = BackupSyncEntityRefs.target(input.policy, input.row.cells, scope)
+            targets[target.ref] = target
+        }
+        deletes.forEach { input ->
+            val target = BackupSyncEntityRefs.target(input.policy, input.primaryKeyCells, scope)
+            targets[target.ref] = target
+        }
+        val refs = targets.keys.toList()
+        return journal.writeWithSnapshotReader(
+            refsProvider = { refs },
+            snapshotReader = { ref ->
+                val target = targets.getValue(ref)
+                val found = readRowForSync(target.policy, target.primaryKeyCells)?.first
+                BackupSyncEntityRefs.canonicalSnapshot(found)
+            },
+            actor = Actor.SYNC,
+            actorDetail = "e2ee-cloud-sync",
+            source = null,
+            writeGroupId = null
+        ) {
+            var applied = 0
+            upserts.forEach { input ->
+                val schema = readTableSchema(input.policy)
+                val inputTable = BackupTableData(input.policy, schema.backupColumns, listOf(input.row))
+                val validatedTable = validateTableAgainstCurrentSchema(inputTable)
+                upsertRow(validatedTable, validatedTable.rows.single(), schema, input.blobs, useSyncProvenance = true)
+                applied++
+            }
+            deletes.forEach { input ->
+                deleteRowInternal(input.policy, input.primaryKeyCells)
+                applied++
+            }
+            applied
+        }
+    }
+
+    private fun deleteRowInternal(policy: BackupTablePolicy, primaryKeyCells: Map<String, BackupCell>) {
+        if (primaryKeyCells.keys != policy.primaryKeys.toSet()) {
+            throw BackupValidationException("同步删除主键列集合不一致: " + policy.table)
+        }
+        val where = policy.primaryKeys.joinToString(" AND ") { quoteIdentifier(it) + " = ?" }
+        val statement = sqlite.compileStatement("DELETE FROM " + quoteIdentifier(policy.table) + " WHERE " + where)
+        try {
+            policy.primaryKeys.forEachIndexed { index, column ->
+                when (val cell = primaryKeyCells.getValue(column)) {
+                    BackupCell.NullValue -> statement.bindNull(index + 1)
+                    is BackupCell.LongValue -> statement.bindLong(index + 1, cell.value)
+                    is BackupCell.DoubleValue -> statement.bindDouble(index + 1, cell.value)
+                    is BackupCell.TextValue -> statement.bindString(index + 1, cell.value)
+                    is BackupCell.BlobValue -> throw BackupValidationException("blob 不能作为同步删除主键")
+                }
+            }
+            statement.executeUpdateDelete()
+        } finally {
+            statement.close()
+        }
+    }
+
     private fun upsertRow(
         table: BackupTableData,
         row: BackupRow,
         schema: CurrentTableSchema,
-        blobs: Map<String, ByteArray>
+        blobs: Map<String, ByteArray>,
+        useSyncProvenance: Boolean = false
     ) {
         val valueColumns = mutableListOf<String>()
         val values = mutableListOf<BackupCell>()
         schema.allColumns.forEach { column ->
             val backupCell = row.cells[column.name]
-            val generated = if (backupCell == null) generatedCell(table.policy, column.name) else null
+            val generated = if (backupCell == null) generatedCell(table.policy, column.name, useSyncProvenance) else null
             if (backupCell != null || generated != null) {
                 valueColumns += column.name
                 values += (backupCell ?: generated!!)
@@ -594,15 +702,33 @@ class VaultBackupService(
         }
     }
 
-    private fun generatedCell(policy: BackupTablePolicy, column: String): BackupCell? =
+    private fun generatedCell(policy: BackupTablePolicy, column: String, useSyncProvenance: Boolean = false): BackupCell? =
         when (policy.generatedColumns[column]) {
             GeneratedColumnKind.OCCURRENCE_MUTATION_TOKEN -> BackupCell.TextValue(mutationTokenGenerator())
             GeneratedColumnKind.NULL_ON_RESTORE -> BackupCell.NullValue
             GeneratedColumnKind.EMPTY_JSON_OBJECT_ON_RESTORE -> BackupCell.TextValue("{}")
             GeneratedColumnKind.EMPTY_JSON_ARRAY_ON_RESTORE -> BackupCell.TextValue("[]")
-            GeneratedColumnKind.RESTORED_PERSONAL_EVENT_PROVENANCE -> BackupCell.TextValue(restoredProvenanceJson())
+            GeneratedColumnKind.RESTORED_PERSONAL_EVENT_PROVENANCE -> BackupCell.TextValue(
+                if (useSyncProvenance) syncProvenanceJson() else restoredProvenanceJson()
+            )
             null -> null
         }
+
+    private fun syncProvenanceJson(): String = canonicalJsonOf(
+        encodeProvenance(
+            DataProvenance(
+                providerId = "dis-sync-e2ee/v1",
+                schoolId = scope.schoolId,
+                accountId = scope.accountId,
+                sourceSystem = "E2EE_CLOUD_SYNC",
+                sourceRecordId = null,
+                fetchedAt = null,
+                completeness = SnapshotCompleteness.UNKNOWN,
+                schemaVersion = 1,
+                contentRevision = null
+            )
+        )
+    ).text
 
     private fun restoredProvenanceJson(): String = canonicalJsonOf(
         encodeProvenance(
@@ -671,6 +797,17 @@ class VaultBackupService(
     private fun quoteIdentifier(identifier: String): String =
         "\"" + identifier.replace("\"", "\"\"") + "\""
 }
+
+internal data class BackupSyncRowUpsert(
+    val policy: BackupTablePolicy,
+    val row: BackupRow,
+    val blobs: Map<String, ByteArray>
+)
+
+internal data class BackupSyncRowDelete(
+    val policy: BackupTablePolicy,
+    val primaryKeyCells: Map<String, BackupCell>
+)
 
 internal fun backupProfileFingerprint(scope: SchoolAccountScope): String = Digests.sha256Hex(
     "dis-backup-profile/v1",
