@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 12,
-    "identityHash": "caac5ef8160637410abb7d3cc159abc6",
+    "identityHash": "6f17bf84d5bfaf9cf36a3a1215f90861",
     "entities": [
       {
         "tableName": "student_profile",
@@ -112,7 +112,7 @@
       },
       {
         "tableName": "period_times",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `timeTableId` TEXT NOT NULL, `periodNo` INTEGER NOT NULL, `startLocalTimeIso` TEXT NOT NULL, `endLocalTimeIso` TEXT NOT NULL, `sectionLabel` TEXT NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `timeTableId` TEXT NOT NULL, `periodNo` INTEGER NOT NULL, `startLocalTimeIso` TEXT NOT NULL, `endLocalTimeIso` TEXT NOT NULL, `sectionLabel` TEXT NOT NULL, `schemeId` TEXT, `termId` TEXT, `validStartDateIso` TEXT, `validEndDateIso` TEXT, `userModified` INTEGER NOT NULL DEFAULT 0, `updatedAtEpochMillis` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -149,6 +149,44 @@
             "columnName": "sectionLabel",
             "affinity": "TEXT",
             "notNull": true
+          },
+          {
+            "fieldPath": "schemeId",
+            "columnName": "schemeId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "termId",
+            "columnName": "termId",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "validStartDateIso",
+            "columnName": "validStartDateIso",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "validEndDateIso",
+            "columnName": "validEndDateIso",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "userModified",
+            "columnName": "userModified",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "updatedAtEpochMillis",
+            "columnName": "updatedAtEpochMillis",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -157,7 +195,113 @@
             "id"
           ]
         },
-        "indices": [],
+        "indices": [
+          {
+            "name": "index_period_times_schemeId",
+            "unique": false,
+            "columnNames": [
+              "schemeId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_period_times_schemeId` ON `${TABLE_NAME}` (`schemeId`)"
+          },
+          {
+            "name": "index_period_times_termId",
+            "unique": false,
+            "columnNames": [
+              "termId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_period_times_termId` ON `${TABLE_NAME}` (`termId`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "period_time_schemes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `termId` TEXT NOT NULL, `timeTableId` TEXT NOT NULL, `name` TEXT NOT NULL, `startDateIso` TEXT NOT NULL, `endDateIso` TEXT NOT NULL, `userModified` INTEGER NOT NULL, `createdAtEpochMilli` INTEGER NOT NULL, `updatedAtEpochMilli` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "termId",
+            "columnName": "termId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timeTableId",
+            "columnName": "timeTableId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startDateIso",
+            "columnName": "startDateIso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endDateIso",
+            "columnName": "endDateIso",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userModified",
+            "columnName": "userModified",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtEpochMilli",
+            "columnName": "createdAtEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAtEpochMilli",
+            "columnName": "updatedAtEpochMilli",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_period_time_schemes_termId",
+            "unique": false,
+            "columnNames": [
+              "termId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_period_time_schemes_termId` ON `${TABLE_NAME}` (`termId`)"
+          },
+          {
+            "name": "index_period_time_schemes_timeTableId",
+            "unique": false,
+            "columnNames": [
+              "timeTableId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_period_time_schemes_timeTableId` ON `${TABLE_NAME}` (`timeTableId`)"
+          }
+        ],
         "foreignKeys": []
       },
       {
@@ -3034,7 +3178,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'caac5ef8160637410abb7d3cc159abc6')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '6f17bf84d5bfaf9cf36a3a1215f90861')"
     ]
   }
 }
