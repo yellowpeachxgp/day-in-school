@@ -3,6 +3,7 @@ package cn.edu.haut.campus.core.packages.datapack
 import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.packages.crypto.Ed25519
+import cn.edu.haut.campus.core.packages.v2.ExtensionPublicKeyCodec
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 
@@ -33,10 +34,11 @@ class DataPackTrustRoot(keysBase64: Collection<String>) {
             } catch (error: IllegalArgumentException) {
                 throw datapackSignatureInvalid("数据包信任根公钥不是合法 Base64")
             }
-            if (raw.size != Ed25519.PUBLIC_KEY_BYTES) {
-                throw datapackSignatureInvalid("数据包信任根必须是 32 字节 raw Ed25519 公钥")
+            val rawEd25519 = when (raw.size) {
+                Ed25519.PUBLIC_KEY_BYTES -> raw.copyOf()
+                else -> ExtensionPublicKeyCodec.spkiBase64ToRaw(encoded)
             }
-            val copy = raw.copyOf()
+            val copy = rawEd25519.copyOf()
             Digests.sha256Hex(copy) to copy
         }
     }

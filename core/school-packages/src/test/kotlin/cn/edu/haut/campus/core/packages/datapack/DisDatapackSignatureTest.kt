@@ -26,6 +26,7 @@ class DisDatapackSignatureTest {
             signed.verification.payloadSha256
         )
         assertTrue(signed.signature.valueBase64.matches(Regex("^[A-Za-z0-9+/]{86}==$")))
+        DisDatapackLoader.verify(decoded.canonicalBytes, signed.signature, signed.spkiTrustRoot)
     }
 
     @Test
@@ -61,7 +62,8 @@ class DisDatapackSignatureTest {
     private data class SyntheticSignature(
         val signature: DetachedDataPackSignature,
         val verification: DataPackSignatureVerification,
-        val trustRoot: DataPackTrustRoot
+        val trustRoot: DataPackTrustRoot,
+        val spkiTrustRoot: DataPackTrustRoot
     )
 
     private fun sign(canonicalBytes: ByteArray): SyntheticSignature {
@@ -82,7 +84,8 @@ class DisDatapackSignatureTest {
         )
         val trustRoot = DataPackTrustRoot(listOf(Base64.getEncoder().encodeToString(rawPublic)))
         val verified = DisDatapackLoader.verify(canonicalBytes, signature, trustRoot)
-        return SyntheticSignature(signature, verified.signatureVerification, trustRoot)
+        val spkiTrustRoot = DataPackTrustRoot(listOf(Base64.getEncoder().encodeToString(spki)))
+        return SyntheticSignature(signature, verified.signatureVerification, trustRoot, spkiTrustRoot)
     }
 
     private fun fixtureBytes(): ByteArray =
