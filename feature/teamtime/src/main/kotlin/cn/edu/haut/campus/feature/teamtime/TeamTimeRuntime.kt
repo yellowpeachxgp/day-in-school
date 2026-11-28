@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package cn.edu.haut.campus.feature.teamtime
 
 import android.content.Context
