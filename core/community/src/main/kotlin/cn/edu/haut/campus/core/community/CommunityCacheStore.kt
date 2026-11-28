@@ -202,6 +202,7 @@ class FileCommunityCacheStore internal constructor(
                 WIPE_FAILURES[rootKey] = true
                 throw error
             }
+            Unit
         }
     }
 
