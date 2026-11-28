@@ -111,7 +111,7 @@ class CampusRepository internal constructor(
     private val bookingPlanStateMutex = Mutex()
     private val wanxiaoUtilityClient = WanxiaoUtilityClient()
     private val repoScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val repositoryEnvironment = CampusRepositoryEnvironment(
+    internal val repositoryEnvironment = CampusRepositoryEnvironment(
         database = database,
         preferences = preferences,
         accountProfile = accountProfile,
@@ -302,10 +302,6 @@ class CampusRepository internal constructor(
     }
 
     internal fun databaseForAdoption(): HautDatabase = database
-
-    internal fun overrideAcademicEntityWritePortForTest(port: AcademicEntityWritePort) {
-        repositoryEnvironment.academicEntityWritePort = port
-    }
 
     @Volatile
     var onScheduleOrPolicyChangedListener: (suspend (String) -> Unit)? = null
