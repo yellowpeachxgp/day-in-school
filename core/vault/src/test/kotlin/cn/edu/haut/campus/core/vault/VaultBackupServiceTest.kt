@@ -305,10 +305,20 @@ class VaultBackupServiceTest {
     @Test
     fun exportOmitsRuntimeDiagnosticAndUpstreamProvenanceColumnsAndRestoresSafeDefaults() = runBlocking {
         seedPortableRows()
-        database.cloudAndParcelDao().upsertLibraryBookingPlan(libraryPlanRow())
-        database.cloudAndParcelDao().upsertParcelItem(parcelRow())
+        val tokenCanary = tokenCanary()
+        val cookieHeader = cookieHeaderCanary()
+        database.cloudAndParcelDao().upsertLibraryBookingPlan(
+            libraryPlanRow().copy(lastDiagnosticMessage = "do-not-export-diagnostic " + tokenCanary)
+        )
+        database.cloudAndParcelDao().upsertParcelItem(
+            parcelRow().copy(
+                sourcesJson = "[{\"detail\":\"upstream-source-detail " + tokenCanary + "\"}]",
+                fieldProvenanceJson = "{\"detail\":\"upstream-field-detail " + cookieHeader + "\"}",
+                checkpointsJson = "[{\"detail\":\"upstream-checkpoint-detail " + tokenCanary + "\"}]"
+            )
+        )
         database.vaultDao().upsertPersonalEvent(
-            personalEventRow().copy(provenanceJson = "{\"detail\":\"upstream-provenance-detail\"}")
+            personalEventRow().copy(provenanceJson = "{\"detail\":\"upstream-provenance-detail " + cookieHeader + "\"}")
         )
 
         val backup = exportBackup().first
@@ -323,6 +333,10 @@ class VaultBackupServiceTest {
             "do-not-export-diagnostic", "upstream-source-detail", "upstream-field-detail",
             "upstream-checkpoint-detail", "upstream-provenance-detail"
         ).forEach { assertFalse("不应导出上游值", combined.contains(it)) }
+        assertFalse("导出不得包含 Token canary", combined.contains(tokenCanary))
+        assertFalse("导出不得包含 Cookie canary", combined.contains(cookieHeader))
+        assertFalse("导出不得包含 Cookie 值 canary", combined.contains(cookieValueCanary()))
+        assertFalse("导出不得包含 CSRF canary", combined.contains("csrf-canary-123456"))
 
         val dataText = String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8)
         val dataRoot = Json.parse(dataText).asObjOrNull ?: error("data.json 必须是 object")
@@ -367,13 +381,9 @@ class VaultBackupServiceTest {
     @Test
     fun exportFailsClosedWhenNestedTextContainsBearerTokenOrCookieCanary() = runBlocking {
         seedPortableRows()
-        val jwtCanary = listOf(
-            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
-            "eyJzdWIiOiJhY2N0X2JhY2t1cCIsImV4cCI6MTkwMDAwMDAwMH0",
-            "c2lnbmF0dXJlLWNhbmFyeS0xMjM0NTY3ODkw"
-        ).joinToString(".")
-        val cookieValue = "session-canary-" + "1234567890abcdef"
-        val cookieHeader = "SESSION" + "=" + cookieValue + "; csrftoken=" + "csrf-canary-123456"
+        val jwtCanary = tokenCanary()
+        val cookieValue = cookieValueCanary()
+        val cookieHeader = cookieHeaderCanary()
         val cases = listOf(
             Triple("bearer", "{\"nested\":\"Bearer " + jwtCanary + "\"}", listOf(jwtCanary)),
             Triple("cookie", "{\"outer\":[{\"safe\":\"" + cookieHeader + "\"}]}", listOf(cookieValue, "csrf-canary-123456"))
@@ -563,6 +573,17 @@ class VaultBackupServiceTest {
         is JsonValue.Arr -> value.items.flatMap(::jsonKeys)
         else -> emptyList()
     }
+
+    private fun tokenCanary(): String = listOf(
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+        "eyJzdWIiOiJhY2N0X2JhY2t1cCIsImV4cCI6MTkwMDAwMDAwMH0",
+        "c2lnbmF0dXJlLWNhbmFyeS0xMjM0NTY3ODkw"
+    ).joinToString(".")
+
+    private fun cookieValueCanary(): String = "session-canary-" + "1234567890abcdef"
+
+    private fun cookieHeaderCanary(): String =
+        "SESSION" + "=" + cookieValueCanary() + "; csrftoken=" + "csrf-canary-123456"
 
     private fun fixedInstant(): Instant = Instant.parse("2026-01-02T03:04:05Z")
 
