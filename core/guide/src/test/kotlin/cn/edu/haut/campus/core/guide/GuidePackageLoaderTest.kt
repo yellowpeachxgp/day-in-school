@@ -69,6 +69,33 @@ class GuidePackageLoaderTest {
     }
 
     @Test
+    fun loader_rejects_wrapper_when_trust_root_does_not_contain_signer() {
+        val pack = GuideTestFixtures.disPack(DisDatapackKind.PROCEDURE_GUIDE, listOf(GuideTestFixtures.branchProcedure()))
+        val verified = GuideTestFixtures.verified(pack)
+        val wrongRoot = verified.copy(trustRoot = GuideTestFixtures.unrelatedTrustRoot())
+
+        assertFailsWith<GuideSecurityException> {
+            GuidePackageLoader.loadVerified(wrongRoot, LocalDate.parse("2026-11-28"))
+        }
+    }
+
+    @Test
+    fun loader_rejects_cryptographically_forged_signature_even_when_shape_and_digests_match() {
+        val pack = GuideTestFixtures.disPack(DisDatapackKind.PROCEDURE_GUIDE, listOf(GuideTestFixtures.branchProcedure()))
+        val verified = GuideTestFixtures.verified(pack)
+        val original = verified.signatureVerification.signature
+        val replacementFirst = if (original.valueBase64.first() == 'A') 'B' else 'A'
+        val forgedSignature = original.copy(valueBase64 = replacementFirst + original.valueBase64.drop(1))
+        val forged = verified.copy(
+            signatureVerification = verified.signatureVerification.copy(signature = forgedSignature)
+        )
+
+        assertFailsWith<GuideSecurityException> {
+            GuidePackageLoader.loadVerified(forged, LocalDate.parse("2026-11-28"))
+        }
+    }
+
+    @Test
     fun loader_rejects_non_guide_datapack_kind() {
         val facility = GuideTestFixtures.disPack(DisDatapackKind.FACILITY_CATALOG, emptyList())
 

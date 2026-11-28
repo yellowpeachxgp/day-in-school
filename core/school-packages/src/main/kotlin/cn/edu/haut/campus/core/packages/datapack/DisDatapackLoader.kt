@@ -16,9 +16,14 @@ data class DecodedDataPack(
     override fun hashCode(): Int = 31 * pack.hashCode() + canonicalBytes.contentHashCode()
 }
 
+/**
+ * W5-01 verify 的完整可复查结果。trustRoot 只含发布者公钥，不含私钥；
+ * 下游必须能用它重新执行同一 Ed25519/trust-root 链，而不是只相信类型或摘要字段。
+ */
 data class VerifiedDataPack(
     val decoded: DecodedDataPack,
-    val signatureVerification: DataPackSignatureVerification
+    val signatureVerification: DataPackSignatureVerification,
+    val trustRoot: DataPackTrustRoot
 ) {
     val pack: DisDatapack get() = decoded.pack
 }
@@ -43,7 +48,7 @@ object DisDatapackLoader {
     ): VerifiedDataPack {
         val decoded = decode(artifactBytes)
         val verification = DisDatapackSignature.verify(decoded.canonicalBytes, detachedSignature, trustRoot)
-        return VerifiedDataPack(decoded, verification)
+        return VerifiedDataPack(decoded, verification, trustRoot)
     }
 
     /** reviewBy 是最后可视为已复核的日期；只有严格晚于该日期才进入 REVIEW_DUE。 */

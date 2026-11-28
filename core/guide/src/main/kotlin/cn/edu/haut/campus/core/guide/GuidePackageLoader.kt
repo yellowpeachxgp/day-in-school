@@ -1,13 +1,12 @@
 package cn.edu.haut.campus.core.guide
 
 import cn.edu.haut.campus.core.model.SchoolId
-import cn.edu.haut.campus.core.model.json.Digests
+import cn.edu.haut.campus.core.packages.PackageException
 import cn.edu.haut.campus.core.packages.datapack.DataPackFreshness
 import cn.edu.haut.campus.core.packages.datapack.DisDatapack
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackItem
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackLoader
-import cn.edu.haut.campus.core.packages.datapack.DisDatapackSignature
 import cn.edu.haut.campus.core.packages.datapack.VerifiedDataPack
 import java.time.LocalDate
 import java.time.OffsetDateTime
@@ -58,34 +57,27 @@ object GuidePackageLoader {
     }
 
     private fun verifyTrustBoundary(verified: VerifiedDataPack) {
-        val canonicalBytes = verified.decoded.canonicalBytes
-        val decodedFromBytes = try {
-            DisDatapackLoader.decode(canonicalBytes)
+        // 关键安全边界：这里重新执行 W5-01 exact-byte/schema + detached payload digest +
+        // pinned trust-root 中的 Ed25519 验签。只检查签名形状或摘要是远远不够的；
+        // VerifiedDataPack 携带的 trustRoot 让调用方手工拼接的类型也无法靠 dummy 材料通过。
+        val reverified = try {
+            DisDatapackLoader.verify(
+                artifactBytes = verified.decoded.canonicalBytes,
+                detachedSignature = verified.signatureVerification.signature,
+                trustRoot = verified.trustRoot
+            )
+        } catch (error: PackageException) {
+            throw GuideSecurityException(
+                "datapack 签名/trust-root 复查失败：" + (error.runtimeValidationCode ?: error.error.name)
+            )
         } catch (error: IllegalArgumentException) {
             throw GuideSecurityException("datapack canonical bytes 不能通过 W5-01 schema/exact-byte 复核：" + error.message)
         }
-        if (decodedFromBytes.pack != verified.decoded.pack) {
-            throw GuideSecurityException("datapack typed pack 与 canonical bytes 不一致")
+        if (verified.decoded != reverified.decoded) {
+            throw GuideSecurityException("datapack typed pack/canonical bytes/artifact 摘要链不一致")
         }
-        val expectedArtifact = Digests.sha256Hex(canonicalBytes)
-        if (verified.decoded.artifactSha256 != expectedArtifact) {
-            throw GuideSecurityException("datapack artifactSha256 与 canonical bytes 不一致")
-        }
-        val expectedPayload = DisDatapackSignature.payloadSha256ForCanonicalBytes(canonicalBytes)
-        val verification = verified.signatureVerification
-        try {
-            DisDatapackSignature.validateShape(verification.signature)
-        } catch (error: IllegalArgumentException) {
-            throw GuideSecurityException("datapack detached signature 形状非法：" + error.message)
-        }
-        if (verification.payloadSha256 != expectedPayload) {
-            throw GuideSecurityException("datapack payloadSha256 与 canonical bytes 不一致")
-        }
-        if (verification.signature.signedPayloadSha256 != verification.payloadSha256) {
-            throw GuideSecurityException("datapack detached signature 与验签结果摘要链不一致")
-        }
-        if (verification.signature.publicKeyFingerprint != verification.publicKeyFingerprint) {
-            throw GuideSecurityException("datapack signer fingerprint 与验签结果不一致")
+        if (verified.signatureVerification != reverified.signatureVerification) {
+            throw GuideSecurityException("datapack detached signature 与真实验签结果不一致")
         }
     }
 

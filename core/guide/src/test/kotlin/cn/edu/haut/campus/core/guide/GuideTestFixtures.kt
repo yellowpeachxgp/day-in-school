@@ -6,13 +6,14 @@ import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.model.json.JsonValue
 import cn.edu.haut.campus.core.packages.datapack.DIS_DATAPACK_FORMAT
 import cn.edu.haut.campus.core.packages.datapack.DIS_DATAPACK_SIGNATURE_SCHEME
 import cn.edu.haut.campus.core.packages.datapack.DataPackFreshness
 import cn.edu.haut.campus.core.packages.datapack.DataPackMaterial
-import cn.edu.haut.campus.core.packages.datapack.DataPackSignatureVerification
 import cn.edu.haut.campus.core.packages.datapack.DataPackSource
+import cn.edu.haut.campus.core.packages.datapack.DataPackTrustRoot
 import cn.edu.haut.campus.core.packages.datapack.DetachedDataPackSignature
 import cn.edu.haut.campus.core.packages.datapack.DisDatapack
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackItem
@@ -25,7 +26,10 @@ import cn.edu.haut.campus.core.packages.datapack.ProcedureQuestionOption
 import cn.edu.haut.campus.core.packages.datapack.ProcedureStep
 import cn.edu.haut.campus.core.packages.datapack.Rfc8785Json
 import cn.edu.haut.campus.core.packages.datapack.VerifiedDataPack
+import java.security.KeyPairGenerator
+import java.security.Signature as JavaSignature
 import java.time.LocalDate
+import java.util.Base64
 
 object GuideTestFixtures {
     val scope = SchoolAccountScope(
@@ -126,24 +130,37 @@ object GuideTestFixtures {
         items = items
     )
 
-    /** 用 W5-01 真实 exact-byte/schema loader 生成 decoded，再补上测试用 detached signature 类型边界。 */
+    /**
+     * 用真实 Ed25519 私钥在测试内一次性签名，并经 W5-01 verify 返回。
+     * 私钥不离开本函数；生产宿主只保存/使用公钥信任根，绝不引入签名能力。
+     */
     fun verified(pack: DisDatapack): VerifiedDataPack {
         val canonicalBytes = canonicalBytesFor(pack)
         val decoded = DisDatapackLoader.decode(canonicalBytes)
         require(decoded.pack == pack) { "测试 datapack 序列化夹具与 typed model 不一致" }
-        val payload = DisDatapackSignature.payloadSha256ForCanonicalBytes(decoded.canonicalBytes)
-        val fingerprint = "c".repeat(64)
+        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val rawPublic = keyPair.public.encoded.copyOfRange(keyPair.public.encoded.size - 32, keyPair.public.encoded.size)
+        val fingerprint = Digests.sha256Hex(rawPublic)
+        val payload = DisDatapackSignature.payloadForCanonicalBytes(decoded.canonicalBytes)
+        val signer = JavaSignature.getInstance("Ed25519")
+        signer.initSign(keyPair.private)
+        signer.update(payload)
         val signature = DetachedDataPackSignature(
             algorithm = "Ed25519",
             scheme = DIS_DATAPACK_SIGNATURE_SCHEME,
             publicKeyFingerprint = fingerprint,
-            valueBase64 = "A".repeat(86) + "==",
-            signedPayloadSha256 = payload
+            valueBase64 = Base64.getEncoder().encodeToString(signer.sign()),
+            signedPayloadSha256 = Digests.sha256Hex(payload)
         )
-        return VerifiedDataPack(
-            decoded = decoded,
-            signatureVerification = DataPackSignatureVerification(signature, fingerprint, payload)
-        )
+        val trustRoot = DataPackTrustRoot(listOf(Base64.getEncoder().encodeToString(rawPublic)))
+        return DisDatapackLoader.verify(decoded.canonicalBytes, signature, trustRoot)
+    }
+
+    /** 生成与签名者无关的公钥信任根，用于证明 guide 会真实执行 trust-root 拒绝。 */
+    fun unrelatedTrustRoot(): DataPackTrustRoot {
+        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val rawPublic = keyPair.public.encoded.copyOfRange(keyPair.public.encoded.size - 32, keyPair.public.encoded.size)
+        return DataPackTrustRoot(listOf(Base64.getEncoder().encodeToString(rawPublic)))
     }
 
     private fun canonicalBytesFor(pack: DisDatapack): ByteArray {

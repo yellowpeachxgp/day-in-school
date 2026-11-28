@@ -4,11 +4,13 @@ import cn.edu.haut.campus.core.model.CampusId
 import cn.edu.haut.campus.core.model.CapabilityKind
 import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.VerificationLevel
+import cn.edu.haut.campus.core.model.json.Digests
 import cn.edu.haut.campus.core.packages.bundle.PackageBundle
 import cn.edu.haut.campus.core.packages.bundle.PackageFile
-import cn.edu.haut.campus.core.packages.datapack.DataPackSignatureVerification
+import cn.edu.haut.campus.core.packages.datapack.DataPackTrustRoot
 import cn.edu.haut.campus.core.packages.datapack.DetachedDataPackSignature
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackLoader
+import cn.edu.haut.campus.core.packages.datapack.DisDatapackSignature
 import cn.edu.haut.campus.core.packages.datapack.VerifiedDataPack
 import cn.edu.haut.campus.core.packages.manifest.PackageLicense
 import cn.edu.haut.campus.core.packages.manifest.PackageManifest
@@ -19,6 +21,9 @@ import cn.edu.haut.campus.core.packages.manifest.PackageVersion
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.security.KeyPairGenerator
+import java.security.Signature as JavaSignature
+import java.util.Base64
 
 class DisDatapackCampusGraphDecoderTest {
 
@@ -103,7 +108,7 @@ class DisDatapackCampusGraphDecoderTest {
         val bytes = procedurePackWithItemIds(listOf("aid/forms", "aid-forms", "aid.forms", "aid_forms"))
         val decoded = DisDatapackLoader.decode(bytes)
 
-        val standalone = decoder.decodeVerified(fakeVerified(decoded))
+        val standalone = decoder.decodeVerified(realVerified(decoded))
         assertEquals(4, standalone.size)
         assertEquals(4, standalone.map { it.ref.id }.distinct().size)
         assertTrue(standalone[0].ref.id.endsWith("/procedure/dp:aid:forms"))
@@ -126,7 +131,7 @@ class DisDatapackCampusGraphDecoderTest {
         ))
         val decoded = DisDatapackLoader.decode(bytes)
 
-        val entities = decoder.decodeVerified(fakeVerified(decoded))
+        val entities = decoder.decodeVerified(realVerified(decoded))
 
         assertEquals(2, entities.size)
         assertEquals(2, entities.map { it.ref.id }.distinct().size)
@@ -138,7 +143,7 @@ class DisDatapackCampusGraphDecoderTest {
         val decoded = DisDatapackLoader.decode(bytes)
 
         assertThrowsIllegalArgument {
-            decoder.decodeVerified(fakeVerified(decoded))
+            decoder.decodeVerified(realVerified(decoded))
         }
     }
 
@@ -151,7 +156,7 @@ class DisDatapackCampusGraphDecoderTest {
             val decoded = DisDatapackLoader.decode(bytes)
             assertEquals(itemType, (decoded.pack.items.single() as cn.edu.haut.campus.core.packages.datapack.DisDatapackItem.IndoorGraph).itemType.wireId)
             try {
-                decoder.decodeVerified(fakeVerified(decoded))
+                decoder.decodeVerified(realVerified(decoded))
                 throw AssertionError("expected decodeVerified to reject indoor " + itemType)
             } catch (error: IllegalArgumentException) {
                 assertTrue(error.message.orEmpty().contains("indoor-graph"))
@@ -189,19 +194,26 @@ class DisDatapackCampusGraphDecoderTest {
         return ("{\"format\":\"dis-datapack/v1\",\"items\":[" + items + "],\"kind\":\"procedure-guide\",\"maintainers\":[\"github:example-maintainer\"],\"packId\":\"haut.procedures\",\"reviewBy\":\"2027-05-20\",\"schoolId\":\"haut\",\"sources\":[{\"retrievedAt\":\"2026-11-20\",\"title\":\"学校办事流程公开页\",\"url\":\"https://example.com/haut/procedure-guide\"}],\"verificationLevel\":\"UNVERIFIED\",\"verifiedAt\":\"2026-11-20\",\"version\":\"2026.11.1\"}").toByteArray(Charsets.UTF_8)
     }
 
-    private fun fakeVerified(decoded: cn.edu.haut.campus.core.packages.datapack.DecodedDataPack): VerifiedDataPack {
-        val fingerprint = "0".repeat(64)
+    private fun realVerified(decoded: cn.edu.haut.campus.core.packages.datapack.DecodedDataPack): VerifiedDataPack {
+        // decodeVerified 的测试仍使用完整 W5-01 验签链；即使该 decoder 只读取 pack，
+        // 测试也不能用 dummy signature 伪装 VerifiedDataPack。
+        val keyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val spki = keyPair.public.encoded
+        val rawPublic = spki.copyOfRange(spki.size - 32, spki.size)
+        val fingerprint = Digests.sha256Hex(rawPublic)
+        val payload = DisDatapackSignature.payloadForCanonicalBytes(decoded.canonicalBytes)
+        val signer = JavaSignature.getInstance("Ed25519")
+        signer.initSign(keyPair.private)
+        signer.update(payload)
         val signature = DetachedDataPackSignature(
             algorithm = "Ed25519",
             scheme = cn.edu.haut.campus.core.packages.datapack.DIS_DATAPACK_SIGNATURE_SCHEME,
             publicKeyFingerprint = fingerprint,
-            valueBase64 = "A".repeat(86) + "==",
-            signedPayloadSha256 = "0".repeat(64)
+            valueBase64 = Base64.getEncoder().encodeToString(signer.sign()),
+            signedPayloadSha256 = Digests.sha256Hex(payload)
         )
-        return VerifiedDataPack(
-            decoded,
-            DataPackSignatureVerification(signature, fingerprint, "0".repeat(64))
-        )
+        val trustRoot = DataPackTrustRoot(listOf(Base64.getEncoder().encodeToString(rawPublic)))
+        return DisDatapackLoader.verify(decoded.canonicalBytes, signature, trustRoot)
     }
 
     private fun procedureBytes(placeRef: String): ByteArray {
