@@ -104,6 +104,7 @@ class ExtensionManifestV2RuntimeConformanceTest {
     @Test
     fun communityBoards槽位只登记为reserved且不可被插件声明() {
         assertFalse(ExtensionManifestV2Codec.SUPPORTED_UI_SLOTS.contains("community.boards"))
+        assertEquals(setOf("community.boards"), ExtensionManifestV2Codec.RESERVED_UI_SLOTS)
         val resource = javaClass.classLoader.getResource("runtime-host-api-matrix.json")
         assertNotNull(resource)
         val text = resource!!.readText(Charsets.UTF_8)

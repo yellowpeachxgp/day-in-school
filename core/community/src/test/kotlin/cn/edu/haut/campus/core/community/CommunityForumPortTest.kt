@@ -45,7 +45,7 @@ class CommunityForumPortTest {
         val matrix = File("core/school-packages/src/main/resources/runtime-host-api-matrix.json").readText()
         assertTrue(
             "community.boards must be explicitly registered as reserved",
-            Regex("\"reserved_ui_slots\"\s*:\s*\[\s*\"community\.boards\"\s*\]").containsMatchIn(matrix),
+            Regex("\"reserved_ui_slots\"\\s*:\\s*\\[\\s*\"community\\.boards\"\\s*\\]").containsMatchIn(matrix),
         )
         val supportedSection = matrix.substringBefore("\"reserved_ui_slots\"")
         assertFalse(
