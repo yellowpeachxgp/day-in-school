@@ -12,11 +12,13 @@ import cn.edu.haut.campus.core.database.CampusRepository
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupException
 import cn.edu.haut.campus.core.vault.BackupRowKey
+import cn.edu.haut.campus.core.vault.BackupSelection
 import cn.edu.haut.campus.core.vault.BackupService
 import cn.edu.haut.campus.core.vault.RestoreMode
 import cn.edu.haut.campus.core.vault.RestorePreview
 import cn.edu.haut.campus.core.vault.VaultBackupServiceRegistry
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,7 +69,7 @@ class BackupCenterViewModel(
             try {
                 val manifest = withContext(Dispatchers.IO) {
                     appContext.contentResolver.openOutputStream(target, "w")?.use { out ->
-                        service.export(service.scope, cn.edu.haut.campus.core.vault.BackupSelection.ALL, passCopy, out)
+                        service.export(service.scope, BackupSelection.ALL, passCopy, out)
                     } ?: throw IllegalStateException("无法打开备份保存位置")
                 }
                 mutableUiState.update {
@@ -81,6 +83,7 @@ class BackupCenterViewModel(
                     )
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 mutableUiState.update {
                     it.copy(
                         matrix = SettingsUiMatrix.error(retryable = true, message = "导出失败"),
@@ -142,6 +145,7 @@ class BackupCenterViewModel(
                     )
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 discardPreparedPreview()
                 mutableUiState.update {
                     it.copy(
@@ -202,6 +206,7 @@ class BackupCenterViewModel(
                     )
                 }
             } catch (error: Throwable) {
+                if (error is CancellationException) throw error
                 mutableUiState.update {
                     it.copy(
                         matrix = SettingsUiMatrix.error(retryable = true, message = "恢复失败"),
@@ -258,3 +263,9 @@ class BackupCenterViewModel(
             initializer {
                 BackupCenterViewModel(
                     appContext = context.applicationContext,
+                    backupService = VaultBackupServiceRegistry.forProfile(repository.profileId)
+                )
+            }
+        }
+    }
+}

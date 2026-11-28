@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -31,13 +32,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.KeyboardOptions
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import cn.edu.haut.campus.core.designsystem.XPeachCard
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
+import cn.edu.haut.campus.core.vault.BackupRowConflict
 import cn.edu.haut.campus.core.vault.RestoreMode
 import cn.edu.haut.campus.feature.settings.state.SettingsUiMatrix
-import cn.edu.haut.campus.core.designsystem.XPeachCard
 
 /** W1-04 骨架 UI：导出向导与恢复向导。视觉打磨留给阶段 N，状态矩阵在此固定。 */
 @Composable
@@ -260,3 +261,107 @@ private fun RestoreWizardDialog(state: BackupCenterUiState, actions: BackupCente
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
+                    RestoreModeChoice(
+                        selected = wizard.mode,
+                        enabled = !wizard.running,
+                        onSelect = actions::setRestoreMode
+                    )
+                    if (preview.conflicts.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("冲突行（逐条选择）", style = MaterialTheme.typography.titleSmall)
+                        preview.conflicts.take(20).forEach { conflict ->
+                            ConflictChoiceRow(
+                                conflict = conflict,
+                                selected = wizard.resolutions[conflict.key],
+                                enabled = !wizard.running,
+                                onSelect = { resolution -> actions.setConflictResolution(conflict.key, resolution) }
+                            )
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    preview.conflicts.forEach { conflict ->
+                                        actions.setConflictResolution(conflict.key, BackupConflictResolution.KEEP_EXISTING)
+                                    }
+                                },
+                                enabled = !wizard.running
+                            ) { Text("全部保留本机") }
+                            TextButton(
+                                onClick = {
+                                    preview.conflicts.forEach { conflict ->
+                                        actions.setConflictResolution(conflict.key, BackupConflictResolution.USE_BACKUP)
+                                    }
+                                },
+                                enabled = !wizard.running
+                            ) { Text("全部使用备份") }
+                        }
+                        if (preview.conflicts.size > 20) {
+                            Text("仅展开前 20 条；其余 " + (preview.conflicts.size - 20) + " 条可用上方批量选择", style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (!allConflictsResolved) {
+                            Text("MERGE 需要完成全部冲突选择", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = actions::restoreBackup,
+                enabled = preview != null && !wizard.running && (wizard.mode == RestoreMode.REPLACE || allConflictsResolved),
+                modifier = Modifier.testTag("backup-restore-run")
+            ) { Text(if (wizard.running) "恢复中…" else "开始恢复") }
+        },
+        dismissButton = {
+            TextButton(onClick = actions::closeRestoreWizard, enabled = !wizard.running) { Text("关闭") }
+        }
+    )
+}
+
+@Composable
+private fun RestoreModeChoice(selected: RestoreMode, enabled: Boolean, onSelect: (RestoreMode) -> Unit) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected == RestoreMode.MERGE, onClick = { onSelect(RestoreMode.MERGE) }, enabled = enabled)
+            Column {
+                Text("合并（MERGE）", style = MaterialTheme.typography.bodyMedium)
+                Text("不删除本机多出的数据；冲突逐条选择", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected == RestoreMode.REPLACE, onClick = { onSelect(RestoreMode.REPLACE) }, enabled = enabled)
+            Column {
+                Text("替换（REPLACE）", style = MaterialTheme.typography.bodyMedium)
+                Text("所选分类恢复为备份内容；仅在预览确认后执行", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConflictChoiceRow(
+    conflict: BackupRowConflict,
+    selected: BackupConflictResolution?,
+    enabled: Boolean,
+    onSelect: (BackupConflictResolution) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Text(conflict.key.table, style = MaterialTheme.typography.bodyMedium)
+        Text(shortRowKey(conflict.key.primaryKey), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { onSelect(BackupConflictResolution.KEEP_EXISTING) },
+                enabled = enabled,
+                modifier = Modifier.testTag("backup-conflict-keep")
+            ) { Text(if (selected == BackupConflictResolution.KEEP_EXISTING) "✓ 保留本机" else "保留本机") }
+            OutlinedButton(
+                onClick = { onSelect(BackupConflictResolution.USE_BACKUP) },
+                enabled = enabled,
+                modifier = Modifier.testTag("backup-conflict-use")
+            ) { Text(if (selected == BackupConflictResolution.USE_BACKUP) "✓ 使用备份" else "使用备份") }
+        }
+    }
+}
+
+private fun shortRowKey(raw: String): String =
+    if (raw.length <= 44) raw else raw.take(20) + "…" + raw.takeLast(20)
