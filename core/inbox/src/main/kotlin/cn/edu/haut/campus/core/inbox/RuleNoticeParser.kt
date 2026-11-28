@@ -333,12 +333,7 @@ object CourseCancellationRule : InboxRule {
             }
             val distance = kotlin.math.abs(match.range.first - mention.span.startOffset)
             if (distance > 80) return@forEach
-            val date = nearestResolvedDate(
-                dates,
-                match.range.first,
-                sentenceBounds.first,
-                sentenceBounds.second
-            )
+            val date = selectDateNear(input, dates, match.range.first)
             if (date == null) {
                 issues += ParseIssue(
                     kind = ParseIssueKind.MISSING_DATE,
