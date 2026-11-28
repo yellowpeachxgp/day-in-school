@@ -28,4 +28,4 @@ W1-07 校园实体图内核（纯 JVM）。本模块把楼宇、教室、设施�
 
 - 本卡不改既有目录消费方、不改 Room、不改契约、不改 UI。
 - `implementation(project(":core:domain"))` 仅用于过渡迁移适配器直接读取现有目录对象，避免复制大型药品/餐厅目录造成第二事实源；公共内核模型不依赖 domain。
-- `dis-datapack/v1` 的外部签名 schema 属 W5-01；本切片交付实体模型、快照合并、现有目录迁移适配层和格式无关的 `CampusGraphDataPackageLoader` 接缝，但不宣称已完成外部数据包编解码。
+- `dis-datapack/v1` 外部签名、exact-byte 解析与 Schema 校验在 `:core:school-packages`；本模块的 `DisDatapackCampusGraphDecoder` 只把已验证包投影为图实体。当前无损支持 `procedure-guide`（`placeRef` 为 service/campus，或显式 defaultCampusId）与 `facility-catalog`（`placeRef` 为 campus/building）；`indoor-graph` 的 edge/level、`opportunity-catalog`、`period-preset`、`pharmacy-catalog` 与语义不明的 `dependsOn` 一律 fail-closed，待契约/图模型补齐无损映射后开放。
