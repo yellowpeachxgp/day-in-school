@@ -42,7 +42,7 @@ class DormCollaborationRuntime(
 )
 
 /** W4-08 生产装配：复用 W4-05 文件缓存 client；身份访问只经只读 val 暴露的 CloudIdentityRepository 窄 port。 */
-object DormCollaborationAssembly {
+internal object DormCollaborationAssembly {
     suspend fun create(
         repository: CampusRepository,
         filesDir: File,
