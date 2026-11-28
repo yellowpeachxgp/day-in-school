@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.knowledge
+package cn.edu.haut.campus.feature.knowledge.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -27,12 +26,19 @@ import cn.edu.haut.campus.core.designsystem.XPeachFilterPill
 import cn.edu.haut.campus.core.designsystem.XPeachSearchField
 import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
 import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.feature.knowledge.state.CourseDeadlineUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseMaterialCardUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseReviewTaskUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseSearchHitUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceStatus
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceUiAction
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceUiState
 
 /** W3-04 课程空间骨架页：只做状态完整渲染与动作回调，文件选择/预览导航由后续集成接入。 */
 @Composable
 fun CourseSpaceScreen(
     state: CourseSpaceUiState,
-    onAction: (CourseSpaceAction) -> Unit
+    onAction: (CourseSpaceUiAction) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -46,7 +52,7 @@ fun CourseSpaceScreen(
             actions = {
                 TextButton(
                     enabled = state.exportEnabled && state.status != CourseSpaceStatus.LOADING,
-                    onClick = { onAction(CourseSpaceAction.ExportClicked) }
+                    onClick = { onAction(CourseSpaceUiAction.ExportClicked) }
                 ) {
                     Text("导出")
                 }
@@ -90,7 +96,7 @@ fun CourseSpaceScreen(
 }
 
 @Composable
-private fun CourseContent(state: CourseSpaceUiState, onAction: (CourseSpaceAction) -> Unit) {
+private fun CourseContent(state: CourseSpaceUiState, onAction: (CourseSpaceUiAction) -> Unit) {
     if (state.status == CourseSpaceStatus.PARTIAL) {
         NoticeCard("部分资料尚未完成文本索引，搜索结果可能不完整。")
     }
@@ -102,7 +108,7 @@ private fun CourseContent(state: CourseSpaceUiState, onAction: (CourseSpaceActio
     }
     XPeachSearchField(
         value = state.query,
-        onValueChange = { onAction(CourseSpaceAction.QueryChanged(it)) },
+        onValueChange = { onAction(CourseSpaceUiAction.QueryChanged(it)) },
         placeholder = "搜索课件、PDF、照片或笔记正文",
         modifier = Modifier.fillMaxWidth()
     )
@@ -113,14 +119,14 @@ private fun CourseContent(state: CourseSpaceUiState, onAction: (CourseSpaceActio
         XPeachFilterPill(
             label = "全部周",
             selected = state.selectedWeek == null,
-            onClick = { onAction(CourseSpaceAction.WeekSelected(null)) },
+            onClick = { onAction(CourseSpaceUiAction.WeekSelected(null)) },
             compact = true
         )
         state.availableWeeks.forEach { week ->
             XPeachFilterPill(
                 label = "第 " + week + " 周",
                 selected = state.selectedWeek == week,
-                onClick = { onAction(CourseSpaceAction.WeekSelected(week)) },
+                onClick = { onAction(CourseSpaceUiAction.WeekSelected(week)) },
                 compact = true
             )
         }
@@ -157,32 +163,32 @@ private fun EmptyBlock() {
 }
 
 @Composable
-private fun ErrorBlock(message: String, retryable: Boolean, onAction: (CourseSpaceAction) -> Unit) {
+private fun ErrorBlock(message: String, retryable: Boolean, onAction: (CourseSpaceUiAction) -> Unit) {
     XPeachEmptyState(
         title = if (retryable) "资料加载失败" else "资料暂不可用",
         subtitle = message,
         actionLabel = if (retryable) "重试" else null,
-        onAction = if (retryable) ({ onAction(CourseSpaceAction.RetryClicked) }) else null
+        onAction = if (retryable) ({ onAction(CourseSpaceUiAction.RetryClicked) }) else null
     )
 }
 
 @Composable
-private fun PermissionBlock(onAction: (CourseSpaceAction) -> Unit) {
+private fun PermissionBlock(onAction: (CourseSpaceUiAction) -> Unit) {
     XPeachEmptyState(
         title = "需要文件访问授权",
         subtitle = "只在用户选择资料后读取本机文件；不会联网上传。",
         actionLabel = "继续授权",
-        onAction = { onAction(CourseSpaceAction.PermissionRequested) }
+        onAction = { onAction(CourseSpaceUiAction.PermissionRequested) }
     )
 }
 
 @Composable
-private fun LoginBlock(onAction: (CourseSpaceAction) -> Unit) {
+private fun LoginBlock(onAction: (CourseSpaceUiAction) -> Unit) {
     XPeachEmptyState(
         title = "需要先选择学校身份",
         subtitle = "课程空间按学校账号与 Profile 隔离。",
         actionLabel = "去选择身份",
-        onAction = { onAction(CourseSpaceAction.LoginRequested) }
+        onAction = { onAction(CourseSpaceUiAction.LoginRequested) }
     )
 }
 
@@ -230,7 +236,7 @@ private fun ReviewTaskCard(tasks: List<CourseReviewTaskUi>) {
 }
 
 @Composable
-private fun MaterialListBlock(state: CourseSpaceUiState, onAction: (CourseSpaceAction) -> Unit) {
+private fun MaterialListBlock(state: CourseSpaceUiState, onAction: (CourseSpaceUiAction) -> Unit) {
     if (state.materials.isEmpty()) {
         XPeachEmptyState(title = "当前教学周没有资料", subtitle = "切换教学周或导入新资料。")
         return
@@ -238,7 +244,7 @@ private fun MaterialListBlock(state: CourseSpaceUiState, onAction: (CourseSpaceA
     state.materials.forEach { material ->
         XPeachCard(
             modifier = Modifier.fillMaxWidth(),
-            onClick = { onAction(CourseSpaceAction.MaterialOpened(material.id)) }
+            onClick = { onAction(CourseSpaceUiAction.MaterialOpened(material.id)) }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -267,7 +273,7 @@ private fun MaterialListBlock(state: CourseSpaceUiState, onAction: (CourseSpaceA
 }
 
 @Composable
-private fun SearchResultsBlock(state: CourseSpaceUiState, onAction: (CourseSpaceAction) -> Unit) {
+private fun SearchResultsBlock(state: CourseSpaceUiState, onAction: (CourseSpaceUiAction) -> Unit) {
     if (state.searchHits.isEmpty()) {
         XPeachEmptyState(title = "没有命中", subtitle = "可尝试课程名、章节名或 PDF/照片中的连续中文词。")
         return
@@ -275,7 +281,7 @@ private fun SearchResultsBlock(state: CourseSpaceUiState, onAction: (CourseSpace
     state.searchHits.forEach { hit ->
         XPeachCard(
             modifier = Modifier.fillMaxWidth(),
-            onClick = { onAction(CourseSpaceAction.MaterialOpened(hit.materialId)) }
+            onClick = { onAction(CourseSpaceUiAction.MaterialOpened(hit.materialId)) }
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

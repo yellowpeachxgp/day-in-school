@@ -1,6 +1,7 @@
 package cn.edu.haut.campus.feature.knowledge
 
 import cn.edu.haut.campus.feature.knowledge.preview.CourseSpacePreviewFixtures
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

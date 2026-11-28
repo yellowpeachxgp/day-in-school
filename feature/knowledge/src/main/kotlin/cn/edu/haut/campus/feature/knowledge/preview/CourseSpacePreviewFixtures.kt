@@ -3,13 +3,13 @@ package cn.edu.haut.campus.feature.knowledge.preview
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
-import cn.edu.haut.campus.feature.knowledge.CourseDeadlineUi
-import cn.edu.haut.campus.feature.knowledge.CourseMaterialCardUi
-import cn.edu.haut.campus.feature.knowledge.CourseReviewTaskUi
-import cn.edu.haut.campus.feature.knowledge.CourseSearchHitUi
-import cn.edu.haut.campus.feature.knowledge.CourseSpaceScreen
-import cn.edu.haut.campus.feature.knowledge.CourseSpaceStatus
-import cn.edu.haut.campus.feature.knowledge.CourseSpaceUiState
+import cn.edu.haut.campus.feature.knowledge.state.CourseDeadlineUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseMaterialCardUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseReviewTaskUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseSearchHitUi
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceStatus
+import cn.edu.haut.campus.feature.knowledge.state.CourseSpaceUiState
+import cn.edu.haut.campus.feature.knowledge.ui.CourseSpaceScreen
 
 /** W3-04 课程空间骨架 UI 状态夹具；覆盖阶段 S 要求的完整 11 态矩阵。 */
 object CourseSpacePreviewFixtures {

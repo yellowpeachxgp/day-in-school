@@ -1,4 +1,4 @@
-package cn.edu.haut.campus.feature.knowledge
+package cn.edu.haut.campus.feature.knowledge.state
 
 import androidx.compose.runtime.Immutable
 
@@ -56,6 +56,7 @@ data class CourseDeadlineUi(
     val inTimeline: Boolean
 )
 
+/** 课程空间不可变渲染快照；只包含展示字段，ui/ 不接触 Repository 或数据库类型。 */
 @Immutable
 data class CourseSpaceUiState(
     val status: CourseSpaceStatus,
@@ -72,13 +73,3 @@ data class CourseSpaceUiState(
     val notice: String? = null,
     val exportEnabled: Boolean = true
 )
-
-sealed interface CourseSpaceAction {
-    data class QueryChanged(val value: String) : CourseSpaceAction
-    data class WeekSelected(val week: Int?) : CourseSpaceAction
-    data class MaterialOpened(val materialId: String) : CourseSpaceAction
-    data object ExportClicked : CourseSpaceAction
-    data object RetryClicked : CourseSpaceAction
-    data object PermissionRequested : CourseSpaceAction
-    data object LoginRequested : CourseSpaceAction
-}
