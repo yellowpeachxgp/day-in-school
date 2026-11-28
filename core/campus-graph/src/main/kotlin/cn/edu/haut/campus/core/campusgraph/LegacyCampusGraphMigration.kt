@@ -504,8 +504,12 @@ object LegacyCampusGraphMigration {
 
             if (club.buildingName.isNotBlank()) {
                 building = buildingsByLegacyId.values.firstOrNull {
+                    // 只把已核验的非正则别名当作同一楼宇；F01 这类 verified=false 的
+                    // 片区近似别名不得让社团场地继承 E/F 公寓区中心坐标。
                     it.name == club.buildingName || it.shortName == club.buildingName ||
-                        it.aliases.any { alias -> alias == club.buildingName }
+                        it.legacyAliases.any { alias ->
+                            !alias.pattern && alias.verified && alias.value == club.buildingName
+                        }
                 } ?: extraBuildings.getOrPut(club.buildingName) {
                     val buildingRef = graphRef(campusId, CampusGraphEntityType.BUILDING, club.buildingName)
                     val provenance = provenance(
