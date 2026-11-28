@@ -56,7 +56,7 @@ class RoomUtilityBalanceReadPort(
                 UtilityBalanceReading(
                     meterId = event.meterRef.id,
                     balanceCents = event.balanceCents,
-                    sampledAt = event.occurredAt,
+                    sampledAt = event.provenance.fetchedAt ?: event.occurredAt,
                     provenance = event.provenance
                 )
             }

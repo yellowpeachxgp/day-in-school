@@ -111,6 +111,25 @@ class BuiltinAutomationTemplatesTest {
     }
 
     @Test
+    fun staleUtilityBalanceIsUnknownAndDoesNotTriggerFridayTemplate() = runTest {
+        val fridayEvening = Instant.parse("2026-03-06T09:30:00Z")
+        val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_FRIDAY_UTILITY_LOW_BALANCE)!!
+        val rule = template.instantiate(scope).copy(enabled = true)
+        val engine = engineAt(
+            at = fridayEvening,
+            timelineService = StaticTimelineService(emptyList()),
+            utilityReadings = listOf(utilityReading(fridayEvening.minusSeconds(8L * 24L * 3600L), balanceCents = 1999L))
+        )
+
+        val run = engine.dryRun(rule, fridayEvening)
+
+        assertEquals(RunStatus.CONDITIONS_NOT_MET, run.status)
+        val utility = run.evaluations.single { it.conditionType == BuiltinAutomationTypes.CONDITION_UTILITY_BALANCE }
+        assertEquals(Certainty.UNKNOWN, utility.certainty)
+        assertTrue(run.outcomes.isEmpty())
+    }
+
+    @Test
     fun courseCancelledStudyTemplateDryRunRequiresExplicitCancellationEvidence() = runTest {
         val template = BuiltinAutomationTemplates.byId(BuiltinAutomationTemplates.TEMPLATE_COURSE_CANCELLED_STUDY)!!
         val rule = template.instantiate(scope).copy(enabled = true)

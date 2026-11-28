@@ -224,6 +224,9 @@ class UtilityBalanceConditionEvaluator(
         }.filter { it.meterId.startsWith(meterPrefix) && (meterFilter == null || it.meterId == meterFilter) }
         if (samples.isEmpty()) return unknown(type, "没有匹配的水电读数证据")
         val latest = samples.maxByOrNull { it.sampledAt } ?: return unknown(type, "没有匹配的水电读数证据")
+        if (latest.sampledAt.isAfter(ctx.now.plusSeconds(300))) {
+            return unknown(type, "水电读数时间戳明显超前于本机时间，证据不一致")
+        }
         val age = Duration.between(latest.sampledAt, ctx.now).seconds.coerceAtLeast(0L)
         if (age > maxAgeSeconds) {
             return unknown(type, "水电读数已陈旧（" + age + " 秒），不能触发确定性结论")
