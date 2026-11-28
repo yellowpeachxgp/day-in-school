@@ -55,6 +55,10 @@ object BackupCenterPreviewFixtures {
     val offline = BackupCenterUiState(matrix = SettingsUiMatrix.Offline)
     val unsupported = BackupCenterUiState(matrix = SettingsUiMatrix.Unsupported, serviceAvailable = false)
 
+    val exportWizard = content.copy(
+        exportWizard = ExportWizardUiState(visible = true)
+    )
+
     val restorePreview = content.copy(
         restoreWizard = RestoreWizardUiState(
             visible = true,

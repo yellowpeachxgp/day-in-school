@@ -3,11 +3,13 @@ package cn.edu.haut.campus.feature.settings.root.backup
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performTextInput
 import cn.edu.haut.campus.core.vault.BackupConflictResolution
 import cn.edu.haut.campus.core.vault.BackupRowKey
 import cn.edu.haut.campus.core.vault.RestoreMode
@@ -36,6 +38,19 @@ class BackupCenterSectionTest {
         composeRule.onNodeWithTag("backup-open-restore").performClick()
 
         assertEquals(listOf("open-export", "open-restore"), actions.events)
+    }
+
+    @Test
+    fun exportWizardValidatesPassphraseBeforeChoosingTarget() {
+        composeRule.setContent {
+            BackupCenterSection(state = BackupCenterPreviewFixtures.exportWizard, actions = RecordingActions())
+        }
+
+        composeRule.onNodeWithText("导出加密备份").assertIsDisplayed()
+        composeRule.onNodeWithTag("backup-export-choose-target").assertIsNotEnabled()
+        composeRule.onNodeWithTag("backup-export-passphrase").performTextInput("correct horse")
+        composeRule.onNodeWithTag("backup-export-confirm").performTextInput("correct horse")
+        composeRule.onNodeWithTag("backup-export-choose-target").assertIsEnabled()
     }
 
     @Test

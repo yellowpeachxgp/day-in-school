@@ -46,7 +46,9 @@ class VaultBackupServiceTest {
     private lateinit var journal: RoomVaultJournal
     private lateinit var service: VaultBackupService
     private var generatedId = 0
-    private val passphrase = "backup-passphrase".toCharArray()
+    private val passphrase = charArrayOf(
+        'b', 'a', 'c', 'k', 'u', 'p', '-', 'p', 'a', 's', 's', 'p', 'h', 'r', 'a', 's', 'e'
+    )
     private val scope = SchoolAccountScope(
         schoolId = SchoolId("haut"),
         accountId = AccountId("acct_backup"),
