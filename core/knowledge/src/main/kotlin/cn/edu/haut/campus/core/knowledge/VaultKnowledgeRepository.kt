@@ -407,7 +407,18 @@ class VaultKnowledgeRepository internal constructor(
         // 含 CJK 的查询片必须保持原字符连续性。token 流只保留 token 顺序，无法区分
         // "CPU缓存" 与 "CPU、缓存"；这里用 normalized plain text 防止跨标点/行边界假命中。
         // 单字 CJK fallback 也按原文子串定位，因为索引层本来就用 normalizedText fallback。
-        if (unit.any(::isCjkCharacter)) return normalizedText.contains(unit)
+        if (unit.any(::isCjkCharacter)) {
+            if (unit.all(::isCjkCharacter)) return normalizedText.contains(unit)
+            var mixedIndex = normalizedText.indexOf(unit)
+            while (mixedIndex >= 0) {
+                val mixedEnd = mixedIndex + unit.length
+                val leftEmbedded = mixedIndex > 0 && isNonCjkWordContinuationCharacter(normalizedText[mixedIndex - 1])
+                val rightEmbedded = mixedEnd < normalizedText.length && isNonCjkWordContinuationCharacter(normalizedText[mixedEnd])
+                if (!leftEmbedded && !rightEmbedded) return true
+                mixedIndex = normalizedText.indexOf(unit, mixedIndex + 1)
+            }
+            return false
+        }
         var index = normalizedText.indexOf(unit)
         while (index >= 0) {
             val end = index + unit.length
@@ -427,8 +438,16 @@ class VaultKnowledgeRepository internal constructor(
         return false
     }
 
-    private fun isWordContinuationCharacter(char: Char): Boolean =
-        char.isLetterOrDigit() || char == '_'
+    private fun isWordContinuationCharacter(char: Char): Boolean {
+        val type = Character.getType(char.code)
+        return char.isLetterOrDigit() || char == '_' ||
+            type == Character.NON_SPACING_MARK.toInt() ||
+            type == Character.COMBINING_SPACING_MARK.toInt() ||
+            type == Character.ENCLOSING_MARK.toInt()
+    }
+
+    private fun isNonCjkWordContinuationCharacter(char: Char): Boolean =
+        !isCjkCharacter(char) && isWordContinuationCharacter(char)
 
     private fun isCjkCharacter(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
         Character.UnicodeScript.HAN,

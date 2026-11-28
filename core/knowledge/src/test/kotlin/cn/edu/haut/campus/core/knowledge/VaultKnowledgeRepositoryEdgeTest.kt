@@ -317,6 +317,26 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertEquals(0, hits[0].lineIndex)
     }
 
+    @Test
+    fun mixedScriptMatchDoesNotEmbedInLongerAsciiWord() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 2, "vCPU缓存"))
+        repository.archiveMaterial(pdfRequest("CPU缓存课件", byteArrayOf(4)))
+        val hits = repository.searchMaterials(scope, "CPU缓存")
+        assertEquals(1, hits.size)
+        assertNull(hits[0].pageIndex)
+        assertNull(hits[0].lineIndex)
+    }
+
+    @Test
+    fun unicodeCombiningMarkCanContinueTailPrefixMatch() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 1, "किताबें"))
+        repository.archiveMaterial(pdfRequest("हिन्दी课件", byteArrayOf(5)))
+        val hits = repository.searchMaterials(scope, "कित")
+        assertEquals(1, hits.size)
+        assertEquals(1, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+    }
+
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
         ArchiveMaterialRequest(
             scope = scope,
