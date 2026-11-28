@@ -730,6 +730,7 @@ private fun SchoolContributionCard(copyFeedback: String?, onAction: (SchoolCente
 }
 
 private fun verificationLabel(evidence: CapabilityEvidence?): String = when (evidence?.level) {
+    VerificationLevel.UNVERIFIED -> "尚未独立核验"
     VerificationLevel.SOURCE_CONFIRMED -> "源码已确认 · 学校待核验"
     VerificationLevel.MOCK_TESTED -> "协议测试通过 · 学校待核验"
     VerificationLevel.DEVICE_TESTED -> "设备已验证 · 学校待核验"
