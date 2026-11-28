@@ -42,7 +42,6 @@ class OpenAiCompatibleProvider(
         return try {
             val endpoint = requireReadyEndpoint(scope)
             val preview = buildPreview(scope, endpoint, req)
-            val visionAttachments = loadVisionAttachments(scope, endpoint, req)
             when (val verdict = consentCenter.consume(scope, endpoint, preview, consent)) {
                 AiConsentVerdict.ACCEPTED -> Unit
                 AiConsentVerdict.INVALID -> return AiResult.Failure(AiError.CONSENT_INVALID, retryable = false)
@@ -50,6 +49,7 @@ class OpenAiCompatibleProvider(
                 AiConsentVerdict.CONSUMED -> return AiResult.Failure(AiError.CONSENT_CONSUMED, retryable = false)
                 AiConsentVerdict.MISMATCH -> return AiResult.Failure(AiError.CONSENT_MISMATCH, retryable = false)
             }
+            val visionAttachments = loadVisionAttachments(scope, endpoint, req)
             keyMaterialAccess.withKeyMaterial(scope) { keyEndpoint, key ->
                 if (keyEndpoint != endpoint) {
                     return@withKeyMaterial AiResult.Failure(

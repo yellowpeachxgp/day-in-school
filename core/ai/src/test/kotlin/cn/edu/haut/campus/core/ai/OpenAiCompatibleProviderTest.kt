@@ -57,6 +57,33 @@ class OpenAiCompatibleProviderTest {
     }
 
     @Test
+    fun forgedConsentNeverReadsVisionAttachmentBytes() = runTest {
+        val transport = RecordingTransport(AiTransportResponse(200, "{}"))
+        val attachmentReader = object : AiAttachmentReader {
+            var calls = 0
+            override suspend fun read(scope: SchoolAccountScope, ref: StoredBlobRef): ByteArray {
+                calls += 1
+                return byteArrayOf(1, 2, 3)
+            }
+        }
+        val harness = Harness(transport = transport, attachmentReader = attachmentReader)
+        val req = AiTestFixtures.request().copy(attachments = listOf(AiTestFixtures.blobRef(byteCount = 3)))
+        val forged = AiConsentToken(
+            tokenId = "consent-" + "2".repeat(64),
+            scopeFingerprint = "2".repeat(64),
+            requestFingerprint = "2".repeat(64),
+            expiresAt = java.time.Instant.now().plusSeconds(30)
+        )
+
+        val result = harness.provider.send(AiTestFixtures.scope, req, forged)
+
+        assertEquals(AiError.CONSENT_MISMATCH, (result as AiResult.Failure).error)
+        assertEquals(0, attachmentReader.calls)
+        assertEquals(0, transport.calls)
+        assertEquals(0, harness.keyAccess.calls)
+    }
+
+    @Test
     fun disabledByDefaultBlocksPreviewAndSendBeforeKeyMaterial() = runTest {
         val transport = RecordingTransport(AiTransportResponse(200, "{}"))
         val harness = Harness(enabled = false, transport = transport)
