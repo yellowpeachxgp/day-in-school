@@ -33,18 +33,22 @@ internal object BackupEnvelopeCrypto {
         random: SecureRandom = SecureRandom()
     ): ByteArray {
         require(passphrase.isNotEmpty()) { "备份口令不能为空" }
-        require(iterations >= 1_000) { "PBKDF2 迭代次数过低" }
+        require(iterations in BackupFormatConstants.MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
+            "PBKDF2 迭代次数超出 dis-backup/v1 允许范围"
+        }
         require(plaintextZip.size <= BackupFormatConstants.MAX_ARCHIVE_BYTES) { "备份明文超过大小上限" }
         val salt = ByteArray(SALT_BYTES).also(random::nextBytes)
         val nonce = ByteArray(NONCE_BYTES).also(random::nextBytes)
         val keys = deriveKeys(passphrase, salt, iterations)
+        var keyCheckBytes: ByteArray? = null
         try {
-            val keyCheck = keyCheck(keys.check)
+            val computedKeyCheck = keyCheck(keys.check)
+            keyCheckBytes = computedKeyCheck
             val header = canonicalHeader(
                 iterations = iterations,
                 salt = salt,
                 nonce = nonce,
-                keyCheck = keyCheck
+                keyCheck = computedKeyCheck
             )
             val headerBytes = header.toByteArray(Charsets.UTF_8)
             require(headerBytes.size <= BackupFormatConstants.MAX_HEADER_BYTES) { "备份加密头过大" }
@@ -58,9 +62,9 @@ internal object BackupEnvelopeCrypto {
             out.putInt(headerBytes.size)
             out.put(headerBytes)
             out.put(ciphertext)
-            Arrays.fill(keyCheck, 0)
             return out.array()
         } finally {
+            keyCheckBytes?.let { Arrays.fill(it, 0) }
             keys.zero()
         }
     }
@@ -85,12 +89,14 @@ internal object BackupEnvelopeCrypto {
         val headerEnd = headerStart + headerLength
         if (headerEnd > container.size) throw BackupCorruptedException("外层头超出容器末尾")
         val headerBytes = container.copyOfRange(headerStart, headerEnd)
+        val headerText = String(headerBytes, Charsets.UTF_8)
         val header = try {
-            Json.parse(String(headerBytes, Charsets.UTF_8), BackupFormatConstants.MAX_HEADER_BYTES).asObjOrNull
+            Json.parse(headerText, BackupFormatConstants.MAX_HEADER_BYTES).asObjOrNull
                 ?: throw IllegalArgumentException("header 不是 object")
         } catch (error: Throwable) {
             throw BackupCorruptedException("外层头 JSON 无法解析", error)
         }
+        if (Json.canonical(header) != headerText) throw BackupCorruptedException("外层头不是 CanonicalJson 规范形")
         val allowedHeaderKeys = setOf(
             "format", "formatVersion", "kdf", "iterations", "cipher", "salt", "nonce",
             "keyCheck", "payloadFormat"
@@ -115,8 +121,15 @@ internal object BackupEnvelopeCrypto {
         if (envelopeVersion != BackupFormatConstants.FORMAT_VERSION) {
             throw BackupCorruptedException("不支持的外层版本")
         }
+        if (header.requiredStringOrNull("kdf") != KDF) throw BackupCorruptedException("KDF 不是 PBKDF2WithHmacSHA256")
+        if (header.requiredStringOrNull("cipher") != CIPHER) throw BackupCorruptedException("cipher 不是 AES/GCM/NoPadding")
+        if (header.requiredStringOrNull("payloadFormat") != "application/zip") {
+            throw BackupCorruptedException("payloadFormat 不是 application/zip")
+        }
         val iterations = header.requiredIntOrCorrupt("iterations")
-        if (iterations < 1_000) throw BackupCorruptedException("PBKDF2 迭代次数非法")
+        if (iterations !in BackupFormatConstants.MIN_PBKDF2_ITERATIONS..BackupFormatConstants.MAX_PBKDF2_ITERATIONS) {
+            throw BackupCorruptedException("PBKDF2 迭代次数超出允许范围")
+        }
         val salt = decodeBase64Field(header, "salt")
         val nonce = decodeBase64Field(header, "nonce")
         val keyCheckExpected = decodeBase64Field(header, "keyCheck")
@@ -210,6 +223,12 @@ internal object BackupEnvelopeCrypto {
         Base64.getDecoder().decode(header.requiredString(key))
     } catch (error: Throwable) {
         throw BackupCorruptedException("外层字段不是合法 base64: " + key, error)
+    }
+
+    private fun JsonValue.Obj.requiredStringOrNull(key: String): String? = try {
+        requiredString(key)
+    } catch (error: Throwable) {
+        null
     }
 
     private fun JsonValue.Obj.requiredIntOrCorrupt(key: String): Int = try {

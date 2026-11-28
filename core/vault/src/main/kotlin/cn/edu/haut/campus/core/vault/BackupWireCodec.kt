@@ -109,8 +109,12 @@ internal object BackupWireCodec {
             throw BackupCorruptedException("data.json format 不是 dis-backup-data/v1")
         }
         val scope = try {
-            decodeScope(root.requiredField("scope"))
+            val scopeObj = root.requiredField("scope").asObjOrNull
+                ?: throw IllegalArgumentException("scope 不是 object")
+            requireExactKeys(scopeObj, setOf("schoolId", "accountId", "profileId", "campusId"), "scope")
+            decodeScope(scopeObj)
         } catch (error: Throwable) {
+            if (error is BackupException) throw error
             throw BackupCorruptedException("data.json scope 无法解析", error)
         }
         val blobEntries = root.requiredArrayOrCorrupt("blobEntries").map { value ->

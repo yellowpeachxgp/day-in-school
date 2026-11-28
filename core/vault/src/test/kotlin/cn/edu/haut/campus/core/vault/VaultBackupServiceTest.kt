@@ -307,7 +307,7 @@ class VaultBackupServiceTest {
         journal = journal,
         appVersion = "backup-test",
         clock = { fixedInstant() },
-        pbkdf2Iterations = 1_000,
+        pbkdf2Iterations = BackupFormatConstants.MIN_PBKDF2_ITERATIONS,
         mutationTokenGenerator = mutationTokenGenerator
     )
 
@@ -351,7 +351,7 @@ class VaultBackupServiceTest {
             String(entries.getValue(BackupFormatConstants.DATA_ENTRY), Charsets.UTF_8),
             blobs
         )
-        return BackupEnvelopeCrypto.encrypt(modifiedZip, passphrase, 1_000)
+        return BackupEnvelopeCrypto.encrypt(modifiedZip, passphrase, BackupFormatConstants.MIN_PBKDF2_ITERATIONS)
     }
 
     private fun wipePortableTables() {
