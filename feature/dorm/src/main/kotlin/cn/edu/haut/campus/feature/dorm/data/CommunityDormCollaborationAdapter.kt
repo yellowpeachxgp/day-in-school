@@ -105,17 +105,37 @@ class CommunityDormCollaborationAdapter(
         val tasksDeferred = async { client.listDutyTasks(selected.groupId, limit = 100).unwrap("listDutyTasks") }
         val repairsDeferred = async { client.listRepairTickets(selected.groupId, limit = 100).unwrap("listRepairTickets") }
 
-        val members = requireArray(membersDeferred.await().value.data, "data").map { parseDormMember(it.requireObj("member")) }
-        val entries = requireArray(entriesDeferred.await().value.data, "data").map {
+        val membersResult = membersDeferred.await()
+        val entriesResult = entriesDeferred.await()
+        val balancesResult = balancesDeferred.await()
+        val settlementsResult = settlementsDeferred.await()
+        val rotasResult = rotasDeferred.await()
+        val tasksResult = tasksDeferred.await()
+        val repairsResult = repairsDeferred.await()
+        val partialWarnings = mutableListOf<String>()
+        fun warnIfTruncated(result: Unwrapped, label: String) {
+            if (result.hasNextCursor()) partialWarnings += label + "超过首 100 条，当前只展示第一页"
+        }
+        warnIfTruncated(groupsResult, "宿舍群组")
+        warnIfTruncated(membersResult, "成员")
+        warnIfTruncated(entriesResult, "账本历史")
+        warnIfTruncated(settlementsResult, "结算记录")
+        warnIfTruncated(rotasResult, "值日轮班")
+        warnIfTruncated(tasksResult, "值日任务")
+        warnIfTruncated(repairsResult, "报修记录")
+
+        val members = requireArray(membersResult.value.data, "data").map { parseDormMember(it.requireObj("member")) }
+        val entries = requireArray(entriesResult.value.data, "data").map {
             parseDormLedgerEntry(it.requireObj("ledger entry")).also { entry -> validateDormLedgerEntryInvariants(entry) }
         }
-        val balances = parseDormLedgerBalances(balancesDeferred.await().value.data.requireObj("ledger balances"))
-        val settlements = requireArray(settlementsDeferred.await().value.data, "data").map { parseDormSettlement(it.requireObj("settlement")) }
-        val rotas = requireArray(rotasDeferred.await().value.data, "data").map { parseDormDutyRota(it.requireObj("rota")) }
-        val dutyTasks = requireArray(tasksDeferred.await().value.data, "data").map { parseDormDutyTask(it.requireObj("duty task")) }
-        val repairs = requireArray(repairsDeferred.await().value.data, "data").map { parseDormRepairTicket(it.requireObj("repair")) }
+        val balances = parseDormLedgerBalances(balancesResult.value.data.requireObj("ledger balances"))
+        val settlements = requireArray(settlementsResult.value.data, "data").map { parseDormSettlement(it.requireObj("settlement")) }
+        val rotas = requireArray(rotasResult.value.data, "data").map { parseDormDutyRota(it.requireObj("rota")) }
+        val dutyTasks = requireArray(tasksResult.value.data, "data").map { parseDormDutyTask(it.requireObj("duty task")) }
+        val repairs = requireArray(repairsResult.value.data, "data").map { parseDormRepairTicket(it.requireObj("repair")) }
         val swaps = rotas.flatMap { rota ->
             val result = client.listDutySwaps(rota.rotaId, limit = 100).unwrap("listDutySwaps")
+            warnIfTruncated(result, "换班请求")
             requireArray(result.value.data, "data").map { parseDormDutySwap(it.requireObj("duty swap")) }
         }
         validateBalanceInvariant(balances)
@@ -132,6 +152,7 @@ class CommunityDormCollaborationAdapter(
             repairs = repairs.sortedByDescending { it.updatedAt },
             staleness = groupsResult.staleness,
             cachedAtEpochMillis = groupsResult.cachedAtEpochMillis,
+            partialWarnings = partialWarnings.distinct(),
         )
     }
 
@@ -341,7 +362,9 @@ class CommunityDormCollaborationAdapter(
         val value: CommunityEnvelope,
         val staleness: Staleness,
         val cachedAtEpochMillis: Long?,
-    )
+    ) {
+        fun hasNextCursor(): Boolean = value.meta.fields["next_cursor"] is JsonValue.Str
+    }
 
     private fun CommunityResult<CommunityEnvelope>.unwrap(operation: String): Unwrapped = when (this) {
         is CommunityResult.Success -> Unwrapped(value, staleness, cachedAtEpochMillis)
@@ -398,6 +421,13 @@ private fun JsonValue.Obj.nullableString(key: String): String? {
     return value.stringOrNull() ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "契约字段不是可空字符串：$key", retryable = false)
 }
 
+/** OpenAPI 中未列入 required 的可空字段：缺失与 JSON null 都按 null 处理；存在但类型错误仍 fail-closed。 */
+private fun JsonValue.Obj.optionalNullableString(key: String): String? {
+    val value = fields[key] ?: return null
+    if (value == JsonValue.Null) return null
+    return value.stringOrNull() ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "契约可选字段不是字符串：$key", retryable = false)
+}
+
 private fun JsonValue.Obj.long(key: String): Long {
     val literal = (required(key) as? JsonValue.Num)?.literal
         ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "契约字段不是整数：$key", retryable = false)
@@ -422,7 +452,7 @@ private fun parseDormGroup(obj: JsonValue.Obj): DormGroupSummary = DormGroupSumm
     groupId = obj.string("group_id"),
     schoolId = obj.string("school_id"),
     name = obj.string("name"),
-    description = obj.nullableString("description"),
+    description = obj.optionalNullableString("description"),
     memberCount = obj.int("member_count"),
     myRole = obj.string("my_role"),
 )

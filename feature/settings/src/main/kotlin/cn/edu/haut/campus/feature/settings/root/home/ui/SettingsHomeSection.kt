@@ -178,6 +178,7 @@ internal fun SettingsHomeSectionContent(
     onNavigateToParcelHub: () -> Unit,
     onNavigateToXpeachCloud: () -> Unit,
     onNavigateToAutomation: () -> Unit,
+    onNavigateToDorm: () -> Unit,
     onShowImportHistory: () -> Unit,
     settingsEntriesContent: @Composable () -> Unit = {}
 ) {
@@ -531,6 +532,41 @@ internal fun SettingsHomeSectionContent(
                                 color = XPeachTheme.readablePrimary
                             )
                         }
+                    }
+
+                    XPeachInsetDivider(verticalPadding = 8.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable(onClick = onNavigateToDorm)
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "宿舍协作",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "只记账分摊、两方确认结算、值日轮班与报修协调",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = "进入协作 ›",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = XPeachTheme.readablePrimary
+                        )
                     }
 
                     XPeachInsetDivider(verticalPadding = 8.dp)

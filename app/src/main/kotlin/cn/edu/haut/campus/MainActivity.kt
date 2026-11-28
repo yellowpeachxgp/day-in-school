@@ -120,6 +120,7 @@ import cn.edu.haut.campus.core.reminder.focus.FocusCoordinator
 import cn.edu.haut.campus.core.reminder.focus.FocusDeliveryTracker
 import cn.edu.haut.campus.core.reminder.focus.FocusNotificationFactory
 import cn.edu.haut.campus.feature.automation.AutomationRoute
+import cn.edu.haut.campus.feature.dorm.DormRoute
 import cn.edu.haut.campus.feature.grades.GradesScreen
 import cn.edu.haut.campus.feature.importer.ImporterScreen
 import cn.edu.haut.campus.feature.map.CampusMapScreen
@@ -321,6 +322,7 @@ class MainActivity : ComponentActivity() {
                     "focus",
                     "empty_classrooms",
                     "community",
+                    "dorm",
                     "xpeach_cloud",
                     "school_center",
                     "automation"
@@ -634,6 +636,13 @@ fun HautCampusRootApp(
                     onBack = { overlayScreen = null }
                 )
             }
+            "dorm" -> {
+                DormRoute(
+                    activeSession = activeSession,
+                    onBack = { overlayScreen = null },
+                    onOpenElectricity = { overlayScreen = "electricity" }
+                )
+            }
             "xpeach_cloud" -> {
                 XPeachCloudAccountScreen(
                     repository = repository,
@@ -805,6 +814,7 @@ fun HautCampusRootApp(
                                 onNavigateToParcelHub = { overlayScreen = "parcel_hub" },
                                 onNavigateToXpeachCloud = { overlayScreen = "xpeach_cloud" },
                                 onNavigateToAutomation = { overlayScreen = "automation" },
+                                onNavigateToDorm = { overlayScreen = "dorm" },
                                 activeSchool = activeSession.school,
                                 activeProfileLabel = activeSession.label,
                                 resetTrigger = if (currentTab == PrimaryBottomTab.PROFILE) tabResetCounter else 0

@@ -190,6 +190,7 @@ fun SettingsScreen(
     onNavigateToParcelHub: () -> Unit = {},
     onNavigateToXpeachCloud: () -> Unit = {},
     onNavigateToAutomation: () -> Unit = {},
+    onNavigateToDorm: () -> Unit = {},
     activeSchool: SchoolProfile = SchoolDirectory.hautProfile(),
     activeProfileLabel: String = "默认账号",
     resetTrigger: Int = 0
@@ -396,6 +397,7 @@ fun SettingsScreen(
                     onNavigateToParcelHub = onNavigateToParcelHub,
                     onNavigateToXpeachCloud = onNavigateToXpeachCloud,
                     onNavigateToAutomation = onNavigateToAutomation,
+                    onNavigateToDorm = onNavigateToDorm,
                     onFeedback = { feedbackText = it },
                     onRefreshWidgets = { WidgetRefreshCoordinator.requestImmediateRefreshAll(context) },
                     onShowImportHistory = { showImportHistoryDialog = true },
