@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 13,
-    "identityHash": "59cc414ff80a3cc44be2706ab7565250",
+    "identityHash": "85c505749dff45669325c3ebf90be46b",
     "entities": [
       {
         "tableName": "student_profile",
@@ -3182,7 +3182,7 @@
       },
       {
         "tableName": "automation_rules",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `scopeSchoolId` TEXT NOT NULL, `scopeAccountId` TEXT NOT NULL, `scopeProfileId` TEXT NOT NULL, `scopeCampusId` TEXT, `name` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `triggerJson` TEXT NOT NULL, `conditionsJson` TEXT NOT NULL, `actionsJson` TEXT NOT NULL, `dedupe` TEXT NOT NULL, `quietHoursJson` TEXT, `templateId` TEXT, `schemaVersion` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `scopeSchoolId` TEXT NOT NULL, `scopeAccountId` TEXT NOT NULL, `scopeProfileId` TEXT NOT NULL, `scopeCampusId` TEXT, `name` TEXT NOT NULL, `enabled` INTEGER NOT NULL, `triggerJson` TEXT NOT NULL, `conditionsJson` TEXT NOT NULL, `actionsJson` TEXT NOT NULL, `dedupe` TEXT NOT NULL, `quietHoursJson` TEXT, `templateId` TEXT, `schemaVersion` INTEGER NOT NULL, `createdAtEpochMs` INTEGER NOT NULL, `updatedAtEpochMs` INTEGER NOT NULL, `activatedAtEpochMs` INTEGER, PRIMARY KEY(`id`))",
         "fields": [
           {
             "fieldPath": "id",
@@ -3279,6 +3279,12 @@
             "columnName": "updatedAtEpochMs",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "activatedAtEpochMs",
+            "columnName": "activatedAtEpochMs",
+            "affinity": "INTEGER",
+            "notNull": false
           }
         ],
         "primaryKey": {
@@ -3633,7 +3639,7 @@
     "views": [],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '59cc414ff80a3cc44be2706ab7565250')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '85c505749dff45669325c3ebf90be46b')"
     ]
   }
 }
