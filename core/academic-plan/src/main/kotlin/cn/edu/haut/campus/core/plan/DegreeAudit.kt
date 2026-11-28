@@ -205,23 +205,26 @@ object DegreeAuditor {
             val blankSourceKey: Boolean
         )
 
-        // 方案课程清单中同名课程若唯一声明 code，可把它作为 name-only 改名目标的稳定身份；
-        // 多个不同 code 或没有声明时保持 null，不做猜测。
+        // 方案课程清单与替代规则中同名课程若唯一声明 code，可把它作为 name-only
+        // 改名目标的稳定身份；多个不同 code 是歧义，必须禁用该 name-only 改名而不是猜测。
         val declaredCodesByCourseName = mutableMapOf<String, MutableMap<String, String>>()
-        plan.allGroups().forEach { group ->
-            group.courses.forEach { ref ->
-                val originalCode = ref.code?.trim()?.takeIf { it.isNotEmpty() } ?: return@forEach
-                val normalizedCode = normalizedNonBlank(ref.code) ?: return@forEach
-                declaredCodesByCourseName.getOrPut(normalize(ref.name)) { mutableMapOf() }[normalizedCode] = originalCode
-            }
+        fun registerDeclaredCourseRef(ref: PlanCourseRef) {
+            val originalCode = ref.code?.trim()?.takeIf { it.isNotEmpty() } ?: return
+            val normalizedCode = normalizedNonBlank(ref.code) ?: return
+            declaredCodesByCourseName.getOrPut(normalize(ref.name)) { mutableMapOf() }[normalizedCode] = originalCode
         }
-        fun inferredTargetCode(courseName: String): String? =
-            declaredCodesByCourseName[normalize(courseName)]?.values?.singleOrNull()
+        plan.allGroups().forEach { group -> group.courses.forEach(::registerDeclaredCourseRef) }
+        plan.substitutions.forEach { rule ->
+            registerDeclaredCourseRef(rule.course)
+            registerDeclaredCourseRef(rule.replaces)
+        }
 
-        fun effectiveTargetRef(rule: CourseRename): PlanCourseRef {
+        fun effectiveTargetRef(rule: CourseRename): PlanCourseRef? {
             val explicit = normalizedNonBlank(rule.now.code)
             if (explicit != null) return rule.now
-            val inferred = inferredTargetCode(rule.now.name) ?: return rule.now
+            val declared = declaredCodesByCourseName[normalize(rule.now.name)].orEmpty()
+            if (declared.size > 1) return null
+            val inferred = declared.values.singleOrNull() ?: return rule.now
             return rule.now.copy(code = inferred)
         }
 
@@ -235,14 +238,46 @@ object DegreeAuditor {
             }
         }
 
+        fun refsChainMatch(source: PlanCourseRef, target: PlanCourseRef): Boolean {
+            val sourceCode = normalizedNonBlank(source.code)
+            val targetCode = normalizedNonBlank(target.code)
+            return if (sourceCode != null) {
+                targetCode != null && sourceCode == targetCode
+            } else {
+                normalize(source.name) == normalize(target.name)
+            }
+        }
+
+        /**
+         * 沿声明顺序把 A→B、B→C 解析到末端。只允许向后链接：较早的 broad/name-only
+         * 规则不能反向吞掉较晚的显式 code 改名；目标码歧义、链分叉或循环时保守禁用改名。
+         */
+        fun terminalRename(initial: CourseRename): CourseRename? {
+            var currentIndex = plan.renames.indexOf(initial)
+            if (currentIndex < 0) return null
+            val visitedIndexes = mutableSetOf<Int>()
+            while (visitedIndexes.add(currentIndex)) {
+                val current = plan.renames[currentIndex]
+                val currentTarget = effectiveTargetRef(current) ?: return null
+                val nextIndexes = plan.renames.mapIndexedNotNull { index, candidate ->
+                    if (index > currentIndex && refsChainMatch(candidate.was, currentTarget)) index else null
+                }
+                if (nextIndexes.size > 1) return null
+                val nextIndex = nextIndexes.singleOrNull() ?: return current
+                currentIndex = nextIndex
+            }
+            return null
+        }
+
         /**
          * 改名规则端点匹配。带显式 code 的端点只接受相同 code：同名不同码是不同课程；
          * name-only 端点才可按名称命中。来源/目标两端都参与身份解析，目标端让新名称成绩
          * 与旧名称成绩落入同一逻辑课程；显式 code 命中优先于 name-only 命中。
          */
         fun renameMatchScore(rule: CourseRename, attempt: GradeAttempt): Int {
+            val effectiveTarget = effectiveTargetRef(rule) ?: return 0
             val wasScore = endpointMatchScore(rule.was, attempt)
-            val nowScore = endpointMatchScore(effectiveTargetRef(rule), attempt)
+            val nowScore = endpointMatchScore(effectiveTarget, attempt)
             return when {
                 wasScore == 2 -> 40
                 nowScore == 2 -> 30
@@ -280,16 +315,19 @@ object DegreeAuditor {
                 return Identity(rawKey, rawName, renamed = false, rename = null, blankSourceKey = false)
             }
             val matchedRename = rename!!
-            val effectiveTarget = effectiveTargetRef(matchedRename)
+            val terminal = terminalRename(matchedRename)
+                ?: return Identity(rawKey, rawName, renamed = false, rename = null, blankSourceKey = false)
+            val effectiveTarget = effectiveTargetRef(terminal)
+                ?: return Identity(rawKey, rawName, renamed = false, rename = null, blankSourceKey = false)
             // 目标声明/可唯一推断 code 时使用该 code；否则使用目标名生成稳定内部身份。
             // 多个旧码指向同一 name-only 目标时也必须同一身份，避免被当作两门课重复入账。
             val key = effectiveTarget.code?.trim()?.takeIf { it.isNotEmpty() }
-                ?: "rename:" + normalize(matchedRename.now.name)
+                ?: "rename:" + normalize(terminal.now.name)
             return Identity(
                 logicalKey = key,
-                logicalName = matchedRename.now.name.trim(),
+                logicalName = terminal.now.name.trim(),
                 renamed = true,
-                rename = matchedRename,
+                rename = terminal,
                 blankSourceKey = false
             )
         }
@@ -605,14 +643,12 @@ object DegreeAuditor {
             val remaining = (group.requiredCredits - earned).max(BigDecimal.ZERO)
             val surplus = (earned - group.requiredCredits).max(BigDecimal.ZERO)
             // 后代/更深组优先抵扣：父组 pending 必须看整棵子树，而不是只看直接入账；
-            // 否则同一门课被子组正确承接后，父组仍会误报「尚未修读」。
-            val assignedKeys = subtreeAssignmentList.flatMap {
-                listOf(normalize(it.course.courseName), normalize(it.course.courseKey))
-            }.toSet()
+            // 同时沿用显式 code 禁配，不能把同名的不同码后代课程误当作父组课程已完成。
             val fulfilledBySubstitution = subtreeAssignmentList.mapNotNull { it.fulfilledCourse }
             val pending = group.courses.filter { ref ->
-                val directlyAssigned = normalize(ref.name) in assignedKeys ||
-                    (ref.code != null && normalize(ref.code) in assignedKeys)
+                val directlyAssigned = subtreeAssignmentList.any { assignment ->
+                    matchesCourseRef(ref, assignment.course.courseKey, assignment.course.courseName)
+                }
                 val fulfilled = fulfilledBySubstitution.any { substitute -> refsEqual(substitute, ref) }
                 !directlyAssigned && !fulfilled
             }

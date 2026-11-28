@@ -715,4 +715,140 @@ class DegreeAuditorTest {
         assertTrue(report.trace.any { it.rule == "match-code" && it.attemptId == "coded-pass" })
     }
 
+    @Test
+    fun ambiguousNameOnlyRenameDoesNotEraseCodedTargetCredits() {
+        val group = PlanFixtures.group(
+            id = "g-ambiguous-rename",
+            credits = "6",
+            courses = listOf(
+                PlanCourseRef("HIST201", "Survey"),
+                PlanCourseRef("ART101", "Survey")
+            ),
+            title = "歧义改名组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Old Survey"),
+                    now = PlanCourseRef(null, "Survey")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("HIST201", name = "Survey", credits = "3", id = "survey-hist"),
+                PlanFixtures.attempt("ART101", name = "Survey", credits = "3", id = "survey-art")
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-ambiguous-rename")!!
+        PlanFixtures.assertAmount("6", progress.earnedCredits, "目标 code 歧义时必须禁用 name-only 改名而不是吞掉已修学分")
+        assertEquals(2, progress.assignedCourses.size)
+        PlanFixtures.assertAmount("6", report.totalEarnedCredits)
+    }
+
+    @Test
+    fun renamedSubstituteUsesSubstitutionDeclaredCode() {
+        val group = PlanFixtures.group(
+            id = "g-renamed-substitute",
+            credits = "3",
+            courses = listOf(PlanCourseRef("CORE101", "Core Math")),
+            title = "改名替代组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            substitutions = listOf(
+                SubstitutionRule(
+                    course = PlanCourseRef("SUB201", "Substitute Math"),
+                    replaces = PlanCourseRef("CORE101", "Core Math"),
+                    note = "合成替代规则"
+                )
+            ),
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Old Substitute Math"),
+                    now = PlanCourseRef(null, "Substitute Math")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("OLD1", name = "Old Substitute Math", credits = "3", id = "renamed-substitute-pass")),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-renamed-substitute")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "改名后的替代课程必须仍能按替代声明入账")
+        assertTrue(progress.pendingCourses.none { it.name == "Core Math" })
+        assertTrue(report.trace.any { it.rule == "substitute" && it.attemptId == "renamed-substitute-pass" })
+    }
+
+    @Test
+    fun chainedRenamesResolveToFinalTargetAndCreditOnce() {
+        val group = PlanFixtures.group(
+            id = "g-rename-chain",
+            credits = "3",
+            courses = listOf(PlanCourseRef("C301", "Final Name")),
+            title = "链式改名组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef("C101", "Original Name"),
+                    now = PlanCourseRef("C201", "Intermediate Name")
+                ),
+                CourseRename(
+                    was = PlanCourseRef(null, "Intermediate Name"),
+                    now = PlanCourseRef("C301", "Final Name")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(
+                PlanFixtures.attempt("C101", name = "Original Name", credits = "3", id = "chain-original", academicYear = "2022-2023"),
+                PlanFixtures.attempt("C201", name = "Intermediate Name", credits = "3", id = "chain-intermediate", academicYear = "2023-2024", attemptType = AttemptType.RETAKE),
+                PlanFixtures.attempt("C301", name = "Final Name", credits = "3", id = "chain-final", academicYear = "2024-2025", attemptType = AttemptType.RETAKE)
+            ),
+            emptyList(),
+            now
+        )
+        val progress = report.groupById("g-rename-chain")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "链式改名必须解析到最终目标且只入账一次")
+        assertEquals(1, progress.assignedCourses.size)
+        assertTrue(report.representativeAttemptIds.containsKey("C301"))
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+    }
+
+    @Test
+    fun descendantSameNameDifferentCodeDoesNotClearParentPending() {
+        val parentRef = PlanCourseRef("P1", "Shared")
+        val childRef = PlanCourseRef("C1", "Shared")
+        val child = PlanFixtures.group(
+            id = "child-code-specific",
+            credits = "3",
+            courses = listOf(childRef),
+            title = "子代码要求"
+        )
+        val parent = PlanFixtures.group(
+            id = "parent-code-specific",
+            credits = "6",
+            courses = listOf(parentRef),
+            children = listOf(child),
+            title = "父代码要求"
+        )
+        val report = DegreeAuditor.audit(
+            PlanFixtures.plan(listOf(parent)),
+            listOf(PlanFixtures.attempt("C1", name = "Shared", credits = "3", id = "child-coded-pass")),
+            emptyList(),
+            now
+        )
+        val childProgress = report.groupById("child-code-specific")!!
+        val parentProgress = report.groupById("parent-code-specific")!!
+        PlanFixtures.assertAmount("3", childProgress.earnedCredits)
+        PlanFixtures.assertAmount("3", parentProgress.earnedCredits, "子组学分仍可聚合进父组汇总约束")
+        assertEquals("同名不同码不得抵扣父组显式 code 课程", listOf("P1"), parentProgress.pendingCourses.map { it.code })
+    }
+
 }
