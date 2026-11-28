@@ -38,13 +38,12 @@ internal object TeamTimeJson {
 
     fun parseShare(data: JsonValue?): TeamTimeShareSummary {
         val obj = data.asObj("availability share")
+        // 契约要求响应对账 blocks；feature 只校验存在性并立即丢弃，不把原始块传给 UI 或成员维展示。
+        obj.reqArray("blocks")
         return TeamTimeShareSummary(
             memberId = obj.reqString("member_id"),
             sharingLevel = obj.reqString("sharing_level"),
-            blockCount = obj.reqInt("block_count").also {
-                // 契约要求响应对账 blocks；feature 只校验存在性并立即丢弃，不把原始块传给 UI 或成员维展示。
-                obj.reqArray("blocks")
-            },
+            blockCount = obj.reqInt("block_count"),
             ttlSeconds = obj.reqInt("ttl_seconds"),
             expiresAt = parseTeamTimeInstant(obj.reqString("expires_at"), "expires_at"),
             updatedAt = parseTeamTimeInstant(obj.reqString("updated_at"), "updated_at"),

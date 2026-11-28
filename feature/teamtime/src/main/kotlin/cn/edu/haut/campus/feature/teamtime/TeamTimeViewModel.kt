@@ -240,6 +240,7 @@ class TeamTimeViewModel(
             when (val result = repository.shareMyBusyBlocks(groupId, queryWindow, SHARE_TTL_SECONDS)) {
                 is CommunityResult.Success -> {
                     shareSummary = result.value
+                    projectOwnSharingLevel(shared = true)
                     reloadMembersBestEffort(repository, groupId)
                     publishContent(
                         status = TeamTimeStatus.CONTENT,
@@ -259,6 +260,7 @@ class TeamTimeViewModel(
             when (val result = repository.withdrawMyBusyBlocks(groupId)) {
                 is CommunityResult.Success -> {
                     shareSummary = null
+                    projectOwnSharingLevel(shared = false)
                     reloadMembersBestEffort(repository, groupId)
                     publishContent(
                         status = TeamTimeStatus.CONTENT,
@@ -410,6 +412,17 @@ class TeamTimeViewModel(
         when (val result = repository.listMembers(groupId)) {
             is CommunityResult.Success -> members = result.value
             else -> Unit
+        }
+    }
+
+    private fun projectOwnSharingLevel(shared: Boolean) {
+        val selfId = cloudUserId ?: return
+        members = members.map { member ->
+            if (member.cloudUserId == selfId) {
+                member.copy(sharingLevel = if (shared) "BUSY_BLOCKS_30MIN" else "NONE")
+            } else {
+                member
+            }
         }
     }
 

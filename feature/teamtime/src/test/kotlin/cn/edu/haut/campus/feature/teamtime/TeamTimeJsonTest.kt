@@ -4,9 +4,17 @@ import cn.edu.haut.campus.core.model.json.Json
 import java.time.Instant
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class TeamTimeJsonTest {
+    @Test
+    fun featureModelsHaveNoRawBusyBlockField() {
+        assertFalse(TeamTimeShareSummary::class.java.declaredFields.any { it.name.contains("block", ignoreCase = true) && it.name != "blockCount" })
+        assertFalse(TeamTimeCandidate::class.java.declaredFields.any { it.name.contains("block", ignoreCase = true) })
+        assertFalse(TeamTimeMemberAvailability::class.java.declaredFields.any { it.name.contains("block", ignoreCase = true) })
+    }
+
     @Test
     fun availabilityQueryParsesAggregateCandidatesAndMemberStatesWithoutRawBlocks() {
         val data = Json.parse(
