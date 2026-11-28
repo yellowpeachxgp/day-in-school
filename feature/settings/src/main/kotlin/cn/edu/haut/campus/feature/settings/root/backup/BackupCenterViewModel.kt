@@ -354,6 +354,18 @@ class BackupCenterViewModel(
         }
     }
 
+    override fun resetSyncStateForRekey() {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            client.wipeLocalOnly()
+            syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
+                E2eeSyncScheduler.cancel(appContext, profileId, syncWorkGeneration)
+            }
+            refreshSyncStatus()
+        }
+    }
+
     override fun revokeSyncDevice(deviceId: String) {
         val client = syncClient ?: return
         mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
@@ -408,15 +420,18 @@ class BackupCenterViewModel(
         }
         val status = runCatching { client.status() }.getOrNull()
         val hasCloudSession = runCatching { cloudSessionProvider() }.getOrDefault(false)
-        val matrix = when {
+        var matrix = when {
             status == null -> SettingsUiMatrix.error(retryable = true, message = "读取同步状态失败")
             !hasCloudSession -> SettingsUiMatrix.NeedsLogin
             !status.enabled -> SettingsUiMatrix.Empty
             status.conflicts.isNotEmpty() || status.pendingWriteCount > 0 -> SettingsUiMatrix.Partial
             else -> SettingsUiMatrix.Content
         }
+        var deviceListError: Throwable? = null
         val devices = if (hasCloudSession) {
-            runCatching { client.listDevices() }.getOrDefault(emptyList()).map { device ->
+            val result = runCatching { client.listDevices() }
+            deviceListError = result.exceptionOrNull()
+            result.getOrDefault(emptyList()).map { device ->
                 E2eeSyncDeviceSummary(
                     deviceId = device.deviceId,
                     deviceIdShort = device.deviceId.take(8),
@@ -429,6 +444,9 @@ class BackupCenterViewModel(
         } else {
             emptyList()
         }
+        deviceListError?.let { error ->
+            matrix = syncMatrixForError(error)
+        }
         mutableUiState.update {
             it.copy(
                 sync = it.sync.copy(
@@ -439,6 +457,7 @@ class BackupCenterViewModel(
                     syncSpaceIdShort = status?.syncSpaceId?.take(8),
                     pendingWriteCount = status?.pendingWriteCount ?: 0,
                     lastRunSummary = status?.lastRunSummary,
+                    lastErrorMessage = deviceListError?.let(::syncUserSafeMessage),
                     running = false,
                     conflicts = status?.conflicts.orEmpty().map(::toConflictSummary),
                     devices = devices

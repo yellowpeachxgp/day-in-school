@@ -1,5 +1,6 @@
 package cn.edu.haut.campus.core.vault.sync
 
+import java.security.MessageDigest
 import java.util.UUID
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -63,7 +64,37 @@ class E2eeSyncClient internal constructor(
             E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE -> {
                 val recovery = recoveryKeyInput?.trim().orEmpty()
                 if (recovery.isEmpty()) throw E2eeSyncCryptoException("请输入另一台设备显示的同步恢复密钥")
-                keyStore.importRecoveryKey(recovery)
+                val (candidateMaster, candidateSpace) = E2eeSyncRecoveryKeys.decode(recovery)
+                try {
+                    val candidateSpaceId = E2eeSyncRecoveryKeys.syncSpaceId(candidateSpace)
+                    val candidateKeyId = E2eeSyncBlockCipher.keyId(candidateMaster)
+                    if (state.syncSpaceId != null && state.syncSpaceId != candidateSpaceId) {
+                        throw E2eeSyncCryptoException("本机已有不同同步空间状态；必须先显式清除本机同步状态后才能换 key 加入")
+                    }
+                    if ((state.objects.isNotEmpty() || state.pendingWrites.isNotEmpty() || state.conflicts.isNotEmpty()) &&
+                        state.syncSpaceId != candidateSpaceId
+                    ) {
+                        throw E2eeSyncCryptoException("本机存在旧同步对象/冲突；禁止用另一把 key 覆盖混入，必须先显式清除同步状态")
+                    }
+                    if (keyStore.exists()) {
+                        val existing = keyStore.load()
+                        try {
+                            val sameMaster = MessageDigest.isEqual(existing.masterKey, candidateMaster)
+                            val sameSpace = existing.syncSpaceId == candidateSpaceId && existing.keyId == candidateKeyId
+                            if (!sameMaster || !sameSpace) {
+                                throw E2eeSyncCryptoException("本机已密封不同步 key；JOIN 不得覆盖。请先显式执行清除本机同步状态/rekey")
+                            }
+                            // 同一恢复密钥重复加入是幂等操作，不覆盖既有密封文件。
+                        } finally {
+                            existing.zero()
+                        }
+                    } else {
+                        keyStore.importRecoveryKey(recovery)
+                    }
+                } finally {
+                    java.util.Arrays.fill(candidateMaster, 0)
+                    java.util.Arrays.fill(candidateSpace, 0)
+                }
             }
         }
         val material = keyStore.load()

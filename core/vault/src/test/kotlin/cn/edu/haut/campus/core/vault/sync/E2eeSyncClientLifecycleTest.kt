@@ -54,6 +54,41 @@ class E2eeSyncClientLifecycleTest {
     }
 
     @Test
+    fun joinWithDifferentKeyFailsClosedUntilExplicitLocalRekeyWipe() = runBlocking {
+        val api = LifecycleApi()
+        val keyStore = InMemoryE2eeSyncKeyStore()
+        val stateStore = InMemoryE2eeSyncStateStore()
+        val client = E2eeSyncClient(
+            stateStore = stateStore,
+            keyStore = keyStore,
+            backupStore = EmptyBackupStore(),
+            apiFactory = { api },
+            cloudUserIdProvider = { "cloud-user-a" }
+        )
+        val first = client.enable(E2eeSyncEnableMode.CREATE_NEW_SYNC_SPACE, null)
+        val firstKeyId = stateStore.load().keyId
+        val otherKeys = InMemoryE2eeSyncKeyStore()
+        val otherRecovery = otherKeys.createNew()
+
+        try {
+            client.enable(E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE, null, otherRecovery)
+            org.junit.Assert.fail("不同 recovery key 不得覆盖本机密封 key")
+        } catch (expected: E2eeSyncCryptoException) {
+            // expected: fail-closed before overwrite
+        }
+        assertEquals(firstKeyId, stateStore.load().keyId)
+        val retained = keyStore.load()
+        assertEquals(firstKeyId, retained.keyId)
+        retained.zero()
+
+        client.wipeLocalOnly()
+        val joined = client.enable(E2eeSyncEnableMode.JOIN_EXISTING_SYNC_SPACE, null, otherRecovery)
+        assertTrue(stateStore.load().enabled)
+        assertTrue(joined.syncSpaceId.isNotBlank())
+        assertTrue(stateStore.load().keyId != firstKeyId)
+    }
+
+    @Test
     fun interruptedFirstRegistrationRetriesWithSameDeviceKeyAndIdempotencyIdentity() = runBlocking {
         val api = LifecycleApi()
         api.failNextRegisterWithIOException = true

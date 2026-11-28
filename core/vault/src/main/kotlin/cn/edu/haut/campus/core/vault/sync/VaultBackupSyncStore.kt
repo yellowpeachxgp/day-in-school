@@ -17,7 +17,7 @@ internal class VaultBackupSyncStore(
 
     override suspend fun captureRows(): List<SyncBackupRowSnapshot> {
         val archive = backupService.captureArchiveForSync()
-        return archive.tables.flatMap { table ->
+        return archive.tables.filter { SyncBackupTableSelection.isIncluded(it.policy.table) }.flatMap { table ->
             table.rows.map { rawRow ->
                 val normalized = SyncBackupScopeNormalizer.normalize(table.policy, rawRow)
                 SyncBackupRowSnapshot(
@@ -30,6 +30,7 @@ internal class VaultBackupSyncStore(
     }
 
     override suspend fun readRow(table: String, rowKey: String): SyncBackupRowSnapshot? {
+        if (!SyncBackupTableSelection.isIncluded(table)) return null
         val policy = BackupTableCatalog.policy(table) ?: return null
         val primaryKeys = SyncBackupPrimaryKeyCodec.decode(policy, rowKey)
         val found = backupService.readRowForSync(policy, primaryKeys) ?: return null
@@ -44,6 +45,7 @@ internal class VaultBackupSyncStore(
     override suspend fun applyUpserts(rows: List<SyncBackupRowSnapshot>) {
         if (rows.isEmpty()) return
         val localized = rows.map { snapshot ->
+            SyncBackupTableSelection.requireIncluded(snapshot.table)
             SyncBackupScopeNormalizer.validateNormalized(snapshot.policy, snapshot.row)
             BackupSyncRowUpsert(
                 policy = snapshot.policy,
@@ -57,6 +59,7 @@ internal class VaultBackupSyncStore(
     override suspend fun applyDeletes(deletes: List<Pair<String, String>>) {
         if (deletes.isEmpty()) return
         val rows = deletes.map { (table, rowKey) ->
+            SyncBackupTableSelection.requireIncluded(table)
             val policy = BackupTableCatalog.policy(table)
                 ?: throw BackupValidationException("同步删除表不在 dis-backup 白名单: " + table)
             BackupSyncRowDelete(

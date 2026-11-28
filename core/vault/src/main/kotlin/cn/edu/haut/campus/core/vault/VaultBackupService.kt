@@ -603,15 +603,28 @@ class VaultBackupService(
         return blobs
     }
 
-    /** 应用一批已通过客户端冲突检查的远端同步行；业务行、journal、outbox 与搜索投影保持同事务。 */
+    /** 应用一批已通过客户端冲突检查的远端同步行；业务行、逐行 journal、outbox 与可用搜索投影保持同事务。 */
     internal suspend fun writeRowsForE2eeSync(
         upserts: List<BackupSyncRowUpsert>,
         deletes: List<BackupSyncRowDelete>
     ): Int {
         if (upserts.isEmpty() && deletes.isEmpty()) return 0
-        return journal.writeMany(
-            refsProvider = {
-                (upserts.mapNotNull(::entityRefForUpsert) + deletes.mapNotNull(::entityRefForDelete)).distinct()
+        val targets = linkedMapOf<EntityRef, BackupSyncEntityRefs.Target>()
+        upserts.forEach { input ->
+            val target = BackupSyncEntityRefs.target(input.policy, input.row.cells, scope)
+            targets[target.ref] = target
+        }
+        deletes.forEach { input ->
+            val target = BackupSyncEntityRefs.target(input.policy, input.primaryKeyCells, scope)
+            targets[target.ref] = target
+        }
+        val refs = targets.keys.toList()
+        return journal.writeWithSnapshotReader(
+            refsProvider = { refs },
+            snapshotReader = { ref ->
+                val target = targets.getValue(ref)
+                val found = readRowForSync(target.policy, target.primaryKeyCells)?.first
+                BackupSyncEntityRefs.canonicalSnapshot(found)
             },
             actor = Actor.SYNC,
             actorDetail = "e2ee-cloud-sync",
@@ -623,7 +636,7 @@ class VaultBackupService(
                 val schema = readTableSchema(input.policy)
                 val inputTable = BackupTableData(input.policy, schema.backupColumns, listOf(input.row))
                 val validatedTable = validateTableAgainstCurrentSchema(inputTable)
-                upsertRow(validatedTable, validatedTable.rows.single(), schema, input.blobs)
+                upsertRow(validatedTable, validatedTable.rows.single(), schema, input.blobs, useSyncProvenance = true)
                 applied++
             }
             deletes.forEach { input ->
@@ -632,19 +645,6 @@ class VaultBackupService(
             }
             applied
         }
-    }
-
-    private fun entityRefForUpsert(input: BackupSyncRowUpsert): EntityRef? =
-        entityRefForCells(input.policy, input.row.cells)
-
-    private fun entityRefForDelete(input: BackupSyncRowDelete): EntityRef? =
-        entityRefForCells(input.policy, input.primaryKeyCells)
-
-    private fun entityRefForCells(policy: BackupTablePolicy, cells: Map<String, BackupCell>): EntityRef? {
-        val type = policy.entityType ?: return null
-        val primaryKeyColumn = policy.primaryKeys.singleOrNull() ?: return null
-        val id = (cells[primaryKeyColumn] as? BackupCell.TextValue)?.value?.takeIf { it.isNotBlank() } ?: return null
-        return EntityRef(type, id, scope)
     }
 
     private fun deleteRowInternal(policy: BackupTablePolicy, primaryKeyCells: Map<String, BackupCell>) {
@@ -673,13 +673,14 @@ class VaultBackupService(
         table: BackupTableData,
         row: BackupRow,
         schema: CurrentTableSchema,
-        blobs: Map<String, ByteArray>
+        blobs: Map<String, ByteArray>,
+        useSyncProvenance: Boolean = false
     ) {
         val valueColumns = mutableListOf<String>()
         val values = mutableListOf<BackupCell>()
         schema.allColumns.forEach { column ->
             val backupCell = row.cells[column.name]
-            val generated = if (backupCell == null) generatedCell(table.policy, column.name) else null
+            val generated = if (backupCell == null) generatedCell(table.policy, column.name, useSyncProvenance) else null
             if (backupCell != null || generated != null) {
                 valueColumns += column.name
                 values += (backupCell ?: generated!!)
@@ -701,15 +702,33 @@ class VaultBackupService(
         }
     }
 
-    private fun generatedCell(policy: BackupTablePolicy, column: String): BackupCell? =
+    private fun generatedCell(policy: BackupTablePolicy, column: String, useSyncProvenance: Boolean = false): BackupCell? =
         when (policy.generatedColumns[column]) {
             GeneratedColumnKind.OCCURRENCE_MUTATION_TOKEN -> BackupCell.TextValue(mutationTokenGenerator())
             GeneratedColumnKind.NULL_ON_RESTORE -> BackupCell.NullValue
             GeneratedColumnKind.EMPTY_JSON_OBJECT_ON_RESTORE -> BackupCell.TextValue("{}")
             GeneratedColumnKind.EMPTY_JSON_ARRAY_ON_RESTORE -> BackupCell.TextValue("[]")
-            GeneratedColumnKind.RESTORED_PERSONAL_EVENT_PROVENANCE -> BackupCell.TextValue(restoredProvenanceJson())
+            GeneratedColumnKind.RESTORED_PERSONAL_EVENT_PROVENANCE -> BackupCell.TextValue(
+                if (useSyncProvenance) syncProvenanceJson() else restoredProvenanceJson()
+            )
             null -> null
         }
+
+    private fun syncProvenanceJson(): String = canonicalJsonOf(
+        encodeProvenance(
+            DataProvenance(
+                providerId = "dis-sync-e2ee/v1",
+                schoolId = scope.schoolId,
+                accountId = scope.accountId,
+                sourceSystem = "E2EE_CLOUD_SYNC",
+                sourceRecordId = null,
+                fetchedAt = null,
+                completeness = SnapshotCompleteness.UNKNOWN,
+                schemaVersion = 1,
+                contentRevision = null
+            )
+        )
+    ).text
 
     private fun restoredProvenanceJson(): String = canonicalJsonOf(
         encodeProvenance(

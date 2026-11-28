@@ -11,7 +11,7 @@
 
 ## 2. 行级增量对象
 
-- 可移植表仍来自 `BackupTableCatalog`；每张表的列白名单、typed-cell 编码、主键编码与值级秘密扫描保持 dis-backup/v1 语义。
+- 可移植表仍来自 `BackupTableCatalog`；每张表的列白名单、typed-cell 编码、主键编码与值级秘密扫描保持 dis-backup/v1 语义。同步复制在其上进一步排除 `library_booking_plans` 与 `focus_sessions`：它们可以进入同一设备的灾难恢复备份，但执行状态/generation/计时 lease 是设备局部事实，跨设备复制会重复本地自动化执行；未来必须先设计 device owner/lease 协议。
 - 每个逻辑对象是一行：`table + primaryKey`。上传 plaintext 为 CanonicalJson 的 `dis-sync-backup-row/v1` payload，内含表名、行键、行 typed-cells、必要 blob 字节、schemaVersion、syncSpaceId、writerDeviceId、logicalClock 与 rowSha256。
 - `personal_events` 与 `blob_store` 的 scope 列在上传前规范化为固定同步值，应用前再改写为接收设备的当前 Profile scope。同步空间由恢复密钥显式选择，避免把设备随机 profile/account UUID 当成跨设备逻辑身份，也避免不同 Profile 静默合并。
 - 删除优先使用云端 tombstone；blob_id 被 tombstone 后绝不复用，逻辑行重建必须分配新的随机 blob_id。

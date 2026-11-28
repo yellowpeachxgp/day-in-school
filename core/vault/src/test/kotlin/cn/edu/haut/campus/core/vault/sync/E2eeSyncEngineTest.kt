@@ -91,6 +91,53 @@ class E2eeSyncEngineTest {
     }
 
     @Test
+    fun localDeletionVersusRemoteUpdateCanKeepLocalDeletionAndPropagateTombstone() = runBlocking {
+        val env = TwoDeviceEnv()
+        env.storeA.applyUpserts(listOf(courseSnapshot("course-local-delete", "初始版本")))
+        env.engineA.runOnce()
+        env.engineB.runOnce()
+
+        env.storeA.applyUpserts(listOf(courseSnapshot("course-local-delete", "远端更新")))
+        env.engineA.runOnce()
+        env.storeB.applyDeletes(listOf("courses" to rowKeyFor("course-local-delete")))
+        val report = env.engineB.runOnce()
+        assertEquals(1, report.conflictsCreated)
+        val conflict = env.engineB.status().conflicts.single()
+        assertEquals("CONCURRENT_UPDATE", conflict.kind)
+        assertTrue(conflict.localDeletion)
+        assertNull(conflict.localPayloadJson)
+        assertNotNull(conflict.remotePayloadJson)
+
+        val resolution = env.engineB.resolveConflict(conflict.id, E2eeSyncConflictResolution.KEEP_LOCAL)
+        assertTrue(resolution.deletedRows >= 1)
+        assertNull(env.storeB.readRow("courses", rowKeyFor("course-local-delete")))
+        assertEquals("TOMBSTONE", env.cloud.currentMetadataForOnlyBlob().changeKind)
+        val pullA = env.engineA.runOnce()
+        assertEquals(1, pullA.appliedRemoteRows)
+        assertNull(env.storeA.readRow("courses", rowKeyFor("course-local-delete")))
+    }
+
+    @Test
+    fun localDeletionVersusRemoteUpdateCanUseRemoteAndRestoreRow() = runBlocking {
+        val env = TwoDeviceEnv()
+        env.storeA.applyUpserts(listOf(courseSnapshot("course-remote-restore", "初始版本")))
+        env.engineA.runOnce()
+        env.engineB.runOnce()
+
+        env.storeA.applyUpserts(listOf(courseSnapshot("course-remote-restore", "远端更新")))
+        env.engineA.runOnce()
+        env.storeB.applyDeletes(listOf("courses" to rowKeyFor("course-remote-restore")))
+        env.engineB.runOnce()
+        val conflict = env.engineB.status().conflicts.single()
+        assertTrue(conflict.localDeletion)
+
+        env.engineB.resolveConflict(conflict.id, E2eeSyncConflictResolution.USE_REMOTE)
+        assertEquals("远端更新", courseName(env.storeB, "course-remote-restore"))
+        assertEquals("UPSERT", env.cloud.currentMetadataForOnlyBlob().changeKind)
+        assertTrue(env.engineB.status().conflicts.isEmpty())
+    }
+
+    @Test
     fun duplicateIdentityUseRemoteTombstonesLocalLoserAndDoesNotReconflict() = runBlocking {
         val env = TwoDeviceEnv()
         val local = courseSnapshot("course-duplicate", "本机版本")

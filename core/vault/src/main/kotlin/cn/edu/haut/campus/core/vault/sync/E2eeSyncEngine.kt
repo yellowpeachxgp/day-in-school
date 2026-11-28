@@ -256,12 +256,15 @@ internal class E2eeSyncEngine(
                 existing.syncedRowSha256 == null -> true
                 else -> localHash != existing.syncedRowSha256
             }
+            val localDeletion = localDirty && localHash == null && existing.syncedRowSha256 != null
             if (localDirty) {
                 addConflict(
                     state, stats, "CONCURRENT_UPDATE", "本机与远端同时修改同一逻辑行，未静默覆盖",
                     logicalKey, payload.table, payload.rowKey, metadata.blobId,
                     localPayloadJson(state, material, localSnapshot), E2eeSyncPayloadCodec.encode(payload),
-                    existing.versionVector, metadata.versionVector, remoteDeletion = false
+                    existing.versionVector, metadata.versionVector,
+                    remoteDeletion = false,
+                    localDeletion = localDeletion
                 )
                 return
             }
@@ -686,7 +689,7 @@ internal class E2eeSyncEngine(
             val existing = state.objects[conflict.logicalKey]
             val blobId = existing?.takeIf { !it.deleted }?.blobId ?: conflict.blobId ?: uuid()
             val base = when {
-                conflict.kind == "CAS_CONFLICT" -> conflict.remoteVector
+                conflict.blobId != null && conflict.blobId == blobId -> conflict.remoteVector
                 existing != null && !existing.deleted -> existing.versionVector
                 else -> emptyList()
             }

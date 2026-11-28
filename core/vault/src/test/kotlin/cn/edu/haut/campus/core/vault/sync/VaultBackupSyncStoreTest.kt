@@ -4,6 +4,7 @@ import androidx.room.Room
 import cn.edu.haut.campus.core.database.CourseEntity
 import cn.edu.haut.campus.core.database.HautDatabase
 import cn.edu.haut.campus.core.database.PersonalEventEntity
+import cn.edu.haut.campus.core.database.ParcelItemEntity
 import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Actor
 import cn.edu.haut.campus.core.model.CampusId
@@ -131,6 +132,41 @@ class VaultBackupSyncStoreTest {
         assertEquals(scope.accountId.value, applied?.scopeAccountId)
         assertEquals(scope.profileId.value, applied?.scopeProfileId)
         assertEquals(scope.campusId?.value, applied?.scopeCampusId)
+        assertTrue(applied?.provenanceJson?.contains("dis-sync-e2ee/v1") == true)
+        assertTrue(applied?.provenanceJson?.contains("E2EE_CLOUD_SYNC") == true)
+        assertTrue(applied?.provenanceJson?.contains("LOCAL_BACKUP_RESTORE") != true)
+    }
+
+    @Test
+    fun nonEntityBackupRowsStillWritePreciseSyncJournalRefs() = runBlocking {
+        database.cloudAndParcelDao().upsertParcelItem(
+            ParcelItemEntity(
+                id = "parcel-sync-journal",
+                trackingNumber = "YT-1",
+                carrierCode = "manual",
+                carrierName = "校园快递",
+                status = "IN_TRANSIT",
+                pickupCode = null,
+                stationName = null,
+                itemTitle = "本机包裹",
+                estimatedDeliveryText = "运输中",
+                sourcesJson = "[]",
+                fieldProvenanceJson = "{}",
+                checkpointsJson = "[]",
+                createdAtEpochMillis = 1L,
+                updatedAtEpochMillis = 1L
+            )
+        )
+        val captured = store.captureRows().first { it.table == "parcel_items" }
+        val remoteCells = LinkedHashMap(captured.row.cells)
+        remoteCells["itemTitle"] = BackupCell.TextValue("远端包裹")
+        store.applyUpserts(listOf(SyncBackupRowSnapshot(captured.policy, BackupRow(remoteCells), emptyMap())))
+
+        val history = journal.recent(scope, setOf(cn.edu.haut.campus.core.model.EntityType.PARCEL_ITEM), 10).first()
+        assertTrue(history.any { it.actor == Actor.SYNC && it.actorDetail == "e2ee-cloud-sync" })
+        val change = history.first { it.actor == Actor.SYNC }
+        assertTrue(change.before?.text?.contains("本机包裹") == true)
+        assertTrue(change.after?.text?.contains("远端包裹") == true)
     }
 
     private fun personalEvent(id: String, title: String) = PersonalEventEntity(

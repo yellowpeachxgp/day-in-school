@@ -71,6 +71,7 @@ class BackupCenterRoborazziTest {
         override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) = Unit
         override fun runSyncNow() = Unit
         override fun disableSync() = Unit
+        override fun resetSyncStateForRekey() = Unit
         override fun revokeSyncDevice(deviceId: String) = Unit
         override fun resolveSyncConflict(
             conflictId: String,

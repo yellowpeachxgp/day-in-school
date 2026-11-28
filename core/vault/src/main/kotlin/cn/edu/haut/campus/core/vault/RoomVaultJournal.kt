@@ -122,6 +122,55 @@ class RoomVaultJournal(
         return outcome
     }
 
+    /**
+     * 供 dis-backup 行级同步使用的受控写边界：调用方提供精确 before/after snapshot 读取器，
+     * journal/outbox 仍与业务写入同一 Room 事务。搜索投影只对有注册 SnapshotStore 的实体更新。
+     */
+    internal suspend fun <T> writeWithSnapshotReader(
+        refsProvider: suspend () -> List<EntityRef>,
+        snapshotReader: suspend (EntityRef) -> CanonicalJson?,
+        actor: Actor,
+        actorDetail: String?,
+        source: SourceRef?,
+        writeGroupId: String?,
+        block: suspend () -> T
+    ): T {
+        val groupId = writeGroupId ?: idGenerator()
+        return database.withTransaction {
+            val refs = refsProvider().distinct()
+            val beforeByRef = LinkedHashMap<EntityRef, CanonicalJson?>(refs.size)
+            refs.forEach { ref ->
+                validateSourceScope(ref, source)
+                val before = snapshotReader(ref)
+                validateSnapshotSafety(before)
+                beforeByRef[ref] = before
+            }
+            val result = block()
+            val occurredAt = clock()
+            refs.forEach { ref ->
+                val before = beforeByRef[ref]
+                val after = snapshotReader(ref)
+                validateSnapshotSafety(after)
+                val op = inferChangeKind(before, after)
+                if (op != null) {
+                    recordChange(
+                        ref = ref,
+                        op = op,
+                        before = before,
+                        after = after,
+                        actor = actor,
+                        actorDetail = actorDetail,
+                        at = occurredAt,
+                        source = source,
+                        writeGroupId = groupId
+                    )
+                    snapshotStores[ref.type]?.let { store -> updateSearchProjection(ref, store) }
+                }
+            }
+            result
+        }
+    }
+
     override fun history(ref: EntityRef): Flow<List<EntityChange>> =
         dao.observeJournalForEntity(ref.type.name, ref.id).map { rows -> rows.map(::toEntityChange) }
 

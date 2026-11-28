@@ -540,6 +540,17 @@ private fun E2eeSyncConsentDialog(sync: E2eeSyncPanelUiState, actions: BackupCen
                         enabled = acknowledged && recoveryKey.isNotBlank() && !dialog.running,
                         modifier = Modifier.fillMaxWidth().testTag("sync-enable-existing-key")
                     ) { Text("使用已有恢复密钥启用") }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "若本机曾加入不同同步空间，JOIN 会失败关闭而不会覆盖旧 key。只有确认放弃本机旧同步状态时才使用下面的显式清除。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(
+                        onClick = actions::resetSyncStateForRekey,
+                        enabled = !dialog.running,
+                        modifier = Modifier.testTag("sync-reset-for-rekey")
+                    ) { Text("显式清除本机同步状态并重新加入", color = MaterialTheme.colorScheme.error) }
                 }
             }
         },
