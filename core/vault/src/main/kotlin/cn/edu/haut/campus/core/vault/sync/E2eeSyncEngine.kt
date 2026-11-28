@@ -668,12 +668,15 @@ internal class E2eeSyncEngine(
             conflict.blobId == blobId -> conflict.remoteVector
             else -> existing.versionVector
         }
+        val remoteLogicalClock = conflict.remotePayloadJson?.let {
+            runCatching { E2eeSyncPayloadCodec.decode(it, material.syncSpaceId, backupStore.schemaVersion).logicalClock }.getOrDefault(0L)
+        } ?: 0L
         state.objects[conflict.logicalKey] = E2eeSyncObjectState(
             logicalKey = conflict.logicalKey,
             table = conflict.table,
             rowKey = conflict.rowKey,
             blobId = blobId,
-            logicalClock = maxOf(existing?.logicalClock ?: 0L, payload.logicalClock),
+            logicalClock = maxOf(maxOf(existing?.logicalClock ?: 0L, payload.logicalClock), remoteLogicalClock),
             syncedRowSha256 = null,
             versionVector = baseVector,
             deleted = false,

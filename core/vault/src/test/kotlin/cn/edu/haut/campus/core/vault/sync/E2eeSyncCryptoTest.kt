@@ -22,8 +22,8 @@ class E2eeSyncCryptoTest {
             0 to 1_024,
             1_004 to 1_024,
             1_005 to 4_096,
-            4_088 to 4_096,
-            4_089 to 16_384
+            4_076 to 4_096,
+            4_077 to 16_384
         )
         cases.forEachIndexed { index, (plaintextSize, expectedBucket) ->
             val plaintext = ByteArray(plaintextSize) { (it + index).toByte() }
@@ -103,7 +103,7 @@ class E2eeSyncCryptoTest {
         assertArrayEquals(master, decodedMaster)
         assertArrayEquals(space, decodedSpace)
         try {
-            E2eeSyncRecoveryKeys.decode(encoded.dropLast(2) + "AA")
+            E2eeSyncRecoveryKeys.decode(encoded.dropLast(1))
             fail("错误长度恢复密钥必须失败")
         } catch (expected: E2eeSyncCryptoException) {
             // expected

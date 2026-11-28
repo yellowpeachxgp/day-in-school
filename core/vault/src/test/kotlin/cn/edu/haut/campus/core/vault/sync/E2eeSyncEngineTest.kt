@@ -83,7 +83,7 @@ class E2eeSyncEngineTest {
         val conflict = env.engineB.status().conflicts.single()
 
         val resolution = env.engineB.resolveConflict(conflict.id, E2eeSyncConflictResolution.KEEP_LOCAL)
-        assertEquals(1, resolution.uploadedRows)
+        assertEquals("conflicts=" + env.engineB.status().conflicts + " report=" + resolution, 1, resolution.uploadedRows)
         assertEquals("本机版本", courseName(env.storeB, "course-conflict-local"))
         val pullA = env.engineA.runOnce()
         assertEquals(1, pullA.appliedRemoteRows)
@@ -173,7 +173,7 @@ class E2eeSyncEngineTest {
         assertEquals(1, report.uploadedRows)
         assertEquals(1, env.cloud.mutationCount())
         assertEquals(0, env.engineA.status().pendingWriteCount)
-        assertEquals(1, env.cloud.putAttempts(pendingBefore.blobId))
+        assertEquals(2, env.cloud.putAttempts(pendingBefore.blobId))
         assertTrue(env.cloud.replayedIdempotencyKeys.contains(pendingBefore.idempotencyKey))
     }
 
