@@ -48,6 +48,11 @@ class AiConsentCenter(
         )
     }
 
+    /** 清空本中心全部未消费 token；Profile 级服务擦除/重建时必须调用，防止擦除前同意跨 Key 生命周期复用。 */
+    fun clear() {
+        entries.clear()
+    }
+
     fun consume(
         scope: SchoolAccountScope,
         endpoint: AiEndpoint,

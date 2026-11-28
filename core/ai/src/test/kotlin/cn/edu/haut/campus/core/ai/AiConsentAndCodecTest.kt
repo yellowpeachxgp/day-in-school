@@ -32,6 +32,20 @@ class AiConsentAndCodecTest {
     }
 
     @Test
+    fun clearingConsentCenterInvalidatesOutstandingToken() {
+        val center = AiConsentCenter(clock = { Instant.parse("2026-11-28T08:00:00Z") }, ttl = Duration.ofSeconds(30))
+        val preview = AiTestFixtures.preview()
+        val token = center.issue(AiTestFixtures.scope, AiTestFixtures.endpoint, preview)
+
+        center.clear()
+
+        assertEquals(
+            AiConsentVerdict.CONSUMED,
+            center.consume(AiTestFixtures.scope, AiTestFixtures.endpoint, preview, token)
+        )
+    }
+
+    @Test
     fun chatCodecBuildsOpenAiVisionPayloadWithoutAlteringText() {
         val imageBytes = byteArrayOf(1, 2, 3, 4)
         val blob = AiTestFixtures.blobRef(byteCount = imageBytes.size.toLong())

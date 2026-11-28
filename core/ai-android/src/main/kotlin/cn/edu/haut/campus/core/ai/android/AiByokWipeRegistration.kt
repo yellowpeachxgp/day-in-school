@@ -10,7 +10,12 @@ object AiByokWipeRegistration {
 
     fun register(context: Context, repository: CampusRepository) {
         repository.registerBeforeWipeHook(HOOK_KEY) {
-            AndroidAiKeyStore(context).wipeAll(repository.automationScope)
+            val scope = repository.automationScope
+            try {
+                AndroidAiKeyStore(context).wipeAll(scope)
+            } finally {
+                AiAndroidServiceRegistry.invalidate(scope)
+            }
         }
     }
 }

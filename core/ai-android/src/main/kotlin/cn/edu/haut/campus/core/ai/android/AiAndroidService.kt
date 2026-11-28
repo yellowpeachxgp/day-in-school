@@ -31,7 +31,13 @@ class AiAndroidService internal constructor(
         store.put(scope, endpoint, key)
 
     suspend fun setEnabled(scope: SchoolAccountScope, enabled: Boolean) = store.setEnabled(scope, enabled)
-    suspend fun clear(scope: SchoolAccountScope) = store.wipeAll(scope)
+    suspend fun clear(scope: SchoolAccountScope) {
+        try {
+            store.wipeAll(scope)
+        } finally {
+            consentCenter.clear()
+        }
+    }
     suspend fun preview(scope: SchoolAccountScope, request: AiRequest): AiSendPreview = provider.preview(scope, request)
 
     /** 只有预览页“发送”按钮回调应调用本方法；返回值立刻交给 provider.send，不写入日志、持久层或 saved state。 */
@@ -71,6 +77,10 @@ object AiAndroidServiceRegistry {
         database: HautDatabase?
     ): AiAndroidService = services.computeIfAbsent(AiConsentCenter.scopeFingerprint(scope)) {
         AiAndroidService.create(context.applicationContext, database)
+    }
+
+    fun invalidate(scope: SchoolAccountScope) {
+        services.remove(AiConsentCenter.scopeFingerprint(scope))?.let { it.consentCenter.clear() }
     }
 
     internal fun clearForTest() {
