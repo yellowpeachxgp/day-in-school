@@ -230,6 +230,8 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertEquals(1, indexedDocs.size)
         assertTrue(indexedDocs[0].tokenStream.contains("征值"))
         assertTrue(indexedDocs[0].tokenStream.contains("征向"))
+        assertEquals(1, repository.searchMaterials(scope, "特征值").size)
+        assertEquals(1, repository.searchMaterials(scope, "特征向量").size)
         val hits = repository.searchMaterials(scope, "特征值 特征向量")
         assertEquals(1, hits.size)
         assertEquals(2, hits[0].pageIndex)
