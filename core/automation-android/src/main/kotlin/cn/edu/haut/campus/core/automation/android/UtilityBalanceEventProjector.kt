@@ -41,7 +41,7 @@ class UtilityBalanceEventProjector(
             val devices = runCatching { decodeOnlineDevicesJson(room.devicesJson) }.getOrDefault(emptyList())
             for (device in devices) {
                 val balanceCents = parseBalanceCents(device.balanceRaw) ?: continue
-                val meterId = "online/" + room.roomId + "/" + device.name
+                val meterId = "online/" + device.category.name.lowercase() + "/" + room.roomId + "/" + device.name
                 if (existing[meterId] == balanceCents) continue
                 val updatedAt = Instant.ofEpochMilli(room.updatedAtEpochMs)
                 val event = DomainEvent.UtilityBalanceSampled(

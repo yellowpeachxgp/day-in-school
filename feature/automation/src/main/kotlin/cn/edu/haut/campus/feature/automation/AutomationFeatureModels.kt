@@ -37,6 +37,7 @@ data class AutomationEditorDraft(
     val beforeMinutesText: String = "20",
     val eventTypeText: String = "data.stale",
     val thresholdValueText: String = "15",
+    val thresholdWater: Boolean = false,
     val campusIdText: String = "haut-lianhuajie",
     val geofenceEnter: Boolean = true,
     val hasClassToday: Boolean = true,
@@ -105,7 +106,13 @@ data class AutomationEditorDraft(
         )
         AutomationTriggerChoice.ON_EVENT -> TriggerSpec.OnEvent(eventType = eventTypeText.trim())
         AutomationTriggerChoice.THRESHOLD -> TriggerSpec.Threshold(
-            metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS),
+            metric = MetricRef(
+                if (thresholdWater) {
+                    BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS
+                } else {
+                    BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS
+                }
+            ),
             op = CompareOp.LESS_THAN,
             value = BigDecimal(thresholdValueText).movePointRight(2)
         )

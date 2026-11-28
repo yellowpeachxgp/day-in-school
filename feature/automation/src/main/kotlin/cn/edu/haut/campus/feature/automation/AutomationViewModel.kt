@@ -186,7 +186,8 @@ private fun draftFromRule(rule: AutomationRule): AutomationEditorDraft {
         )
         is cn.edu.haut.campus.core.automation.TriggerSpec.Threshold -> base.copy(
             triggerChoice = AutomationTriggerChoice.THRESHOLD,
-            thresholdValueText = trigger.value.movePointLeft(2).stripTrailingZeros().toPlainString()
+            thresholdValueText = trigger.value.movePointLeft(2).stripTrailingZeros().toPlainString(),
+            thresholdWater = trigger.metric.value == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS
         )
         is cn.edu.haut.campus.core.automation.TriggerSpec.Geofence -> base.copy(
             triggerChoice = AutomationTriggerChoice.GEOFENCE,

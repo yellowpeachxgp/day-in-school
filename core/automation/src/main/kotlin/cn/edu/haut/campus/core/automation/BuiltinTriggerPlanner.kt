@@ -116,7 +116,12 @@ object BuiltinTriggerPlanner {
 
     private fun thresholdMatches(spec: TriggerSpec.Threshold, event: DomainEvent): Boolean {
         val sampled = event as? DomainEvent.UtilityBalanceSampled ?: return false
-        if (spec.metric.value != BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS) return false
+        val requiredMeterPrefix = when (spec.metric.value) {
+            BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS -> "online/electricity/"
+            BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS -> "online/water/"
+            else -> return false
+        }
+        if (!sampled.meterRef.id.startsWith(requiredMeterPrefix)) return false
         return compare(BigDecimal.valueOf(sampled.balanceCents), spec.op, spec.value)
     }
 
@@ -157,7 +162,8 @@ fun builtinTriggerProviders(): List<TriggerProvider> =
     BuiltinAutomationTypes.triggerTypes.map(::BuiltinTriggerProvider)
 
 object BuiltinAutomationTypes {
-    const val METRIC_UTILITY_BALANCE_CENTIUNITS: String = "core.utility.balance-centiunits"
+    const val METRIC_UTILITY_ELECTRICITY_CENTIUNITS: String = "core.utility.electricity-centiunits"
+    const val METRIC_UTILITY_WATER_CENTIUNITS: String = "core.utility.water-centiunits"
 
     const val CONDITION_HAS_CLASS_TODAY: String = "core.has-class-today"
     const val CONDITION_ON_CAMPUS: String = "core.on-campus"

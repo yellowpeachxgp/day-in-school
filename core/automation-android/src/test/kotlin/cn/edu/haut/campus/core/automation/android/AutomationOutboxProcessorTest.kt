@@ -95,7 +95,7 @@ class AutomationOutboxProcessorTest {
             name = "水电低余额",
             enabled = true,
             trigger = TriggerSpec.Threshold(
-                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS),
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS),
                 op = CompareOp.LESS_THAN,
                 value = BigDecimal("2000")
             ),
@@ -234,7 +234,7 @@ class AutomationOutboxProcessorTest {
         eventId = "utility-low-event",
         scope = scope,
         occurredAt = now,
-        meterRef = EntityRef(EntityType.UTILITY_METER, "meter-1", scope),
+        meterRef = EntityRef(EntityType.UTILITY_METER, "online/electricity/meter-1", scope),
         balanceCents = 1999L,
         estimatedDaysLeft = 1.5,
         provenance = DataProvenance(

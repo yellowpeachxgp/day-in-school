@@ -80,7 +80,7 @@ class BuiltinAutomationRuntimeTest {
     fun utilityThresholdAndGeofenceEventsMapToSameEventDerivedTriggerInstance() = runTest {
         val thresholdRule = AutomationTestFixtures.rule(
             trigger = TriggerSpec.Threshold(
-                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_BALANCE_CENTIUNITS),
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_ELECTRICITY_CENTIUNITS),
                 op = CompareOp.LESS_THAN,
                 value = BigDecimal("2000")
             )
@@ -89,7 +89,7 @@ class BuiltinAutomationRuntimeTest {
             eventId = "utility-low-1",
             scope = scope,
             occurredAt = now,
-            meterRef = EntityRef(EntityType.UTILITY_METER, "meter-1", scope),
+            meterRef = EntityRef(EntityType.UTILITY_METER, "online/electricity/meter-1", scope),
             balanceCents = 1999L,
             estimatedDaysLeft = 2.0,
             provenance = provenance()
@@ -114,6 +114,14 @@ class BuiltinAutomationRuntimeTest {
         assertEquals(utilityEvent, threshold?.event)
         assertEquals(geofenceEvent, geofence?.event)
         assertEquals(DomainEventTriggerSupport.triggerInstanceKey(utilityEvent), threshold?.triggerInstanceKey)
+        val waterRule = AutomationTestFixtures.rule(
+            trigger = TriggerSpec.Threshold(
+                metric = MetricRef(BuiltinAutomationTypes.METRIC_UTILITY_WATER_CENTIUNITS),
+                op = CompareOp.LESS_THAN,
+                value = BigDecimal("2000")
+            )
+        )
+        assertNull("电表事件不得匹配水表 metric", BuiltinTriggerPlanner.instanceForDomainEvent(waterRule, utilityEvent))
         assertNull(BuiltinTriggerPlanner.instanceForDomainEvent(geofenceRule, utilityEvent))
     }
 
