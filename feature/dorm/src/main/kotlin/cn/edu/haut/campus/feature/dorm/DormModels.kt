@@ -48,8 +48,11 @@ data class DormSplitRule(
             }
         }
         require(participantMemberIds.distinct().size == participantMemberIds.size) { "参与人不得重复" }
-        require(ratioWeights.values.all { it >= 0L }) { "比例权重不得为负" }
-        require(stayDays.values.all { it >= 0L }) { "入住天数不得为负" }
+        require(participantMemberIds.size <= 100 && ratioWeights.size <= 100 && stayDays.size <= 100) { "分摊参与人不能超过 100 个" }
+        require(ratioWeights.values.all { it in 0L..1_000_000L }) { "比例权重必须在 0..1000000" }
+        require(stayDays.values.all { it in 0L..366L }) { "入住天数必须在 0..366" }
+        if (type == DormSplitRuleType.RATIOS) require(ratioWeights.values.any { it > 0L }) { "比例分摊至少需要一个正权重" }
+        if (type == DormSplitRuleType.STAY_DAYS) require(stayDays.values.any { it > 0L }) { "入住天数分摊至少需要一个正天数" }
     }
 }
 
@@ -77,6 +80,7 @@ data class DormLedgerEntry(
 ) {
     init {
         require(amountFen != 0L) { "账本金额不能为 0 分" }
+        require(amountFen != Long.MIN_VALUE) { "账本金额超出可安全取负/展示范围" }
     }
 }
 

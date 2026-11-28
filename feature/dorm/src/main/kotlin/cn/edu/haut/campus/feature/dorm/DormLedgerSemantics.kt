@@ -142,6 +142,31 @@ fun validateSharesMatchCoreLedger(
     }
 }
 
+/** 与 core:ledger 两方确认状态机一致的云端响应不变量；CONFIRMED 仍然不是支付证明。 */
+fun validateDormSettlementInvariants(settlement: DormSettlement) {
+    require(settlement.debtorMemberId != settlement.creditorMemberId) { "结算双方不能是同一成员" }
+    val debtorConfirmed = settlement.debtorConfirmedAt != null
+    val creditorConfirmed = settlement.creditorConfirmedAt != null
+    val expected = when {
+        settlement.cancelledAt != null || settlement.status == DormSettlementStatus.CANCELLED -> DormSettlementStatus.CANCELLED
+        debtorConfirmed && creditorConfirmed -> DormSettlementStatus.CONFIRMED
+        debtorConfirmed -> DormSettlementStatus.PENDING_CREDITOR_CONFIRMATION
+        creditorConfirmed -> DormSettlementStatus.PENDING_DEBTOR_CONFIRMATION
+        else -> DormSettlementStatus.PENDING_BOTH_CONFIRMATIONS
+    }
+    require(settlement.status == expected) { "结算 status 与两方确认时间戳不一致" }
+    if (settlement.status == DormSettlementStatus.CONFIRMED) {
+        require(settlement.confirmedAt != null) { "CONFIRMED 结算缺少 confirmed_at" }
+    } else {
+        require(settlement.confirmedAt == null) { "非 CONFIRMED 结算不得带 confirmed_at" }
+    }
+    if (settlement.status == DormSettlementStatus.CANCELLED) {
+        require(settlement.cancelledAt != null) { "CANCELLED 结算缺少 cancelled_at" }
+    } else {
+        require(settlement.cancelledAt == null) { "非 CANCELLED 结算不得带 cancelled_at" }
+    }
+}
+
 fun dormSettlementStatusFromWire(value: String): DormSettlementStatus = when (value) {
     "PENDING_BOTH_CONFIRMATIONS" -> DormSettlementStatus.PENDING_BOTH_CONFIRMATIONS
     "PENDING_DEBTOR_CONFIRMATION" -> DormSettlementStatus.PENDING_DEBTOR_CONFIRMATION

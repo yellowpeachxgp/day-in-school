@@ -55,7 +55,7 @@ internal fun repairStatusLabel(status: String): String = when (status) {
 internal fun nextRepairTransitions(status: String): List<String> = when (status) {
     "OPEN" -> listOf("TRIAGED", "REJECTED")
     "TRIAGED" -> listOf("IN_PROGRESS", "REJECTED")
-    "IN_PROGRESS" -> listOf("RESOLVED", "REJECTED")
+    "IN_PROGRESS" -> listOf("RESOLVED")
     "RESOLVED" -> listOf("CLOSED")
     else -> emptyList()
 }

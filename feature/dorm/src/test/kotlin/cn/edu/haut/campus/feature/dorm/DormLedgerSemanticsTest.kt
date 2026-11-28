@@ -55,6 +55,48 @@ class DormLedgerSemanticsTest {
         assertTrue(negativeValid.shares.all { it.amountFen <= 0L })
     }
 
+    @Test
+    fun settlementStatusMustMatchTwoPartyConfirmationTimestamps() {
+        val pendingCreditor = settlement(
+            status = DormSettlementStatus.PENDING_CREDITOR_CONFIRMATION,
+            debtorAt = "2026-01-01T00:01:00Z",
+            creditorAt = null,
+        )
+        validateDormSettlementInvariants(pendingCreditor)
+        assertThrows(IllegalArgumentException::class.java) {
+            validateDormSettlementInvariants(pendingCreditor.copy(status = DormSettlementStatus.CONFIRMED, confirmedAt = "2026-01-01T00:02:00Z"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            validateDormSettlementInvariants(pendingCreditor.copy(debtorMemberId = pendingCreditor.creditorMemberId))
+        }
+    }
+
+    @Test
+    fun ledgerEntryRejectsLongMinBecauseItCannotBeSafelyNegatedOrDisplayed() {
+        assertThrows(IllegalArgumentException::class.java) {
+            previewEntry(amount = Long.MIN_VALUE, shares = listOf(Long.MIN_VALUE))
+        }
+    }
+
+    private fun settlement(
+        status: DormSettlementStatus,
+        debtorAt: String?,
+        creditorAt: String?,
+    ): DormSettlement = DormSettlement(
+        settlementId = "settlement",
+        debtorMemberId = "debtor",
+        creditorMemberId = "creditor",
+        amountFen = 1L,
+        basisBalanceRevision = 0L,
+        status = status,
+        note = null,
+        createdAt = "2026-01-01T00:00:00Z",
+        debtorConfirmedAt = debtorAt,
+        creditorConfirmedAt = creditorAt,
+        confirmedAt = null,
+        cancelledAt = null,
+    )
+
     private fun previewEntry(amount: Long, shares: List<Long>): DormLedgerEntry = DormLedgerEntry(
         entryId = "entry",
         groupId = "group",

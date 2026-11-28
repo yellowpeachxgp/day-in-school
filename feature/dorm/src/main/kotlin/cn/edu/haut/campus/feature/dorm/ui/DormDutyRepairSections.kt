@@ -70,9 +70,19 @@ internal fun DutyTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (Dor
         SectionTitle("值日任务", "完成需要再确认；SKIPPED 是请假/跳过审计，不算完成")
         val tasks = snapshot?.dutyTasks.orEmpty()
         if (tasks.isEmpty()) Text("暂无值日任务", style = MaterialTheme.typography.bodySmall)
+        val currentMember = snapshot?.members?.firstOrNull { it.cloudUserId == state.currentCloudUserId && it.isActive }
+        val swaps = snapshot?.dutySwaps.orEmpty()
         tasks.forEachIndexed { index, task ->
             if (index > 0) XPeachInsetDivider(verticalPadding = 8.dp)
-            DutyTaskRow(task, snapshot?.members.orEmpty(), state.actionInFlight, onAction)
+            DutyTaskRow(
+                task = task,
+                members = snapshot?.members.orEmpty(),
+                currentMember = currentMember,
+                hasOpenSwap = swaps.any { it.dutyTaskId == task.taskId && it.status == "PENDING" },
+                hasAcceptedSwap = swaps.any { it.dutyTaskId == task.taskId && it.status == "ACCEPTED" },
+                actionInFlight = state.actionInFlight,
+                onAction = onAction,
+            )
         }
     }
 
@@ -80,13 +90,22 @@ internal fun DutyTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (Dor
     if (pendingSwaps.isNotEmpty()) {
         XPeachCard(modifier = Modifier.fillMaxWidth()) {
             SectionTitle("待处理换班/代值", "接受后才会按服务端规则改派；拒绝或取消保留原任务")
-            pendingSwaps.forEach { swap -> DutySwapRow(swap, snapshot?.members.orEmpty(), state.actionInFlight, onAction) }
+            val currentMember = snapshot?.members?.firstOrNull { it.cloudUserId == state.currentCloudUserId && it.isActive }
+            pendingSwaps.forEach { swap -> DutySwapRow(swap, snapshot?.members.orEmpty(), currentMember, state.actionInFlight, onAction) }
         }
     }
 }
 
 @Composable
-private fun DutyTaskRow(task: DormDutyTask, members: List<DormMember>, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
+private fun DutyTaskRow(
+    task: DormDutyTask,
+    members: List<DormMember>,
+    currentMember: DormMember?,
+    hasOpenSwap: Boolean,
+    hasAcceptedSwap: Boolean,
+    actionInFlight: Boolean,
+    onAction: (DormUiAction) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(task.title + " · " + task.dueDate, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -98,18 +117,37 @@ private fun DutyTaskRow(task: DormDutyTask, members: List<DormMember>, actionInF
         task.skipReason?.let { Text("请假/跳过原因：" + it, style = MaterialTheme.typography.labelSmall) }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             if (task.status == DormDutyTaskStatus.PENDING) {
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.CompleteDutyTask(task.taskId)) }) { Text("完成") }
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.RequestDutySwap(task.taskId)) }) { Text("换班") }
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.SkipDutyTask(task.taskId)) }) { Text("请假") }
+                val isAssignee = currentMember?.memberId == task.assignedMemberId
+                val canManage = (currentMember?.role ?: "") in setOf("OWNER", "ADMIN")
+                val target = members.firstOrNull { it.isActive && it.memberId != task.assignedMemberId }
+                TextButton(
+                    enabled = !actionInFlight && isAssignee,
+                    onClick = { onAction(DormUiAction.CompleteDutyTask(task.taskId)) },
+                ) { Text(if (isAssignee) "完成" else "仅负责人完成") }
+                if (target != null) {
+                    val canRequest = isAssignee || canManage
+                    TextButton(
+                        enabled = !actionInFlight && canRequest && !hasOpenSwap && !hasAcceptedSwap,
+                        onClick = { onAction(DormUiAction.RequestDutySwap(task.taskId, target.memberId)) },
+                    ) { Text(if (hasOpenSwap || hasAcceptedSwap) "已有换班" else "请" + target.displayLabel + "代值") }
+                }
+                TextButton(
+                    enabled = !actionInFlight && canManage && !hasAcceptedSwap,
+                    onClick = { onAction(DormUiAction.SkipDutyTask(task.taskId)) },
+                ) { Text("请假") }
             } else if (task.status == DormDutyTaskStatus.COMPLETED) {
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.ConfirmDutyTask(task.taskId)) }) { Text("确认完成") }
+                val canConfirm = currentMember != null && currentMember.memberId != task.assignedMemberId
+                TextButton(
+                    enabled = !actionInFlight && canConfirm,
+                    onClick = { onAction(DormUiAction.ConfirmDutyTask(task.taskId)) },
+                ) { Text(if (canConfirm) "确认完成" else "需其他成员确认") }
             }
         }
     }
 }
 
 @Composable
-private fun DutySwapRow(swap: DormDutySwap, members: List<DormMember>, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
+private fun DutySwapRow(swap: DormDutySwap, members: List<DormMember>, currentMember: DormMember?, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             memberLabel(members, swap.requestedByMemberId) + " 请求 " + memberLabel(members, swap.targetMemberId) + (if (swap.type == "COVER") " 代值" else " 换班"),
@@ -118,9 +156,12 @@ private fun DutySwapRow(swap: DormDutySwap, members: List<DormMember>, actionInF
         )
         swap.reason?.let { Text("原因：" + it, style = MaterialTheme.typography.labelSmall) }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "ACCEPT")) }) { Text("接受") }
-            TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "REJECT")) }) { Text("拒绝") }
-            TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "CANCEL")) }) { Text("取消") }
+            val canAcceptOrReject = currentMember != null &&
+                (currentMember.memberId == swap.targetMemberId || currentMember.role in setOf("OWNER", "ADMIN"))
+            val canCancel = currentMember?.memberId == swap.requestedByMemberId
+            TextButton(enabled = !actionInFlight && canAcceptOrReject, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "ACCEPT")) }) { Text("接受") }
+            TextButton(enabled = !actionInFlight && canAcceptOrReject, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "REJECT")) }) { Text("拒绝") }
+            TextButton(enabled = !actionInFlight && canCancel, onClick = { onAction(DormUiAction.ResolveDutySwap(swap.swapId, "CANCEL")) }) { Text("取消") }
         }
     }
 }
@@ -176,15 +217,16 @@ internal fun RepairTab(state: DormUiState, snapshot: DormSnapshot?, onAction: (D
         SectionTitle("报修协调记录", "状态只代表群组内部协调进度")
         val repairs = snapshot?.repairs.orEmpty()
         if (repairs.isEmpty()) Text("暂无报修协调单", style = MaterialTheme.typography.bodySmall)
+        val currentMember = snapshot?.members?.firstOrNull { it.cloudUserId == state.currentCloudUserId && it.isActive }
         repairs.forEachIndexed { index, repair ->
             if (index > 0) XPeachInsetDivider(verticalPadding = 8.dp)
-            RepairRow(repair, snapshot?.members.orEmpty(), state.actionInFlight, onAction)
+            RepairRow(repair, snapshot?.members.orEmpty(), currentMember, state.actionInFlight, onAction)
         }
     }
 }
 
 @Composable
-private fun RepairRow(repair: DormRepairTicket, members: List<DormMember>, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
+private fun RepairRow(repair: DormRepairTicket, members: List<DormMember>, currentMember: DormMember?, actionInFlight: Boolean, onAction: (DormUiAction) -> Unit) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text(repair.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
@@ -199,11 +241,20 @@ private fun RepairRow(repair: DormRepairTicket, members: List<DormMember>, actio
         )
         repair.resolutionNote?.let { Text("处理备注：" + it, style = MaterialTheme.typography.labelSmall) }
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            nextRepairTransitions(repair.status).forEach { next ->
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.TransitionRepair(repair.repairId, next)) }) { Text(repairStatusLabel(next)) }
+            val canManage = (currentMember?.role ?: "") in setOf("OWNER", "ADMIN")
+            val transitions = nextRepairTransitions(repair.status).filter { it != "CLOSED" || repair.reviewId != null }
+            transitions.forEach { next ->
+                TextButton(
+                    enabled = !actionInFlight && canManage,
+                    onClick = { onAction(DormUiAction.TransitionRepair(repair.repairId, next)) },
+                ) { Text(repairStatusLabel(next)) }
             }
             if (repair.status == "RESOLVED" && repair.reviewId == null) {
-                TextButton(enabled = !actionInFlight, onClick = { onAction(DormUiAction.ReviewRepair(repair.repairId)) }) { Text("评价") }
+                val canReview = currentMember?.memberId == repair.reporterMemberId
+                TextButton(
+                    enabled = !actionInFlight && canReview,
+                    onClick = { onAction(DormUiAction.ReviewRepair(repair.repairId)) },
+                ) { Text(if (canReview) "评价" else "待报告人评价") }
             }
         }
     }

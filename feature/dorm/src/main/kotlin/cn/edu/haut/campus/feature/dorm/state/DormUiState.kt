@@ -85,7 +85,7 @@ sealed interface DormUiAction {
     data class CompleteDutyTask(val taskId: String) : DormUiAction
     data class ConfirmDutyTask(val taskId: String) : DormUiAction
     data class SkipDutyTask(val taskId: String) : DormUiAction
-    data class RequestDutySwap(val taskId: String) : DormUiAction
+    data class RequestDutySwap(val taskId: String, val targetMemberId: String) : DormUiAction
     data class ResolveDutySwap(val swapId: String, val action: String) : DormUiAction
 
     data class UpdateRepairDraft(val draft: RepairDraft) : DormUiAction

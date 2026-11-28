@@ -60,7 +60,7 @@ class DormViewModel(
             is DormUiAction.CompleteDutyTask -> completeDutyTask(action.taskId)
             is DormUiAction.ConfirmDutyTask -> confirmDutyTask(action.taskId)
             is DormUiAction.SkipDutyTask -> skipDutyTask(action.taskId)
-            is DormUiAction.RequestDutySwap -> requestDutySwap(action.taskId)
+            is DormUiAction.RequestDutySwap -> requestDutySwap(action.taskId, action.targetMemberId)
             is DormUiAction.ResolveDutySwap -> resolveDutySwap(action.swapId, action.action)
             is DormUiAction.UpdateRepairDraft -> mutableState.update { it.copy(repairDraft = action.draft) }
             DormUiAction.SubmitRepairTicket -> submitRepairTicket()
@@ -271,10 +271,11 @@ class DormViewModel(
         port.skipDutyTask(taskId, "请假且暂无 accepted 代值（骨架 UI 记录）", newKey("duty-skip"))
     }
 
-    private fun requestDutySwap(taskId: String) {
+    private fun requestDutySwap(taskId: String, targetMemberId: String) {
         val snapshot = mutableState.value.snapshot ?: return
         val task = snapshot.dutyTasks.firstOrNull { it.taskId == taskId } ?: return
-        val target = snapshot.members.filter { it.isActive && it.memberId != task.assignedMemberId }.firstOrNull() ?: return
+        val target = snapshot.members.firstOrNull { it.isActive && it.memberId == targetMemberId } ?: return
+        require(target.memberId != task.assignedMemberId) { "代值目标不能是当前负责人" }
         runMutation("已发起换班/代值请求；对方接受前不会改派") {
             port.requestDutySwap(
                 rotaId = task.rotaId,

@@ -76,6 +76,7 @@ import cn.edu.haut.campus.feature.dorm.dormDutyTaskStatusFromWire
 import cn.edu.haut.campus.feature.dorm.dormSettlementStatusFromWire
 import cn.edu.haut.campus.feature.dorm.toCommunityInput
 import cn.edu.haut.campus.feature.dorm.validateDormLedgerEntryInvariants
+import cn.edu.haut.campus.feature.dorm.validateDormSettlementInvariants
 import cn.edu.haut.campus.feature.dorm.validateSharesMatchCoreLedger
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -481,6 +482,13 @@ private fun JsonValue.Obj.array(key: String): List<JsonValue> = requireArray(req
 private fun requireArray(value: JsonValue?, label: String): List<JsonValue> = value?.asArrOrNull?.items
     ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "契约字段不是数组：$label", retryable = false)
 
+private fun requireWireValue(value: String, allowed: Set<String>, label: String): String {
+    if (value !in allowed) {
+        throw DormCollaborationException(DormErrorKind.CONTRACT, "未知 " + label + ": " + value, retryable = false)
+    }
+    return value
+}
+
 private fun parseDormGroup(obj: JsonValue.Obj): DormGroupSummary = DormGroupSummary(
     groupId = obj.string("group_id"),
     schoolId = obj.string("school_id"),
@@ -582,7 +590,7 @@ private fun parseDormSettlement(obj: JsonValue.Obj): DormSettlement = try {
         creditorConfirmedAt = obj.nullableString("creditor_confirmed_at"),
         confirmedAt = obj.nullableString("confirmed_at"),
         cancelledAt = obj.nullableString("cancelled_at"),
-    )
+    ).also(::validateDormSettlementInvariants)
 } catch (error: IllegalArgumentException) {
     throw DormCollaborationException(DormErrorKind.CONTRACT, "结算记录违反契约: " + error.message, retryable = false, cause = error)
 }
@@ -592,12 +600,12 @@ private fun parseDormDutyRota(obj: JsonValue.Obj): DormDutyRota = DormDutyRota(
     title = obj.string("title"),
     description = obj.nullableString("description"),
     rotationMemberIds = obj.array("rotation_member_ids").map { it.stringOrNull() ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "rotation_member_ids 含非字符串", retryable = false) },
-    frequency = obj.string("frequency"),
+    frequency = requireWireValue(obj.string("frequency"), setOf("DAILY", "WEEKLY"), "值日 frequency"),
     daysOfWeek = obj.array("days_of_week").map { (it as? JsonValue.Num)?.literal?.toIntOrNull() ?: throw DormCollaborationException(DormErrorKind.CONTRACT, "days_of_week 含非整数", retryable = false) },
     startDate = obj.string("start_date"),
     endDate = obj.nullableString("end_date"),
     timeZone = obj.string("time_zone"),
-    status = obj.string("status"),
+    status = requireWireValue(obj.string("status"), setOf("ACTIVE", "PAUSED", "ARCHIVED"), "值日轮班 status"),
     generatedThroughDate = obj.nullableString("generated_through_date"),
 )
 
@@ -621,23 +629,23 @@ private fun parseDormDutySwap(obj: JsonValue.Obj): DormDutySwap = DormDutySwap(
     swapId = obj.string("swap_id"),
     rotaId = obj.string("rota_id"),
     dutyTaskId = obj.string("duty_task_id"),
-    type = obj.string("type"),
+    type = requireWireValue(obj.string("type"), setOf("SWAP", "COVER"), "换班 type"),
     requestedByMemberId = obj.string("requested_by_member_id"),
     targetMemberId = obj.string("target_member_id"),
     reason = obj.nullableString("reason"),
-    status = obj.string("status"),
+    status = requireWireValue(obj.string("status"), setOf("PENDING", "ACCEPTED", "REJECTED", "CANCELLED"), "换班 status"),
     resolutionNote = obj.nullableString("resolution_note"),
 )
 
 private fun parseDormRepairTicket(obj: JsonValue.Obj): DormRepairTicket = DormRepairTicket(
     repairId = obj.string("repair_id"),
     title = obj.string("title"),
-    category = obj.string("category"),
+    category = requireWireValue(obj.string("category"), setOf("PLUMBING", "ELECTRICAL", "FURNITURE", "NETWORK", "CLEANING", "SAFETY", "OTHER"), "报修 category"),
     locationText = obj.string("location_text"),
     description = obj.string("description"),
     reporterMemberId = obj.string("reporter_member_id"),
     assignedMemberId = obj.nullableString("assigned_member_id"),
-    status = obj.string("status"),
+    status = requireWireValue(obj.string("status"), setOf("OPEN", "TRIAGED", "IN_PROGRESS", "RESOLVED", "REJECTED", "CLOSED"), "报修 status"),
     resolutionNote = obj.nullableString("resolution_note"),
     reviewId = obj.nullableString("review_id"),
     createdAt = obj.string("created_at"),
