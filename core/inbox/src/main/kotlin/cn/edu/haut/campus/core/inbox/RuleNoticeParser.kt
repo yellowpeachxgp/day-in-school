@@ -499,14 +499,28 @@ private fun selectDateNear(input: ExtractedText, dates: List<DateResolution>, an
     val clauseBounds = NoticeTextContext.boundsAround(input.plainText, anchor, NoticeTextContext.clauseBoundaryChars)
     nearestResolvedDate(dates, anchor, clauseBounds.first, clauseBounds.second)?.let { return it }
     val sentenceBounds = NoticeTextContext.boundsAround(input.plainText, anchor, NoticeTextContext.sentenceBoundaryChars)
-    return nearestResolvedDate(dates, anchor, sentenceBounds.first, sentenceBounds.second)
+    nearestResolvedDate(dates, anchor, sentenceBounds.first, sentenceBounds.second)?.let { return it }
+    // 标题句/正文句拆分时，全文唯一日期可以作为无歧义上下文继承；多日期则必须留在本句绑定。
+    val resolved = dates.filter { it.resolved && it.date != null && it.span != null }
+    return if (resolved.mapNotNull { it.date }.distinct().size == 1) {
+        resolved.minWithOrNull(
+            compareBy<DateResolution> { resolution ->
+                resolution.span?.let { span -> distanceToAnchor(span, anchor) } ?: Int.MAX_VALUE
+            }.thenBy { it.span?.startOffset ?: 0 }
+        )
+    } else {
+        null
+    }
 }
 
 private fun selectTimeNear(input: ExtractedText, anchor: Int): ParsedClockTime? {
     val clauseBounds = NoticeTextContext.boundsAround(input.plainText, anchor, NoticeTextContext.clauseBoundaryChars)
     NoticeTimeParser.findNearest(input, anchor, clauseBounds.first, clauseBounds.second)?.let { return it }
     val sentenceBounds = NoticeTextContext.boundsAround(input.plainText, anchor, NoticeTextContext.sentenceBoundaryChars)
-    return NoticeTimeParser.findNearest(input, anchor, sentenceBounds.first, sentenceBounds.second)
+    NoticeTimeParser.findNearest(input, anchor, sentenceBounds.first, sentenceBounds.second)?.let { return it }
+    // 全文唯一时刻可跨标题句继承；多个时刻时不猜测，避免把发布/参会时间接到错误动作上。
+    val allTimes = NoticeTimeParser.findAll(input)
+    return if (allTimes.map { it.time }.distinct().size == 1) allTimes.firstOrNull() else null
 }
 
 private fun nearestResolvedDate(

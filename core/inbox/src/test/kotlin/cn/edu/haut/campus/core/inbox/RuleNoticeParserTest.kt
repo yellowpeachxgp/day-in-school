@@ -225,6 +225,7 @@ class RuleNoticeParserTest {
         assertNull(NoticeRoomParser.find(ExtractedText.fromPlainText("地点2024")))
         assertNull(NoticeRoomParser.find(ExtractedText.fromPlainText("在1500")))
         assertEquals("A203", NoticeRoomParser.find(ExtractedText.fromPlainText("地点A203"))?.room)
+        assertEquals("101", NoticeRoomParser.find(ExtractedText.fromPlainText("地点101"))?.room)
         assertEquals("F01", NoticeRoomParser.find(ExtractedText.fromPlainText("地点F01"))?.room)
         assertEquals("教三楼302", NoticeRoomParser.find(ExtractedText.fromPlainText("地点教三楼302"))?.room)
     }
@@ -254,6 +255,21 @@ class RuleNoticeParserTest {
         assertEquals(LocalDate.of(2026, 11, 27), action.date)
         val change = action.change as OccurrenceChange.ChangeRoom
         assertEquals("A203", change.room)
+    }
+
+    @Test
+    fun uniqueHeadingDateAndCourseRemainAvailableToActionSentence() {
+        val dateInHeading = parseReport("明天课程调整通知如下：
+高等数学第3-4节停课")
+        val firstAction = dateInHeading.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, firstAction.courseRef)
+        assertEquals(LocalDate.of(2026, 11, 26), firstAction.date)
+
+        val courseInHeading = parseReport("高等数学课程调整通知如下：
+本周五停课")
+        val secondAction = courseInHeading.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, secondAction.courseRef)
+        assertEquals(LocalDate.of(2026, 11, 27), secondAction.date)
     }
 
     @Test

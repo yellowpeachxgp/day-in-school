@@ -158,10 +158,24 @@ internal object CourseMentionMatcher {
         startOffset: Int,
         endOffset: Int
     ): CourseMentionSelection {
-        val mentions = findAll(input, courses).filter {
+        val allMentions = findAll(input, courses)
+        val mentions = allMentions.filter {
             it.span.startOffset >= startOffset && it.span.endOffset <= endOffset
         }
-        if (mentions.isEmpty()) return CourseMentionSelection(mention = null)
+        if (mentions.isEmpty()) {
+            // 常见通知会把课程名放在标题/上一句、动作放在下一句。只有全文课程指代唯一时才跨句继承；
+            // 多课程通知不得沿用文档级最长名，否则会把停课/调课挂到另一门课。
+            val refs = allMentions.map { it.candidate.ref }.distinct()
+            if (refs.size != 1) {
+                return CourseMentionSelection(mention = null, ambiguous = refs.size > 1)
+            }
+            val best = allMentions.minWithOrNull(
+                compareBy<CourseMention> { distanceToAnchor(it.span, anchor) }
+                    .thenByDescending { it.span.endOffset - it.span.startOffset }
+                    .thenBy { it.confidence.ordinal }
+            )
+            return CourseMentionSelection(mention = best)
+        }
         val nearestDistance = mentions.minOf { distanceToAnchor(it.span, anchor) }
         val nearest = mentions.filter { distanceToAnchor(it.span, anchor) == nearestDistance }
         val refs = nearest.map { it.candidate.ref }.distinct()
@@ -349,13 +363,14 @@ internal data class ParsedRoom(
 )
 
 internal object NoticeRoomParser {
-    // 教室标识必须带楼宇字母或明确中文建筑/功能房间前缀；纯 3-4 位数字会把年份、人数等误吸为教室。
-    private const val ROOM_TOKEN = """(?:[A-Za-z]{1,3}[0-9]{2,4}[A-Za-z]?|[一-鿿]{0,6}(?:楼|栋|馆|区|中心|机房|实验室)[0-9]{2,4}[A-Za-z]?)"""
+    // 教室标识优先要求楼宇字母或明确中文建筑/功能房间前缀；显式“教室/地点/在”后才接受三位纯数字房号。
+    // 四位纯数字（如年份 2024、人数 1500）始终不当教室，四位房号必须带楼宇/建筑前缀。
+    private const val NAMED_ROOM_TOKEN = """(?:[A-Za-z]{1,3}[0-9]{2,4}[A-Za-z]?|[一-鿿]{0,6}(?:楼|栋|馆|区|中心|机房|实验室)[0-9]{2,4}[A-Za-z]?)"""
     private val explicitRoomPattern = Regex(
-        """(?:教室|地点|机房|实验室|场地|在)(?:\s|为|是|：|:)*(""" + ROOM_TOKEN + """)(?![A-Za-z0-9])"""
+        """(?:教室|地点|机房|实验室|场地|在)(?:\s|为|是|：|:)*((?:""" + NAMED_ROOM_TOKEN + """)|(?:[0-9]{3}))(?![A-Za-z0-9])"""
     )
     private val directRoomPattern = Regex(
-        """^[\s，。,;；:：]*(?:在|为|是)?[\s，。,;；:：]*(""" + ROOM_TOKEN + """)(?![A-Za-z0-9])"""
+        """^[\s，。,;；:：]*(?:在|为|是)?[\s，。,;；:：]*(""" + NAMED_ROOM_TOKEN + """)(?![A-Za-z0-9])"""
     )
 
     fun find(input: ExtractedText, startOffset: Int = 0, endOffset: Int = input.plainText.length): ParsedRoom? {
