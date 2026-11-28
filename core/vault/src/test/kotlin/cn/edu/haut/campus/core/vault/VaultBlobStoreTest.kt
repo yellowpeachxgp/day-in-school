@@ -10,6 +10,8 @@ import cn.edu.haut.campus.core.model.ProfileId
 import cn.edu.haut.campus.core.model.SchoolAccountScope
 import cn.edu.haut.campus.core.model.SchoolId
 import java.time.Instant
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -34,6 +36,7 @@ import org.robolectric.annotation.Config
 class VaultBlobStoreTest {
     private lateinit var database: HautDatabase
     private lateinit var blobs: VaultBlobStore
+    private lateinit var blobIoExecutor: ExecutorService
     private val scope = SchoolAccountScope(
         schoolId = SchoolId("haut"),
         accountId = AccountId("acct_blob"),
@@ -43,16 +46,18 @@ class VaultBlobStoreTest {
 
     @Before
     fun openDatabase() {
+        blobIoExecutor = Executors.newFixedThreadPool(2)
         database = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(),
             HautDatabase::class.java
-        ).allowMainThreadQueries().build()
+        ).setTransactionExecutor(blobIoExecutor).setQueryExecutor(blobIoExecutor).allowMainThreadQueries().build()
         blobs = VaultBlobStore(database, clock = { Instant.parse("2026-01-02T03:04:05Z") })
     }
 
     @After
     fun closeDatabase() {
         database.close()
+        blobIoExecutor.shutdownNow()
     }
 
     @Test
