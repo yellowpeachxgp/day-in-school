@@ -376,6 +376,16 @@ private fun E2eeSyncPanel(sync: E2eeSyncPanelUiState, actions: BackupCenterUiAct
             ) { Text("停用并撤销") }
         }
     }
+    if (sync.enabled && sync.devices.isNotEmpty()) {
+        Spacer(modifier = Modifier.height(10.dp))
+        Text("同步设备", style = MaterialTheme.typography.titleSmall)
+        sync.devices.take(4).forEach { device ->
+            SyncDeviceRow(device, actions, enabled = !sync.running)
+        }
+        if (sync.devices.size > 4) {
+            Text("共 " + sync.devices.size + " 台登记设备；其余请在云端账户安全页面核查", style = MaterialTheme.typography.labelSmall)
+        }
+    }
     if (sync.conflicts.isNotEmpty()) {
         Spacer(modifier = Modifier.height(10.dp))
         Text("同步冲突（不会静默覆盖）", style = MaterialTheme.typography.titleSmall)
@@ -416,6 +426,37 @@ private fun SyncMatrixBanner(matrix: SettingsUiMatrix) {
         },
         modifier = Modifier.testTag("sync-matrix-banner")
     )
+}
+
+@Composable
+private fun SyncDeviceRow(
+    device: E2eeSyncDeviceSummary,
+    actions: BackupCenterUiAction,
+    enabled: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                (device.label ?: "未命名设备") + if (device.currentDevice) "（本机）" else "",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Text(
+                device.deviceIdShort + " · " + device.status + (device.lastSeenAt?.let { " · " + it } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (!device.currentDevice && device.status == "ACTIVE") {
+            OutlinedButton(
+                onClick = { actions.revokeSyncDevice(device.deviceId) },
+                enabled = enabled,
+                modifier = Modifier.testTag("sync-revoke-device-" + device.deviceIdShort)
+            ) { Text("撤销") }
+        }
+    }
 }
 
 @Composable

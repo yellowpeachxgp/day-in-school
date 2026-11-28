@@ -157,6 +157,7 @@ class BackupCenterSectionTest {
         override fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String) { events += "sync-enable-existing" }
         override fun runSyncNow() { events += "sync-run" }
         override fun disableSync() { events += "sync-disable" }
+        override fun revokeSyncDevice(deviceId: String) { events += "sync-revoke:" + deviceId.take(8) }
         override fun resolveSyncConflict(conflictId: String, resolution: E2eeSyncConflictResolution) {
             events += "sync-resolve:" + conflictId + ":" + resolution.name
         }

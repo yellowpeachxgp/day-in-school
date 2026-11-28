@@ -192,6 +192,49 @@ class E2eeSyncEngineTest {
         assertTrue(env.engineB.status().cursorPresent)
     }
 
+    @Test
+    fun cloudAccountChangeFreezesStoredSyncStateBeforeAnyPullOrPush() = runBlocking {
+        val env = TwoDeviceEnv()
+        env.storeA.applyUpserts(listOf(courseSnapshot("course-cloud-switch", "不得上传")))
+        val state = env.stateStoreA.load()
+        stateStoreASaveWithCloud(env, state, "cloud-a")
+        val engine = E2eeSyncEngine(
+            env.stateStoreA,
+            env.keyA,
+            env.cloud.api { env.deviceA },
+            env.storeA,
+            expectedCloudUserId = "cloud-b"
+        )
+        try {
+            engine.runOnce()
+            fail("云账号变化必须 fail-closed")
+        } catch (expected: E2eeSyncConsentException) {
+            // expected
+        }
+        assertEquals(0, env.cloud.mutationCount())
+        assertEquals("不得上传", courseName(env.storeA, "course-cloud-switch"))
+    }
+
+    private suspend fun stateStoreASaveWithCloud(env: TwoDeviceEnv, state: E2eeSyncState, cloudUserId: String) {
+        env.stateStoreA.save(
+            E2eeSyncState(
+                enabled = state.enabled,
+                deviceId = state.deviceId,
+                consentId = state.consentId,
+                syncSpaceId = state.syncSpaceId,
+                keyId = state.keyId,
+                cloudUserId = cloudUserId,
+                deviceLabel = state.deviceLabel,
+                cursor = state.cursor,
+                objects = state.objects,
+                pendingWrites = state.pendingWrites,
+                conflicts = state.conflicts,
+                lastRunAtEpochMs = state.lastRunAtEpochMs,
+                lastRunSummary = state.lastRunSummary
+            )
+        )
+    }
+
     private class TwoDeviceEnv {
         val deviceA = UUID.randomUUID().toString()
         val deviceB = UUID.randomUUID().toString()

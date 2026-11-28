@@ -15,6 +15,7 @@ internal class E2eeSyncEngine(
     private val keyStore: E2eeSyncKeyStore,
     private val api: E2eeSyncApi,
     private val backupStore: SyncBackupStore,
+    private val expectedCloudUserId: String? = null,
     private val clock: () -> Long = System::currentTimeMillis,
     private val uuid: () -> String = { UUID.randomUUID().toString() }
 ) {
@@ -85,6 +86,9 @@ internal class E2eeSyncEngine(
         val deviceId = state.deviceId ?: throw E2eeSyncConsentException("本机尚未注册 E2EE 同步设备")
         E2eeSyncProtocol.requireValidUuid(deviceId, "deviceId")
         if (state.consentId.isNullOrBlank()) throw E2eeSyncConsentException("缺少 E2EE_CLOUD_SYNC consent id")
+        if (!expectedCloudUserId.isNullOrBlank() && state.cloudUserId != expectedCloudUserId) {
+            throw E2eeSyncConsentException("云账号已变化，原同步状态已冻结；不得把另一云账号的 cursor/向量用于本账号")
+        }
         if (state.syncSpaceId != material.syncSpaceId) {
             throw E2eeSyncCryptoException("本机同步状态与恢复密钥的 sync space 不一致")
         }

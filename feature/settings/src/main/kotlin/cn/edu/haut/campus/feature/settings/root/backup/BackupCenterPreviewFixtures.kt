@@ -55,13 +55,33 @@ object BackupCenterPreviewFixtures {
         localDeletion = false
     )
 
+    private val sampleDevices = listOf(
+        E2eeSyncDeviceSummary(
+            deviceId = "a1b2c3d4-0000-4000-8000-000000000001",
+            deviceIdShort = "a1b2c3d4",
+            label = "本机 Android",
+            status = "ACTIVE",
+            currentDevice = true,
+            lastSeenAt = "2026-11-28T08:00:00Z"
+        ),
+        E2eeSyncDeviceSummary(
+            deviceId = "e5f60708-0000-4000-8000-000000000002",
+            deviceIdShort = "e5f60708",
+            label = "旧平板",
+            status = "ACTIVE",
+            currentDevice = false,
+            lastSeenAt = "2026-11-27T08:00:00Z"
+        )
+    )
+
     private fun syncPanel(matrix: SettingsUiMatrix, conflicts: List<E2eeSyncConflictSummary> = emptyList()) = E2eeSyncPanelUiState(
         matrix = matrix,
         enabled = matrix.status != SettingsUiMatrix.Status.EMPTY,
         deviceIdShort = "a1b2c3d4",
         syncSpaceIdShort = "space01",
         lastRunSummary = "pulled=1,applied=1,uploaded=1,deleted=0,conflicts=" + conflicts.size + ",oversized=0",
-        conflicts = conflicts
+        conflicts = conflicts,
+        devices = if (matrix.status == SettingsUiMatrix.Status.EMPTY) emptyList() else sampleDevices
     )
 
     val loading = BackupCenterUiState(matrix = SettingsUiMatrix.Loading, sync = syncPanel(SettingsUiMatrix.Loading))

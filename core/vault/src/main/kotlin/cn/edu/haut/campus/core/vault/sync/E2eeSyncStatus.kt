@@ -29,6 +29,11 @@ enum class E2eeSyncConflictResolution {
     USE_REMOTE
 }
 
+data class E2eeSyncDisableReport(
+    val deviceRevoked: Boolean,
+    val consentWithdrawn: Boolean
+)
+
 enum class E2eeSyncEnableMode {
     CREATE_NEW_SYNC_SPACE,
     JOIN_EXISTING_SYNC_SPACE

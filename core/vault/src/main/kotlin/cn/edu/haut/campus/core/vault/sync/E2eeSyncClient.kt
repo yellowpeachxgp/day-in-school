@@ -10,6 +10,7 @@ class E2eeSyncClient internal constructor(
     private val keyStore: E2eeSyncKeyStore,
     private val backupStore: SyncBackupStore,
     private val apiFactory: suspend (syncDeviceIdProvider: () -> String?) -> E2eeSyncApi,
+    private val cloudUserIdProvider: suspend () -> String? = { null },
     private val clock: () -> Long = System::currentTimeMillis,
     private val uuid: () -> String = { UUID.randomUUID().toString() }
 ) {
@@ -33,7 +34,12 @@ class E2eeSyncClient internal constructor(
         recoveryKeyInput: String? = null
     ): E2eeSyncEnableResult = lifecycleMutex.withLock {
         val state = stateStore.load()
+        val cloudUserId = cloudUserIdProvider()?.trim().orEmpty()
+        if (cloudUserId.isEmpty()) throw E2eeSyncConsentException("需要先登录 XPeach Cloud 才能启用 E2EE 同步")
         if (state.enabled) {
+            if (state.cloudUserId != cloudUserId) {
+                throw E2eeSyncConsentException("云账号已变化，原同步状态已冻结；请先停用本地同步状态")
+            }
             return@withLock E2eeSyncEnableResult(
                 deviceId = state.deviceId.orEmpty(),
                 consentId = state.consentId.orEmpty(),
@@ -75,6 +81,7 @@ class E2eeSyncClient internal constructor(
                 consentId = consent.id,
                 syncSpaceId = material.syncSpaceId,
                 keyId = material.keyId,
+                cloudUserId = cloudUserId,
                 deviceLabel = label,
                 cursor = null,
                 objects = state.objects,
@@ -100,32 +107,57 @@ class E2eeSyncClient internal constructor(
     suspend fun resolveConflict(conflictId: String, resolution: E2eeSyncConflictResolution): E2eeSyncRunReport =
         newEngineForCurrentState().resolveConflict(conflictId, resolution)
 
-    /** 停用云端处理并撤销本设备。密钥默认保留在本机密封存储，30 天保留期内重新同意仍可解密既有密文。 */
-    suspend fun disableAndWithdraw(reason: String = "USER_REMOVED") {
+    /** 撤销任意一台仍属当前云账号的同步设备；撤销当前设备时同时走本地停用/cursor 失效路径。 */
+    suspend fun revokeDevice(deviceId: String, reason: String = "USER_REMOVED") {
         lifecycleMutex.withLock {
             val state = stateStore.load()
-            if (!state.enabled) return@withLock
             val api = apiFactory { state.deviceId }
-            val deviceId = state.deviceId
-            if (!deviceId.isNullOrBlank()) {
-                runCatching { api.revokeDevice(deviceId, reason) }
+            api.revokeDevice(deviceId, reason)
+            if (state.deviceId == deviceId) {
+                val next = state.copy(
+                    enabled = false,
+                    deviceId = null,
+                    consentId = null,
+                    deviceLabel = null,
+                    cursor = null
+                )
+                next.pendingWrites.clear()
+                stateStore.save(next)
             }
-            val consentId = state.consentId
-            if (!consentId.isNullOrBlank()) {
-                runCatching { api.withdrawConsent(consentId) }
-            }
-            // CT-07：撤回会使全部 device-bound cursor/ack watermark 失效；本地绝不能继续沿用。
-            // revoke 是永久 tombstone，重新同意必须生成全新 installation UUID，不能复活旧 device_id。
-            val next = state.copy(
-                enabled = false,
-                deviceId = null,
-                consentId = null,
-                deviceLabel = null,
-                cursor = null
-            )
-            next.pendingWrites.clear()
-            stateStore.save(next)
         }
+    }
+
+    /** 停用云端处理并撤销本设备。密钥默认保留在本机密封存储，30 天保留期内重新同意仍可解密既有密文。 */
+    suspend fun disableAndWithdraw(reason: String = "USER_REMOVED"): E2eeSyncDisableReport = lifecycleMutex.withLock {
+        val state = stateStore.load()
+        if (!state.enabled) return@withLock E2eeSyncDisableReport(deviceRevoked = false, consentWithdrawn = false)
+        val api = runCatching { apiFactory { state.deviceId } }.getOrNull()
+        // 顺序必须是先撤回 consent 再 revoke 当前设备：revoke 当前设备会失效其绑定的会话族，
+        // 若先 revoke，后续 withdraw 请求会被服务器拒绝。设备管理在 consent 撤回后仍可作为安全控制使用。
+        val consentId = state.consentId
+        val consentWithdrawn = if (api != null && !consentId.isNullOrBlank()) {
+            runCatching { api.withdrawConsent(consentId) }.isSuccess
+        } else {
+            false
+        }
+        val deviceId = state.deviceId
+        val deviceRevoked = if (api != null && !deviceId.isNullOrBlank()) {
+            runCatching { api.revokeDevice(deviceId, reason) }.isSuccess
+        } else {
+            false
+        }
+        // CT-07：撤回会使全部 device-bound cursor/ack watermark 失效；本地绝不能继续沿用。
+        // revoke 是永久 tombstone，重新同意必须生成全新 installation UUID，不能复活旧 device_id。
+        val next = state.copy(
+            enabled = false,
+            deviceId = null,
+            consentId = null,
+            deviceLabel = null,
+            cursor = null
+        )
+        next.pendingWrites.clear()
+        stateStore.save(next)
+        E2eeSyncDisableReport(deviceRevoked = deviceRevoked, consentWithdrawn = consentWithdrawn)
     }
 
     /** 本地擦除钩子：绝不为了擦除而等待网络；密钥/状态/游标/冲突缓存都必须消失。 */
@@ -143,6 +175,7 @@ class E2eeSyncClient internal constructor(
             keyStore = keyStore,
             api = api,
             backupStore = backupStore,
+            expectedCloudUserId = runCatching { cloudUserIdProvider() }.getOrNull(),
             clock = clock,
             uuid = uuid
         ).also {

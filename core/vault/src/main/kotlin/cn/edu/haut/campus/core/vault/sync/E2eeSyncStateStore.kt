@@ -68,6 +68,7 @@ data class E2eeSyncState(
     val consentId: String? = null,
     val syncSpaceId: String? = null,
     val keyId: String? = null,
+    val cloudUserId: String? = null,
     val deviceLabel: String? = null,
     var cursor: String? = null,
     val objects: MutableMap<String, E2eeSyncObjectState> = mutableMapOf(),
@@ -94,6 +95,7 @@ object E2eeSyncStateCodec {
             .put("consentId", state.consentId)
             .put("syncSpaceId", state.syncSpaceId)
             .put("keyId", state.keyId)
+            .put("cloudUserId", state.cloudUserId)
             .put("deviceLabel", state.deviceLabel)
             .put("cursor", state.cursor)
             .put("lastRunAtEpochMs", state.lastRunAtEpochMs)
@@ -119,6 +121,7 @@ object E2eeSyncStateCodec {
             consentId = root.optNullableString("consentId"),
             syncSpaceId = root.optNullableString("syncSpaceId"),
             keyId = root.optNullableString("keyId"),
+            cloudUserId = root.optNullableString("cloudUserId"),
             deviceLabel = root.optNullableString("deviceLabel"),
             cursor = root.optNullableString("cursor"),
             lastRunAtEpochMs = root.optLong("lastRunAtEpochMs", 0L),

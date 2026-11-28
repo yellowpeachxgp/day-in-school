@@ -333,11 +333,42 @@ class BackupCenterViewModel(
         val client = syncClient ?: return
         mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
         viewModelScope.launch {
-            client.disableAndWithdraw()
+            val report = client.disableAndWithdraw()
             syncWorkProfileId?.takeIf { syncWorkGeneration > 0L }?.let { profileId ->
                 E2eeSyncScheduler.cancel(appContext, profileId, syncWorkGeneration)
             }
             refreshSyncStatus()
+            if (!report.deviceRevoked || !report.consentWithdrawn) {
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            lastErrorMessage = "本机已停止同步；云端设备撤销或同意撤回未确认，请在网络恢复后复核设备列表"
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    override fun revokeSyncDevice(deviceId: String) {
+        val client = syncClient ?: return
+        mutableUiState.update { it.copy(sync = it.sync.copy(running = true, lastErrorMessage = null)) }
+        viewModelScope.launch {
+            try {
+                client.revokeDevice(deviceId)
+                refreshSyncStatus()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                mutableUiState.update {
+                    it.copy(
+                        sync = it.sync.copy(
+                            running = false,
+                            matrix = syncMatrixForError(error),
+                            lastErrorMessage = syncUserSafeMessage(error)
+                        )
+                    )
+                }
+            }
         }
     }
 
@@ -380,6 +411,20 @@ class BackupCenterViewModel(
             status.conflicts.isNotEmpty() || status.pendingWriteCount > 0 -> SettingsUiMatrix.Partial
             else -> SettingsUiMatrix.Content
         }
+        val devices = if (status?.enabled == true && hasCloudSession) {
+            runCatching { client.listDevices() }.getOrDefault(emptyList()).map { device ->
+                E2eeSyncDeviceSummary(
+                    deviceId = device.deviceId,
+                    deviceIdShort = device.deviceId.take(8),
+                    label = device.deviceLabel,
+                    status = device.status,
+                    currentDevice = device.deviceId == status.deviceId,
+                    lastSeenAt = device.lastSeenAt
+                )
+            }
+        } else {
+            emptyList()
+        }
         mutableUiState.update {
             it.copy(
                 sync = it.sync.copy(
@@ -391,7 +436,8 @@ class BackupCenterViewModel(
                     pendingWriteCount = status?.pendingWriteCount ?: 0,
                     lastRunSummary = status?.lastRunSummary,
                     running = false,
-                    conflicts = status?.conflicts.orEmpty().map(::toConflictSummary)
+                    conflicts = status?.conflicts.orEmpty().map(::toConflictSummary),
+                    devices = devices
                 )
             )
         }

@@ -73,6 +73,16 @@ data class E2eeSyncConsentDialogUiState(
 )
 
 @Immutable
+data class E2eeSyncDeviceSummary(
+    val deviceId: String,
+    val deviceIdShort: String,
+    val label: String?,
+    val status: String,
+    val currentDevice: Boolean,
+    val lastSeenAt: String?
+)
+
+@Immutable
 data class E2eeSyncPanelUiState(
     val matrix: SettingsUiMatrix = SettingsUiMatrix.Empty,
     val serviceAvailable: Boolean = true,
@@ -85,6 +95,7 @@ data class E2eeSyncPanelUiState(
     val lastErrorMessage: String? = null,
     val running: Boolean = false,
     val conflicts: List<E2eeSyncConflictSummary> = emptyList(),
+    val devices: List<E2eeSyncDeviceSummary> = emptyList(),
     val consentDialog: E2eeSyncConsentDialogUiState = E2eeSyncConsentDialogUiState()
 )
 

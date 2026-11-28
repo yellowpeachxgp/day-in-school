@@ -24,6 +24,7 @@ object E2eeSyncClientFactory {
             stateStore = FileE2eeSyncStateStore(appContext, repository.profileId),
             keyStore = AndroidE2eeSyncKeyStore(appContext, repository.profileId),
             backupStore = backupStore,
+            cloudUserIdProvider = { repository.snapshotCloudIdentitySession()?.cloudUserId },
             apiFactory = { deviceProvider ->
                 val baseUrl = repository.snapshotCloudIdentitySession()?.apiBaseUrl
                     ?: CampusCloudOidcHelper.DEFAULT_CLOUD_BASE_URL

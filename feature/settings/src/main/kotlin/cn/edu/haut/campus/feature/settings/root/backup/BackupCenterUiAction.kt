@@ -25,5 +25,6 @@ interface BackupCenterUiAction {
     fun enableSyncWithRecoveryKey(deviceLabel: String, recoveryKey: String)
     fun runSyncNow()
     fun disableSync()
+    fun revokeSyncDevice(deviceId: String)
     fun resolveSyncConflict(conflictId: String, resolution: E2eeSyncConflictResolution)
 }
