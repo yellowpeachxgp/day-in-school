@@ -287,6 +287,36 @@ class VaultKnowledgeRepositoryEdgeTest {
         assertNotNull(hits[0].bounds)
     }
 
+    @Test
+    fun singleChineseCharacterUsesBodyFallbackLocation() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 2, "矩阵分析"))
+        repository.archiveMaterial(pdfRequest("矩阵课件", byteArrayOf(1)))
+        val hits = repository.searchMaterials(scope, "阵")
+        assertEquals(1, hits.size)
+        assertEquals(2, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+    }
+
+    @Test
+    fun mixedScriptMatchDoesNotCrossPunctuationBoundary() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 3, "CPU、缓存"))
+        repository.archiveMaterial(pdfRequest("CPU缓存课件", byteArrayOf(2)))
+        val hits = repository.searchMaterials(scope, "CPU缓存")
+        assertEquals(1, hits.size)
+        assertNull(hits[0].pageIndex)
+        assertNull(hits[0].lineIndex)
+    }
+
+    @Test
+    fun asciiTailPrefixAcceptsUnicodeContinuation() = runBlocking {
+        extractor.pdfLines = listOf(extractedLine(0, 1, "café notes"))
+        repository.archiveMaterial(pdfRequest("咖啡课件", byteArrayOf(3)))
+        val hits = repository.searchMaterials(scope, "caf")
+        assertEquals(1, hits.size)
+        assertEquals(1, hits[0].pageIndex)
+        assertEquals(0, hits[0].lineIndex)
+    }
+
     private fun assignmentRequest(bytes: ByteArray, title: String, due: Instant?): ArchiveMaterialRequest =
         ArchiveMaterialRequest(
             scope = scope,
@@ -310,6 +340,18 @@ class VaultKnowledgeRepositoryEdgeTest {
             note = null,
             fileName = "note.txt",
             mimeType = mime,
+            contentBytes = bytes
+        )
+
+    private fun pdfRequest(title: String, bytes: ByteArray): ArchiveMaterialRequest =
+        ArchiveMaterialRequest(
+            scope = scope,
+            course = course,
+            kind = CourseMaterialKind.PDF,
+            title = title,
+            note = null,
+            fileName = "fixture.pdf",
+            mimeType = "application/pdf",
             contentBytes = bytes
         )
 

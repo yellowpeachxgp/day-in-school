@@ -404,28 +404,31 @@ class VaultKnowledgeRepository internal constructor(
         SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
 
     private fun unitMatchesNormalizedText(normalizedText: String, unit: String, isQueryTail: Boolean): Boolean {
-        val textTokens = SearchTextNormalizer.normalize(normalizedText).tokens
-        val unitTokens = SearchTextNormalizer.normalize(unit).tokens
-        if (unitTokens.isEmpty() || unitTokens.size > textTokens.size) return false
-        for (start in 0..(textTokens.size - unitTokens.size)) {
-            var matched = true
-            unitTokens.forEachIndexed { tokenIndex, expected ->
-                val candidate = textTokens[start + tokenIndex]
-                val isLastUnitToken = tokenIndex == unitTokens.lastIndex
-                val prefixAllowed = isQueryTail &&
-                    isLastUnitToken &&
-                    expected.length >= 3 &&
-                    expected.none(::isCjkCharacter)
-                val tokenMatches = candidate == expected || (prefixAllowed && candidate.startsWith(expected))
-                if (!tokenMatches) {
-                    matched = false
-                    return@forEachIndexed
-                }
-            }
-            if (matched) return true
+        // 含 CJK 的查询片必须保持原字符连续性。token 流只保留 token 顺序，无法区分
+        // "CPU缓存" 与 "CPU、缓存"；这里用 normalized plain text 防止跨标点/行边界假命中。
+        // 单字 CJK fallback 也按原文子串定位，因为索引层本来就用 normalizedText fallback。
+        if (unit.any(::isCjkCharacter)) return normalizedText.contains(unit)
+        var index = normalizedText.indexOf(unit)
+        while (index >= 0) {
+            val end = index + unit.length
+            val leftBoundary = index == 0 ||
+                normalizedText[index - 1].isWhitespace() ||
+                isCjkCharacter(normalizedText[index - 1])
+            val rightBoundary = end == normalizedText.length ||
+                normalizedText[end].isWhitespace() ||
+                isCjkCharacter(normalizedText[end])
+            val tailPrefixContinuation = isQueryTail &&
+                unit.length >= 3 &&
+                end < normalizedText.length &&
+                isWordContinuationCharacter(normalizedText[end])
+            if (leftBoundary && (rightBoundary || tailPrefixContinuation)) return true
+            index = normalizedText.indexOf(unit, index + 1)
         }
         return false
     }
+
+    private fun isWordContinuationCharacter(char: Char): Boolean =
+        char.isLetterOrDigit() || char == '_'
 
     private fun isCjkCharacter(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
         Character.UnicodeScript.HAN,
