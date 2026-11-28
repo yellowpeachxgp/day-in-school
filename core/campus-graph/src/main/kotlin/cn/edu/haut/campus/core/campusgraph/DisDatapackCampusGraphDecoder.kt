@@ -7,6 +7,7 @@ import cn.edu.haut.campus.core.packages.datapack.DisDatapack
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackItem
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackKind
 import cn.edu.haut.campus.core.packages.datapack.DisDatapackLoader
+import cn.edu.haut.campus.core.packages.datapack.VerifiedDataPack
 import cn.edu.haut.campus.core.packages.datapack.DataPackSource
 import cn.edu.haut.campus.core.packages.manifest.PackageManifest
 import java.time.LocalDate
@@ -30,6 +31,9 @@ class DisDatapackCampusGraphDecoder(
         require(decoded.pack.version == manifest.version.value) { "datapack version 与宿主包清单版本不一致" }
         return decode(decoded.pack)
     }
+
+    /** 独立分发 datapack 的推荐入口：签名验证结果显式传入后再投影。 */
+    fun decodeVerified(verified: VerifiedDataPack): List<CampusGraphEntity> = decode(verified.pack)
 
     /**
      * 把已验证 datapack 投影为 Campus Graph 实体。
