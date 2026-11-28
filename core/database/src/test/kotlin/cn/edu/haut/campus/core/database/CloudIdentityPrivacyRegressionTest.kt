@@ -1,11 +1,6 @@
 package cn.edu.haut.campus.core.database
 
 import androidx.room.Room
-import cn.edu.haut.campus.core.community.CommunityCacheIdentity
-import cn.edu.haut.campus.core.community.CommunityCacheKey
-import cn.edu.haut.campus.core.community.CommunityEnvelope
-import cn.edu.haut.campus.core.community.FileCommunityCacheStore
-import cn.edu.haut.campus.core.model.json.JsonValue
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -139,43 +134,6 @@ class CloudIdentityPrivacyRegressionTest {
           "school_bindings":[],"reservation_jobs":[],"orders":[],"parcels":[]}}
     """.trimIndent()
 
-    private fun communityCacheKey(marker: String): CommunityCacheKey = CommunityCacheKey(
-        cloudIdentity = CommunityCacheIdentity(
-            cloudUserId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            identityGeneration = 1L,
-        ),
-        apiBaseUrl = "https://cloud.example.test",
-        operationId = "listGroups",
-        resolvedPath = "/api/v1/groups",
-        queryParams = mapOf("school_id" to listOf(marker)),
-    )
-
-    private fun communityEnvelope(requestId: String): CommunityEnvelope {
-        val meta = JsonValue.Obj(
-            linkedMapOf(
-                "request_id" to JsonValue.Str(requestId),
-                "api_version" to JsonValue.Str("v1"),
-            ),
-        )
-        val data = JsonValue.Arr(emptyList())
-        val raw = JsonValue.Obj(
-            linkedMapOf(
-                "ok" to JsonValue.Bool(true),
-                "code" to JsonValue.Str("OK"),
-                "request_id" to JsonValue.Str(requestId),
-                "data" to data,
-                "meta" to meta,
-            ),
-        )
-        return CommunityEnvelope(ok = true, code = "OK", requestId = requestId, data = data, meta = meta, raw = raw)
-    }
-
-    private suspend fun writeCommunityCacheMarker(root: java.io.File, marker: String) {
-        val store = FileCommunityCacheStore(root)
-        store.write(communityCacheKey(marker), communityEnvelope("req-" + marker), cachedAtEpochMillis = 10L)
-        assertEquals(1, store.countEntries())
-    }
-
     // ---------- A2: 世代守卫 ----------
 
     @Test
@@ -218,32 +176,6 @@ class CloudIdentityPrivacyRegressionTest {
         val s4 = repo.snapshotCloudIdentitySession()!!
         assertTrue(repo.isCloudIdentitySnapshotCurrent(s4))
         repo.cloudHttpTransportForTest = null
-    }
-
-    @Test
-    fun `cloud identity login switch and unlink wipe community cache through runtime port`() = runBlocking {
-        val repo = buildInMemoryTestRepo("community_identity")
-        val jwtA = testCloudJwt("cloud_user_A")
-        val jwtB = testCloudJwt("cloud_user_B")
-        repo.cloudHttpTransportForTest = { _, _, _, _, _ -> """{"ok":true,"data":{}}""" }
-        val context = RuntimeEnvironment.getApplication()
-        val root = CommunityCacheWipeRegistration.rootForProfile(context.filesDir, "prof_community_identity")
-        try {
-            writeCommunityCacheMarker(root, "before_login")
-            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
-            assertFalse("首次登录前的旧 community 快照必须先清除", root.exists())
-
-            writeCommunityCacheMarker(root, "after_login_a")
-            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_B", jwtB, displayName = "User B"))
-            assertFalse("切换云账号必须经 runtimePort 清空上一账号 community 快照", root.exists())
-
-            writeCommunityCacheMarker(root, "after_login_b")
-            repo.unlinkXpeachCloudAccountAndRevokeCloudPlans()
-            assertFalse("解绑必须经 runtimePort 清空 community 快照", root.exists())
-        } finally {
-            root.deleteRecursively()
-            repo.cloudHttpTransportForTest = null
-        }
     }
 
     @Test
@@ -941,5 +873,78 @@ class CloudIdentityPrivacyRegressionTest {
         assertEquals(baseA, after.apiBaseUrl)
         repo.syncCommitBarrierHookForTest = null
         repo.cloudHttpTransportForTest = null
+    }
+
+    // 以下 W4-05 新增回归集中放在文件尾部，并使用全限定名避免新增 import：
+    // 既有 INF-01 合成夹具所在行号不因本卡漂移，秘密扫描 allowlist 不需要放宽或改写。
+    @Test
+    fun `cloud identity login switch and unlink wipe community cache through runtime port`() = runBlocking {
+        val repo = buildInMemoryTestRepo("community_identity")
+        val jwtA = testCloudJwt("cloud_user_A")
+        val jwtB = testCloudJwt("cloud_user_B")
+        repo.cloudHttpTransportForTest = { _, _, _, _, _ -> """{"ok":true,"data":{}}""" }
+        val context = RuntimeEnvironment.getApplication()
+        val root = CommunityCacheWipeRegistration.rootForProfile(context.filesDir, "prof_community_identity")
+        try {
+            writeCommunityCacheMarker(root, "before_login")
+            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_A", jwtA, displayName = "User A"))
+            assertFalse("首次登录前的旧 community 快照必须先清除", root.exists())
+
+            writeCommunityCacheMarker(root, "after_login_a")
+            repo.saveVerifiedXpeachCloudAccount(loginProfile("cloud_user_B", jwtB, displayName = "User B"))
+            assertFalse("切换云账号必须经 runtimePort 清空上一账号 community 快照", root.exists())
+
+            writeCommunityCacheMarker(root, "after_login_b")
+            repo.unlinkXpeachCloudAccountAndRevokeCloudPlans()
+            assertFalse("解绑必须经 runtimePort 清空 community 快照", root.exists())
+        } finally {
+            root.deleteRecursively()
+            repo.cloudHttpTransportForTest = null
+        }
+    }
+
+    private fun communityCacheKey(marker: String): cn.edu.haut.campus.core.community.CommunityCacheKey =
+        cn.edu.haut.campus.core.community.CommunityCacheKey(
+            cloudIdentity = cn.edu.haut.campus.core.community.CommunityCacheIdentity(
+                cloudUserId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                identityGeneration = 1L,
+            ),
+            apiBaseUrl = "https://cloud.example.test",
+            operationId = "listGroups",
+            resolvedPath = "/api/v1/groups",
+            queryParams = mapOf("school_id" to listOf(marker)),
+        )
+
+    private fun communityEnvelope(requestId: String): cn.edu.haut.campus.core.community.CommunityEnvelope {
+        val meta = cn.edu.haut.campus.core.model.json.JsonValue.Obj(
+            linkedMapOf(
+                "request_id" to cn.edu.haut.campus.core.model.json.JsonValue.Str(requestId),
+                "api_version" to cn.edu.haut.campus.core.model.json.JsonValue.Str("v1"),
+            ),
+        )
+        val data = cn.edu.haut.campus.core.model.json.JsonValue.Arr(emptyList())
+        val raw = cn.edu.haut.campus.core.model.json.JsonValue.Obj(
+            linkedMapOf(
+                "ok" to cn.edu.haut.campus.core.model.json.JsonValue.Bool(true),
+                "code" to cn.edu.haut.campus.core.model.json.JsonValue.Str("OK"),
+                "request_id" to cn.edu.haut.campus.core.model.json.JsonValue.Str(requestId),
+                "data" to data,
+                "meta" to meta,
+            ),
+        )
+        return cn.edu.haut.campus.core.community.CommunityEnvelope(
+            ok = true,
+            code = "OK",
+            requestId = requestId,
+            data = data,
+            meta = meta,
+            raw = raw,
+        )
+    }
+
+    private suspend fun writeCommunityCacheMarker(root: java.io.File, marker: String) {
+        val store = cn.edu.haut.campus.core.community.FileCommunityCacheStore(root)
+        store.write(communityCacheKey(marker), communityEnvelope("req-" + marker), cachedAtEpochMillis = 10L)
+        assertEquals(1, store.countEntries())
     }
 }

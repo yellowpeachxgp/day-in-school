@@ -222,12 +222,8 @@ class CampusRepository internal constructor(
             repoScope.launch { runCatching { syncWithCampusCloud() } }
         }
 
-        override suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> =
-            this@CampusRepository.syncWithCampusCloud()
-
-        override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? =
-            this@CampusRepository.cloudHttpTransportForTest
-
+        override suspend fun syncWithCampusCloud(): Result<CloudSyncSnapshotResult> = this@CampusRepository.syncWithCampusCloud()
+        override fun cloudHttpTransportForTest(): CloudHttpTransportForTest? = this@CampusRepository.cloudHttpTransportForTest
         override suspend fun wipeCommunityCacheForCloudIdentityChange() =
             CommunityCacheWipeRegistration.wipeProfile(appContext.filesDir, accountProfile.id)
     }
