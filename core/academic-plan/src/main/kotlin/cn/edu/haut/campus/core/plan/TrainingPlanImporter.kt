@@ -269,6 +269,25 @@ object TrainingPlanImporter {
                 groupIndex[info.path] = updated
             }
         }
+        // 中间路径物化：只写叶子行的 CSV 缺少显式父组时，按学分 0 的中间组补齐层级，
+        // 中间组不是叶子、不参与缺口统计；显式声明过的路径不会被覆盖。
+        val materialized = mutableSetOf<List<String>>()
+        infos.forEach { info ->
+            (1 until info.path.size).forEach { len ->
+                val prefix = info.path.take(len)
+                if (!groupIndex.containsKey(prefix) && prefix !in materialized) {
+                    materialized += prefix
+                    groupIndex[prefix] = RequirementGroup(
+                        id = "g-" + Digests.sha256Hex(prefix.joinToString("/")).take(12),
+                        title = prefix.last(),
+                        kind = info.kind,
+                        requiredCredits = BigDecimal.ZERO
+                    )
+                    warnings += "路径 " + prefix.joinToString("/") + " 未显式声明，已按中间组自动创建（要求学分 0）"
+                }
+            }
+        }
+
         // 组路径长度 1 的是根组的直接子组；更长路径挂到父路径组下。
         val orderedPaths = groupIndex.keys.sortedBy { it.size }
         val childLinks = mutableMapOf<List<String>, MutableList<RequirementGroup>>()
