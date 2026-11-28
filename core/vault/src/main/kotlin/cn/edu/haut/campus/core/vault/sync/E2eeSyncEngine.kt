@@ -665,7 +665,7 @@ internal class E2eeSyncEngine(
         val blobId = if (mustUseFreshBlob) uuid() else existing.blobId
         val baseVector = when {
             mustUseFreshBlob -> emptyList()
-            conflict.kind == "CAS_CONFLICT" -> conflict.remoteVector
+            conflict.blobId == blobId -> conflict.remoteVector
             else -> existing.versionVector
         }
         state.objects[conflict.logicalKey] = E2eeSyncObjectState(

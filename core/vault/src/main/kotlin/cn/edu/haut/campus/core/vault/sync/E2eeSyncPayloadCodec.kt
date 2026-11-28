@@ -170,6 +170,14 @@ internal object E2eeSyncPayloadCodec {
         } catch (error: Throwable) {
             throw E2eeSyncCryptoException("同步 payload 行结构非法", error)
         }
+        if (cells.keys != policy.exportedColumns) {
+            throw E2eeSyncCryptoException("同步 payload 列集合与 dis-backup 白名单不一致")
+        }
+        try {
+            cn.edu.haut.campus.core.vault.BackupSchemaSafety.validateCellValues(cells, "E2EE 同步 payload " + policy.table)
+        } catch (error: Throwable) {
+            throw E2eeSyncCryptoException("同步 payload 值级秘密防线拒绝", error)
+        }
         if (row.primaryKey(policy) != rowKey) throw E2eeSyncCryptoException("同步 payload rowKey 与主键列不一致")
         if (row.sha256() != rowSha) throw E2eeSyncCryptoException("同步 payload rowSha256 与行内容不一致")
         val blobs = LinkedHashMap<String, ByteArray>()
