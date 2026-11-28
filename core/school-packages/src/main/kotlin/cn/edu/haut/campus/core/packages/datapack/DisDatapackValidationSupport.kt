@@ -125,9 +125,31 @@ internal fun expectDateTimeValue(value: JsonValue?, path: String): String {
     return raw
 }
 
+
+private val RFC3986_ALLOWED: Set<Char> = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" +
+        "-._~:/?#[]@!$&'()*+,;="
+    ).toSet()
+private val HEX_CHARS: Set<Char> = "0123456789abcdefABCDEF".toSet()
+
+internal fun isRfc3986UriCharactersValid(value: String): Boolean {
+    var index = 0
+    while (index < value.length) {
+        val ch = value[index]
+        if (ch == '%') {
+            if (index + 2 >= value.length || value[index + 1] !in HEX_CHARS || value[index + 2] !in HEX_CHARS) return false
+            index += 3
+            continue
+        }
+        if (ch !in RFC3986_ALLOWED) return false
+        index += 1
+    }
+    return true
+}
+
 internal fun expectHttpsUriValue(value: JsonValue?, path: String): String {
     val raw = expectStringValue(value, path)
-    val valid = raw.startsWith("https://") && try {
+    val valid = raw.startsWith("https://") && isRfc3986UriCharactersValid(raw) && try {
         val uri = URI(raw)
         uri.isAbsolute && uri.scheme == "https" && !uri.host.isNullOrBlank()
     } catch (error: Exception) {

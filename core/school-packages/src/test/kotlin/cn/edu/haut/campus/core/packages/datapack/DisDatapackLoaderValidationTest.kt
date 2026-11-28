@@ -108,6 +108,12 @@ class DisDatapackLoaderValidationTest {
             validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"http://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a"],"items":[]}""")
         }
         assertSchemaError {
+            validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com/%zz","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a"],"items":[]}""")
+        }
+        assertSchemaError {
+            validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com/{}","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a"],"items":[]}""")
+        }
+        assertSchemaError {
             validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a","github:a"],"items":[]}""")
         }
         assertSchemaError {
