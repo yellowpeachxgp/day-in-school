@@ -3,6 +3,9 @@ package cn.edu.haut.campus.core.vault.sync
 import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
+import javax.crypto.Cipher
+import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.SecretKeySpec
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -92,6 +95,39 @@ class E2eeSyncCryptoTest {
         assertEquals(first.encryption.nonceBase64, replay.encryption.nonceBase64)
         val nextCounter = E2eeSyncBlockCipher.encrypt(plaintext, master, keyId, blobId, 8)
         assertFalse(first.encryption.nonceBase64 == nextCounter.encryption.nonceBase64)
+    }
+
+    @Test
+    fun pollutedZeroPaddingFailsClosedBeforePlaintextUse() {
+        val master = randomBytes(32)
+        val keyId = E2eeSyncBlockCipher.keyId(master)
+        val blobId = UUID.randomUUID().toString()
+        val bucket = 1_024
+        val envelope = ByteArray(bucket - E2eeSyncProtocol.GCM_TAG_BYTES)
+        envelope[0] = 0
+        envelope[1] = 0
+        envelope[2] = 0
+        envelope[3] = 1
+        envelope[4] = 'A'.code.toByte()
+        envelope[envelope.lastIndex] = 1 // 非零 padding 必须 fail-closed
+        val nonce = ByteArray(12) { 7 }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(master, "AES"), GCMParameterSpec(128, nonce))
+        cipher.updateAAD(E2eeSyncProtocol.associatedData(blobId, keyId))
+        val ciphertext = cipher.doFinal(envelope)
+        val encrypted = E2eeSyncCiphertext(
+            encryption = SyncEncryptionEnvelope(keyId = keyId, nonceBase64 = Base64.getEncoder().withoutPadding().encodeToString(nonce)),
+            ciphertextBytes = ciphertext,
+            ciphertextBase64 = Base64.getEncoder().encodeToString(ciphertext),
+            ciphertextSha256 = cn.edu.haut.campus.core.model.json.Digests.sha256Hex(ciphertext),
+            bucketSize = bucket
+        )
+        try {
+            E2eeSyncBlockCipher.decrypt(metadata(blobId, encrypted), encrypted.ciphertextBase64, master)
+            fail("非零 padding 必须失败")
+        } catch (expected: E2eeSyncCryptoException) {
+            assertTrue(expected.message.orEmpty().contains("零填充"))
+        }
     }
 
     @Test

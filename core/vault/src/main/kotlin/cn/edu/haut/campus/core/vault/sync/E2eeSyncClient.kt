@@ -72,7 +72,7 @@ class E2eeSyncClient internal constructor(
                 deviceId = deviceId,
                 consentId = consent.id,
                 deviceLabel = label,
-                idempotencyKey = "e2ee-device-" + cn.edu.haut.campus.core.model.json.Digests.sha256Hex(deviceId, consent.id).take(72)
+                idempotencyKey = "e2ee-device-" + cn.edu.haut.campus.core.model.json.Digests.sha256Hex(deviceId, consent.id, label.orEmpty()).take(72)
             )
             if (registered.status != "ACTIVE") throw E2eeSyncConsentException("云端未接受同步设备登记")
             val next = E2eeSyncState(

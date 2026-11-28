@@ -161,6 +161,8 @@ class AndroidE2eeSyncKeyStore(
         if (!rootDir.exists() && !rootDir.mkdirs()) throw E2eeSyncCryptoException("无法创建同步密钥目录")
         val tmp = File(rootDir, "device-key.json.tmp")
         tmp.writeText(JSONObject().put("format", SEALED_FORMAT).put("sealed", sealed).toString(), Charsets.UTF_8)
+        tmp.setReadable(false, false)
+        tmp.setReadable(true, true)
         if (!tmp.renameTo(keyFile)) {
             tmp.delete()
             throw E2eeSyncCryptoException("无法原子保存同步密钥密封文件")

@@ -178,6 +178,27 @@ class E2eeSyncEngineTest {
     }
 
     @Test
+    fun cursorPaginationAppliesEveryPageBeforePersistingTerminalCursor() = runBlocking {
+        val env = TwoDeviceEnv()
+        env.storeA.applyUpserts(
+            listOf(
+                courseSnapshot("course-page-1", "第一页"),
+                courseSnapshot("course-page-2", "第二页"),
+                courseSnapshot("course-page-3", "第三页")
+            )
+        )
+        val upload = env.engineA.runOnce()
+        assertEquals(3, upload.uploadedRows)
+        val pull = env.engineB.runOnce()
+        assertEquals(3, pull.appliedRemoteRows)
+        assertTrue(pull.terminalCursorPresent)
+        assertEquals("第一页", courseName(env.storeB, "course-page-1"))
+        assertEquals("第二页", courseName(env.storeB, "course-page-2"))
+        assertEquals("第三页", courseName(env.storeB, "course-page-3"))
+        assertTrue(env.engineB.status().cursorPresent)
+    }
+
+    @Test
     fun expiredCursorOnlyDiscardsCursorAndNeverDeletesDirtyLocalRow() = runBlocking {
         val env = TwoDeviceEnv()
         env.storeA.applyUpserts(listOf(courseSnapshot("course-cursor", "云端版本")))

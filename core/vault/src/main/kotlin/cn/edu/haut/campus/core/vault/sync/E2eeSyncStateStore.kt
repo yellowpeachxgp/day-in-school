@@ -300,6 +300,8 @@ class FileE2eeSyncStateStore(
         if (!rootDir.exists() && !rootDir.mkdirs()) throw E2eeSyncException("无法创建 E2EE 同步状态目录")
         val tmp = File(rootDir, "state.json.tmp")
         tmp.writeText(E2eeSyncStateCodec.encode(state), Charsets.UTF_8)
+        tmp.setReadable(false, false)
+        tmp.setReadable(true, true)
         if (!tmp.renameTo(stateFile)) {
             tmp.delete()
             throw E2eeSyncException("无法原子保存 E2EE 同步状态")

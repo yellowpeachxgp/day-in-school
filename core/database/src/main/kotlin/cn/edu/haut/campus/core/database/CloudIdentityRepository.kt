@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * CloudIdentity 拆分期运行时端口。
@@ -38,6 +39,22 @@ internal interface CloudIdentityRuntimePort {
  * 实现从 CampusRepository 兼容门面逐字迁入；锁序（bookingPlanStateMutex 先于 cloudIdentityMutex）、
  * 世代推进、隔离时序与凭据写回顺序保持不变——三把锁仍为门面同一实例，经构造器传入。
  */
+/** W4-12 窄令牌端口：仅供 E2EE 同步 HTTPS client 当前请求使用；不得持久化、写日志或暴露给插件。 */
+fun interface CloudIdentityAccessTokenProvider {
+    suspend fun resolve(forceRefresh: Boolean, failedAccessToken: String?): String
+}
+
+/** 按 Profile 隔离的进程内令牌端口注册表；由 CloudIdentityRepository 构造时自注册，避免扩大 CampusRepository 外观。 */
+object CloudIdentityAccessTokenProviderRegistry {
+    private val providers = ConcurrentHashMap<String, CloudIdentityAccessTokenProvider>()
+
+    internal fun register(profileId: String, provider: CloudIdentityAccessTokenProvider) {
+        providers[profileId] = provider
+    }
+
+    fun forProfile(profileId: String): CloudIdentityAccessTokenProvider? = providers[profileId]
+}
+
 class CloudIdentityRepository internal constructor(
     private val environment: CampusRepositoryEnvironment,
     private val appContext: Context,
@@ -70,6 +87,15 @@ class CloudIdentityRepository internal constructor(
     /** 逐次现读门面测试传输钩子；生产恒 null。 */
     private val cloudHttpTransportForTest: CloudHttpTransportForTest?
         get() = runtimePort.cloudHttpTransportForTest()
+
+    init {
+        CloudIdentityAccessTokenProviderRegistry.register(profileId) { forceRefresh, failedAccessToken ->
+            resolveValidCloudAccessToken(
+                forceRefresh = forceRefresh,
+                failedAccessToken = failedAccessToken
+            )
+        }
+    }
 
     private fun academicCredentialScope(accountId: String) = AcademicCredentialScope(
         schoolId = schoolId,

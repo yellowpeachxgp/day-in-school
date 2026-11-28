@@ -64,7 +64,7 @@ class E2eeSyncApiException(
     val detail: String? = null
 ) : E2eeSyncException(errorCode + ": " + message) {
     val uncertainOutcome: Boolean
-        get() = httpStatus >= 500 || errorCode == "STORAGE_COMMIT_UNKNOWN"
+        get() = httpStatus >= 500 || errorCode == "STORAGE_COMMIT_UNKNOWN" || errorCode == "BAD_RESPONSE"
 }
 
 data class SyncVersionVectorEntry(
