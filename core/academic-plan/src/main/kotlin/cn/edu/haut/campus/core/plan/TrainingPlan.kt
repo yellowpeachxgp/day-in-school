@@ -70,8 +70,10 @@ data class CourseRename(
 )
 
 /**
- * 培养方案要求组，可嵌套成树。父组学分是「整块要求」的展示值，
- * 真正承载课程与统计的是叶子组；两级学分一起累加会让总数虚高。
+ * 培养方案要求组，可嵌套成树。每组的 [requiredCredits] 是对本组子树的约束：
+ * 子组成绩计入祖先组的汇总进度，但同一门课程只在一个最直接归属组入账。
+ * 因此父组与子组学分不是简单相加关系；总量按「满足整棵树约束所需的最少学分」计算。
+ * 混合组（既有直接课程又有子组）的直接课程归属本组自身，不得静默丢弃。
  */
 data class RequirementGroup(
     val id: String,
@@ -126,13 +128,27 @@ data class TrainingPlan(
 
     fun allGroups(): List<RequirementGroup> = groups.flatMap { it.traverse() }
 
-    /** 只有叶子组承载实际课程要求，学分合计只累加叶子组。 */
+    /** 叶子组清单；混合父组的直接课程不在这里，但仍是本组自身的有效要求。 */
     fun leafGroups(): List<RequirementGroup> = allGroups().filter { it.isLeaf }
 
     fun groupById(id: String): RequirementGroup? = allGroups().firstOrNull { it.id == id }
 
+    /**
+     * 满足整棵要求树的最少总学分。子组要求会计入父组汇总，故递归取
+     * max（本组声明要求，各子组最少要求之和），避免父子重复累加；
+     * 当教务网关只给出 root 总要求而子组为 0 时，root 要求仍会正确成为总要求。
+     */
     val totalRequiredCredits: BigDecimal
-        get() = leafGroups().fold(BigDecimal.ZERO) { acc, group -> acc.add(group.requiredCredits) }
+        get() = groups.fold(BigDecimal.ZERO) { acc, group -> acc.add(minimumRequiredCredits(group)) }
+
+    companion object {
+        fun minimumRequiredCredits(group: RequirementGroup): BigDecimal {
+            val childMinimum = group.children.fold(BigDecimal.ZERO) { acc, child ->
+                acc.add(minimumRequiredCredits(child))
+            }
+            return maxOf(group.requiredCredits, childMinimum)
+        }
+    }
 
     /** 年级与专业是否适用于该方案；专业集合为空表示方案未限定专业。 */
     fun matches(gradeYear: Int, major: String?): Boolean {

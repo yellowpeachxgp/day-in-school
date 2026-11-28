@@ -315,4 +315,94 @@ class DegreeAuditorTest {
         report.trace.forEachIndexed { index, step -> assertEquals(index + 1, step.sequence) }
         assertTrue(report.basis.contains("示范培养方案"))
     }
+
+    @Test
+    fun renameOldAndNewCodesAreOneLogicalCourseAndCreditedOnce() {
+        val plan = planFixture()
+        val attempts = listOf(
+            PlanFixtures.attempt("ETHIC-OLD", name = "思想道德修养", credits = "3", id = "old-pass", academicYear = "2023-2024"),
+            PlanFixtures.attempt("ETHIC1", name = "思想道德与法治", credits = "3", id = "new-pass", academicYear = "2024-2025", attemptType = AttemptType.RETAKE)
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        val basic = report.groupById("basic")!!
+        PlanFixtures.assertAmount("3", basic.earnedCredits, "旧码/新码各通过一次仍只能入账一次")
+        assertEquals("逻辑课程只能产生一条入账记录", 1, basic.assignedCourses.size)
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+        assertTrue(report.trace.any { it.rule == "rename" && it.basis.contains("ETHIC-OLD/ETHIC1") })
+        assertTrue(report.trace.any { it.rule == "retake-dedupe" })
+        assertTrue(report.representativeAttemptIds.containsKey("ETHIC1"))
+    }
+
+    @Test
+    fun mixedParentDirectCoursesAreAssignedInsteadOfSilentlyDropped() {
+        val mixed = RequirementGroup(
+            id = "mixed",
+            title = "混合模块",
+            kind = RequirementKind.REQUIRED,
+            requiredCredits = BigDecimal("6"),
+            courses = listOf(PlanCourseRef("DIRECT1", "直接课程")),
+            children = listOf(
+                RequirementGroup(
+                    id = "mixed-child",
+                    title = "子模块",
+                    kind = RequirementKind.REQUIRED,
+                    requiredCredits = BigDecimal("3"),
+                    courses = listOf(PlanCourseRef("CHILD1", "子组课程"))
+                )
+            )
+        )
+        val plan = planFixture().copy(groups = listOf(mixed), substitutions = emptyList(), renames = emptyList())
+        val attempts = listOf(
+            PlanFixtures.attempt("DIRECT1", name = "直接课程", credits = "2", id = "direct-1"),
+            PlanFixtures.attempt("CHILD1", name = "子组课程", credits = "3", id = "child-1")
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        assertTrue("直接课程不得落入未归类", report.unclassified.isEmpty())
+        val parent = report.groupById("mixed")!!
+        PlanFixtures.assertAmount("5", parent.earnedCredits, "父组应聚合直接课程与子组课程")
+        assertTrue(parent.assignedCourses.any { it.course.courseKey == "DIRECT1" })
+        assertTrue(report.trace.any { it.rule == "match-code" && it.basis.contains("混合组直接课程") })
+    }
+
+    @Test
+    fun fulfilledSubstitutionDoesNotRemainPending() {
+        val plan = planFixture()
+        val attempts = listOf(
+            PlanFixtures.attempt("CS202", name = "数据结构与算法", credits = "4", id = "s1")
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        val elective = report.groupById("elective")!!
+        assertTrue("被替代课程不得继续留在待修清单", elective.pendingCourses.none { it.name == "数据结构" })
+        assertTrue(report.gaps.none { gap -> gap.pendingCourses.any { it.name == "数据结构" } })
+    }
+
+    @Test
+    fun overrideBoundToAnotherImportDoesNotApply() {
+        val plan = planFixture()
+        val attempts = listOf(PlanFixtures.attempt("ART101", name = "艺术鉴赏", credits = "2", id = "ov-bound"))
+        val foreign = makeOverride(
+            "o-foreign", "ov-bound", OverrideAction.ASSIGN, "open", "其他方案中的认定"
+        ).copy(planImportId = "other-import", planId = plan.id, planVersion = plan.version)
+        val report = DegreeAuditor.audit(plan, attempts, listOf(foreign), now, planImportId = "current-import")
+        PlanFixtures.assertAmount("0", report.groupById("open")!!.earnedCredits)
+        assertEquals(1, report.unclassified.size)
+        assertTrue(report.trace.any { it.rule == "override-plan-mismatch" })
+
+        val bound = foreign.copy(id = "o-bound", planImportId = "current-import")
+        val applicable = DegreeAuditor.audit(plan, attempts, listOf(bound), now, planImportId = "current-import")
+        PlanFixtures.assertAmount("2", applicable.groupById("open")!!.earnedCredits)
+    }
+
+    @Test
+    fun auditTraceCarriesAttemptSemesterAndGradeSource() {
+        val plan = planFixture()
+        val attempts = listOf(PlanFixtures.attempt("MATH1", name = "高等数学A", credits = "5", id = "trace-attempt"))
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        val match = report.trace.first { it.rule == "match-code" }
+        assertEquals("trace-attempt", match.attemptId)
+        assertEquals("2024-2025", match.academicYear)
+        assertEquals(1, match.termNumber)
+        assertEquals(cn.edu.haut.campus.core.model.CourseSource.OFFICIAL_JW, match.gradeSource)
+    }
+
 }

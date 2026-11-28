@@ -19,6 +19,21 @@ data class AttemptDecision(
     val reason: String
 )
 
+/**
+ * 已经按逻辑课程身份分组的一组成绩。课程改名等场景由调用方先解析身份，
+ * 本聚合器再在组内按重修策略只选一条代表记录；原始 attemptId 全部保留。
+ */
+data class LogicalAttemptGroup(
+    val courseKey: String,
+    val courseName: String,
+    val attempts: List<GradeAttempt>
+) {
+    init {
+        require(courseKey.isNotBlank() && courseName.isNotBlank()) { "逻辑课程标识与名称不能为空" }
+        require(attempts.isNotEmpty()) { "逻辑课程至少有一条成绩记录" }
+    }
+}
+
 /** 全部课程的修读结论；[totalCreditedCredits] 保证同门课程只入账一次。 */
 data class AttemptAggregation(
     val strategy: RetakeInclusionStrategy,
@@ -42,9 +57,36 @@ object AttemptAggregator {
         attempts: List<GradeAttempt>,
         strategy: RetakeInclusionStrategy
     ): AttemptAggregation {
-        val decisions = attempts.groupBy { it.courseKey }
+        val groups = attempts.groupBy { it.courseKey }
             .toSortedMap()
-            .map { (courseKey, records) -> decide(courseKey, stableOrder(records), strategy) }
+            .map { (courseKey, records) ->
+                LogicalAttemptGroup(
+                    courseKey = courseKey,
+                    courseName = records.first().name,
+                    attempts = records
+                )
+            }
+        return aggregateLogicalGroups(groups, strategy)
+    }
+
+    /**
+     * 聚合已解析好逻辑身份的课程组。与先按原始 courseKey 分组再匹配不同，
+     * 课程改名后的旧码/新码会在这里共同参加重修去重，保证整门逻辑课程只入账一次。
+     */
+    fun aggregateLogicalGroups(
+        groups: List<LogicalAttemptGroup>,
+        strategy: RetakeInclusionStrategy
+    ): AttemptAggregation {
+        val decisions = groups
+            .sortedBy { it.courseKey }
+            .map { group ->
+                decide(
+                    courseKey = group.courseKey,
+                    courseName = group.courseName,
+                    ordered = stableOrder(group.attempts),
+                    strategy = strategy
+                )
+            }
 
         val total = decisions.fold(BigDecimal.ZERO) { acc, decision -> acc.add(decision.creditedCredits) }
         val multi = decisions.count { it.attempts.size > 1 }
@@ -73,6 +115,7 @@ object AttemptAggregator {
 
     private fun decide(
         courseKey: String,
+        courseName: String,
         ordered: List<GradeAttempt>,
         strategy: RetakeInclusionStrategy
     ): AttemptDecision {
@@ -82,7 +125,7 @@ object AttemptAggregator {
             ?.credits ?: BigDecimal.ZERO
         return AttemptDecision(
             courseKey = courseKey,
-            courseName = ordered.first().name,
+            courseName = courseName,
             selected = selected,
             attempts = ordered,
             creditedCredits = credited,

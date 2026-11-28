@@ -172,4 +172,73 @@ class TrainingPlanImporterTest {
         assertEquals(CourseOffering.AUTUMN_ONLY, required!!.courses.first { it.name == "高等数学A" }.offering)
         assertEquals(CourseOffering.SPRING_ONLY, required.courses.first { it.name == "程序设计基础" }.offering)
     }
+
+    @Test
+    fun csvConflictingRowsAreRejectedInsteadOfCredited() {
+        val csv = """
+            group_path,kind,required_credits,course_code,course_name,offering,prerequisites
+            Core,required,6,A,Algebra,,
+            Core,elective,3,B,Music,,
+        """.trimIndent()
+        val result = TrainingPlanImporter.import(ImportInput.CsvDocument(csv))
+        assertEquals("冲突行必须计入拒绝行数", 1, result.skippedRowCount)
+        val core = result.plan.allGroups().first { it.title == "Core" }
+        assertTrue(core.courses.any { it.name == "Algebra" })
+        assertTrue("冲突行课程不得进入方案", core.courses.none { it.name == "Music" })
+        assertTrue(result.warnings.any { it.contains("跳过冲突行") })
+    }
+
+    @Test
+    fun gatewayPracticeAndGeneralCompulsoryCategoriesWinBeforeRequired() {
+        val view = ImportInput.GatewayView(
+            programId = "gw-priority",
+            title = "分类优先级",
+            requiredCreditsHint = BigDecimal("20"),
+            entries = listOf(
+                GatewayPlanEntry("P1", "金工实习", "实践必修", BigDecimal("2"), "1"),
+                GatewayPlanEntry("G1", "通识核心课", "通识必修", BigDecimal("2"), "1"),
+                GatewayPlanEntry("R1", "专业基础", "学科必修", BigDecimal("4"), "1")
+            )
+        )
+        val plan = TrainingPlanImporter.import(view).plan
+        assertNotNull(plan.groupById("gw-practice"))
+        assertNotNull(plan.groupById("gw-general"))
+        assertTrue(plan.groupById("gw-practice")!!.courses.any { it.courseCode == "P1" })
+        assertTrue(plan.groupById("gw-general")!!.courses.any { it.courseCode == "G1" })
+        assertTrue(plan.groupById("gw-required")!!.courses.none { it.courseCode == "P1" || it.courseCode == "G1" })
+    }
+
+    @Test
+    fun gatewayDigestIsStrongAndCoversTitleCreditsAndEntries() {
+        val base = ImportInput.GatewayView(
+            programId = "gw-digest",
+            title = "标题A",
+            requiredCreditsHint = BigDecimal("140"),
+            entries = listOf(GatewayPlanEntry("C1", "课程", "学科必修", BigDecimal("4"), "1"))
+        )
+        val digest = TrainingPlanImporter.import(base).contentDigest
+        assertTrue(digest.matches(Regex("[0-9a-f]{64}")))
+        val changedTitle = TrainingPlanImporter.import(base.copy(title = "标题B")).contentDigest
+        val changedCredits = TrainingPlanImporter.import(base.copy(requiredCreditsHint = BigDecimal("141"))).contentDigest
+        assertTrue(digest != changedTitle)
+        assertTrue(digest != changedCredits)
+    }
+
+    @Test
+    fun gatewayRootRequirementSurvivesEmptyTranscriptAudit() {
+        val view = ImportInput.GatewayView(
+            programId = "gw-empty-total",
+            title = "网关总要求",
+            requiredCreditsHint = BigDecimal("140"),
+            entries = listOf(GatewayPlanEntry("C1", "课程", "学科必修", BigDecimal("4"), "1"))
+        )
+        val plan = TrainingPlanImporter.import(view).plan
+        PlanFixtures.assertAmount("140", plan.totalRequiredCredits, "root 汇总要求不得因子组为 0 而丢失")
+        val report = DegreeAuditor.audit(plan, emptyList(), emptyList(), java.time.LocalDate.of(2026, 3, 1), planImportId = "gw")
+        PlanFixtures.assertAmount("140", report.totalRequiredCredits)
+        PlanFixtures.assertAmount("140", report.totalRemainingCredits)
+        assertNotNull(report.groupById("gw-root"))
+        assertTrue(report.gaps.any { it.groupId == "gw-root" && it.missingCredits.compareTo(BigDecimal("140")) == 0 })
+    }
+
 }

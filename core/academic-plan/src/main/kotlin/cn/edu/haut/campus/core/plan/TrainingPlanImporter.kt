@@ -241,18 +241,32 @@ object TrainingPlanImporter {
         }
         if (infos.isEmpty()) throw IllegalArgumentException("CSV 没有可用的课程行")
 
-        // 按路径分层建树；同层同路径段的组合并，kind/requiredCredits 取该行在组内首次出现的值。
+        // 按路径分层建树；同路径的 kind/required_credits 必须一致。冲突行按文档拒绝：
+        // 不加入课程、不参与层级物化，并计入 skippedRowCount，避免冲突数据仍能入账。
+        val acceptedInfos = mutableListOf<RowInfo>()
+        val groupMetadata = mutableMapOf<List<String>, Pair<RequirementKind, BigDecimal>>()
+        infos.forEach { info ->
+            val existing = groupMetadata[info.path]
+            if (existing == null) {
+                groupMetadata[info.path] = info.kind to info.requiredCredits
+                acceptedInfos += info
+            } else if (existing.first != info.kind ||
+                existing.second.stripTrailingZeros() != info.requiredCredits.stripTrailingZeros()
+            ) {
+                skipped++
+                warnings += "跳过冲突行：路径 " + info.path.joinToString("/") +
+                    " 的 kind/required_credits 与首次声明不一致，课程「" + (info.course?.name ?: "未知") + "」未导入"
+            } else {
+                acceptedInfos += info
+            }
+        }
+
         val rootId = "csv-root"
         val rootChildren = mutableListOf<RequirementGroup>()
         val groupIndex = mutableMapOf<List<String>, RequirementGroup>()
         fun ensureGroup(path: List<String>, kind: RequirementKind, credits: BigDecimal): RequirementGroup {
             val existing = groupIndex[path]
-            if (existing != null) {
-                if (existing.kind != kind || existing.requiredCredits.stripTrailingZeros() != credits.stripTrailingZeros()) {
-                    warnings += "路径 " + path.joinToString("/") + " 的 kind/required_credits 在多行间不一致，按首次出现值归组"
-                }
-                return existing
-            }
+            if (existing != null) return existing
             val group = RequirementGroup(
                 id = "g-" + Digests.sha256Hex(path.joinToString("/")).take(12),
                 title = path.last(),
@@ -262,17 +276,17 @@ object TrainingPlanImporter {
             groupIndex[path] = group
             return group
         }
-        infos.forEach { info ->
+        acceptedInfos.forEach { info ->
             val group = ensureGroup(info.path, info.kind, info.requiredCredits)
             if (info.course != null) {
                 val updated = group.copy(courses = group.courses + info.course)
                 groupIndex[info.path] = updated
             }
         }
-        // 中间路径物化：只写叶子行的 CSV 缺少显式父组时，按学分 0 的中间组补齐层级，
-        // 中间组不是叶子、不参与缺口统计；显式声明过的路径不会被覆盖。
+        // 中间路径物化：只写叶子行的 CSV 缺少显式父组时，按学分 0 的中间组补齐层级；
+        // 被拒绝的冲突行不参与物化，显式声明过的路径不会被覆盖。
         val materialized = mutableSetOf<List<String>>()
-        infos.forEach { info ->
+        acceptedInfos.forEach { info ->
             (1 until info.path.size).forEach { len ->
                 val prefix = info.path.take(len)
                 if (!groupIndex.containsKey(prefix) && prefix !in materialized) {
@@ -407,7 +421,7 @@ object TrainingPlanImporter {
             warnings += "网关页面未给出总学分要求，各组要求学分为 0，缺口按组开放统计，请人工补录要求学分"
         } else {
             warnings += "网关视图不区分各组要求学分，总要求 " + requiredTotal.stripTrailingZeros().toPlainString() +
-                " 学分挂在根组展示；请按学校原文核对后用人工认定修正"
+                " 学分作为根组汇总约束参与缺口统计；请按学校原文核对后用人工认定修正"
         }
         val plan = TrainingPlan(
             id = view.programId,
@@ -430,7 +444,7 @@ object TrainingPlanImporter {
         return TrainingPlanImport(
             plan = plan,
             format = "gateway-view/v1",
-            contentDigest = Digests.sha256Hex(view.programId + "|" + view.entries.size + "|" + view.entries.hashCode()),
+            contentDigest = gatewayContentDigest(view),
             warnings = warnings,
             skippedRowCount = skipped
         )
@@ -439,12 +453,36 @@ object TrainingPlanImporter {
     private fun categoryKind(category: String?): RequirementKind? {
         val text = category?.trim()?.takeIf { it.isNotEmpty() } ?: return null
         return when {
-            text.contains("必修") && !text.contains("选修") -> RequirementKind.REQUIRED
+            // 「实践必修」「通识必修」必须先命中更具体的 PRACTICE/GENERAL，
+            // 否则会被宽泛的“必修”文本错误吞进 REQUIRED。
             text.contains("实践") -> RequirementKind.PRACTICE
             text.contains("通识") || text.contains("公选") -> RequirementKind.GENERAL
+            text.contains("必修") && !text.contains("选修") -> RequirementKind.REQUIRED
             text.contains("选修") -> RequirementKind.ELECTIVE
             else -> null
         }
+    }
+
+    /** 网关视图摘要必须覆盖标题、总要求与逐条课程字段；使用 SHA-256/canonical JSON，禁止依赖 hashCode。 */
+    private fun gatewayContentDigest(view: ImportInput.GatewayView): String {
+        fun nullableText(value: String?): JsonValue = value?.let { JsonValue.Str(it) } ?: JsonValue.Null
+        fun nullableCredits(value: BigDecimal?): JsonValue = value?.let { JsonValue.Str(it.stripTrailingZeros().toPlainString()) } ?: JsonValue.Null
+        val entryValues = view.entries.map { entry ->
+            JsonValue.Obj(linkedMapOf(
+                "courseCode" to nullableText(entry.courseCode),
+                "courseName" to JsonValue.Str(entry.courseName),
+                "category" to nullableText(entry.category),
+                "credits" to nullableCredits(entry.credits),
+                "suggestedTerm" to nullableText(entry.suggestedTerm)
+            ))
+        }
+        val digestObject = JsonValue.Obj(linkedMapOf(
+            "programId" to JsonValue.Str(view.programId),
+            "title" to nullableText(view.title),
+            "requiredCreditsHint" to nullableCredits(view.requiredCreditsHint),
+            "entries" to JsonValue.Arr(entryValues)
+        ))
+        return Digests.sha256Hex(Json.canonical(digestObject))
     }
 
     private fun offeringFromSuggestedTerm(suggestedTerm: String?): CourseOffering {
