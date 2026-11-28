@@ -146,7 +146,8 @@ class RuleNoticeParserTest {
             "明天高等数学没停课，正常上课",
             "明天高等数学并非停课",
             "停课的消息不实",
-            "跟不上进度"
+            "跟不上进度",
+            "跟不上课"
         )
 
         negatives.forEach { text ->
@@ -268,6 +269,18 @@ class RuleNoticeParserTest {
         val secondAction = courseInHeading.actions.single() as ProposedAction.ModifyCourseOccurrence
         assertEquals(mathRef, secondAction.courseRef)
         assertEquals(LocalDate.of(2026, 11, 27), secondAction.date)
+    }
+
+    @Test
+    fun uniqueHeadingSourceDateRemainsAvailableToReschedule() {
+        val report = parseReport("本周五课程调整通知如下：\n高等数学改到下周三晚上7点")
+
+        val action = report.actions.single() as ProposedAction.ModifyCourseOccurrence
+        assertEquals(mathRef, action.courseRef)
+        assertEquals(LocalDate.of(2026, 11, 27), action.date)
+        val change = action.change as OccurrenceChange.Reschedule
+        assertEquals(LocalDate.of(2026, 12, 2), change.targetDate)
+        assertEquals(LocalTime.of(19, 0), change.startTime)
     }
 
     @Test

@@ -130,6 +130,7 @@ object CourseRescheduleRule : InboxRule {
                 return@forEach
             }
             val source = nearestBefore?.takeIf { it.resolved }
+                ?: selectUniqueResolvedDateBefore(dates, marker.range.first)
 
             val targetStart = marker.range.last + 1
             val targetEnd = sentenceBounds.second
@@ -259,6 +260,7 @@ object CourseRoomChangeRule : InboxRule {
                 return@forEach
             }
             val dateResolution = nearestBefore?.takeIf { it.resolved }
+                ?: selectUniqueResolvedDateBefore(dates, marker.range.first)
             val dateValue = dateResolution?.date
             if (dateResolution == null || dateValue == null) {
                 issues += ParseIssue(
@@ -363,7 +365,7 @@ object CourseCancellationRule : InboxRule {
     }
 
     private fun isCompoundNonCancellation(text: String, match: MatchResult): Boolean {
-        if (match.value != "不上") return false
+        if (match.value != "不上" && match.value != "不上课") return false
         val previous = text.getOrNull(match.range.first - 1) ?: return false
         return previous in compoundNonCancellationPreviousChars
     }
@@ -488,6 +490,14 @@ object TaskDeadlineRule : InboxRule {
             )
         )
     }
+}
+
+private fun selectUniqueResolvedDateBefore(dates: List<DateResolution>, anchor: Int): DateResolution? {
+    val before = dates.filter {
+        it.resolved && it.date != null && it.span != null && it.span.endOffset <= anchor
+    }
+    if (before.mapNotNull { it.date }.distinct().size != 1) return null
+    return before.maxByOrNull { it.span?.endOffset ?: 0 }
 }
 
 private fun selectDateNear(input: ExtractedText, dates: List<DateResolution>, anchor: Int): DateResolution? {
