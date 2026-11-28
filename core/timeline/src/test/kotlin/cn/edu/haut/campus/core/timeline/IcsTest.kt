@@ -145,8 +145,8 @@ class IcsTest {
 
         assertFalse(ics.contains("DTEND:"))
         assertFalse(ics.contains("X-DIS-DEADLINE:TRUE"))
-        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\\r\\n"))
-        assertTrue(ics.contains("TRANSP:TRANSPARENT\\r\\n"))
+        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\r\n"))
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\r\n"))
         assertNull(snapshot.end)
         assertEquals(TimelineTimeSemantics.UNCERTAIN, snapshot.timeSemantics)
         assertEquals(IcsEventSnapshot.from(uncertain), snapshot)

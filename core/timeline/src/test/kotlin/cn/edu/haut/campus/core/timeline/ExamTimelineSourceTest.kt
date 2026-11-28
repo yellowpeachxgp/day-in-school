@@ -89,8 +89,8 @@ class ExamTimelineSourceTest {
         assertFalse(event.isDeadline)
         assertTrue(event.isTimeUncertain)
         assertFalse(ics.contains("X-DIS-DEADLINE:TRUE"))
-        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\\r\\n"))
-        assertTrue(ics.contains("TRANSP:TRANSPARENT\\r\\n"))
+        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\r\n"))
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\r\n"))
         assertEquals(TimelineTimeSemantics.UNCERTAIN, roundTrip.timeSemantics)
     }
 
