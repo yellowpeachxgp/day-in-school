@@ -3,7 +3,6 @@ package cn.edu.haut.campus.core.database
 import cn.edu.haut.campus.core.community.CommunityCacheKey
 import cn.edu.haut.campus.core.community.CommunityEnvelope
 import cn.edu.haut.campus.core.community.FileCommunityCacheStore
-import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -61,16 +60,28 @@ class CommunityCacheWipeTest {
     )
 
     private fun envelope(requestId: String): CommunityEnvelope {
-        val raw = Json.parse(
-            "{"ok":true,"code":"OK","request_id":"" + requestId + "","data":[]," +
-                ""meta":{"request_id":"" + requestId + "","api_version":"v1"}}",
-        ) as JsonValue.Obj
+        val meta = JsonValue.Obj(
+            linkedMapOf(
+                "request_id" to JsonValue.Str(requestId),
+                "api_version" to JsonValue.Str("v1"),
+            ),
+        )
+        val data = JsonValue.Arr(emptyList())
+        val raw = JsonValue.Obj(
+            linkedMapOf(
+                "ok" to JsonValue.Bool(true),
+                "code" to JsonValue.Str("OK"),
+                "request_id" to JsonValue.Str(requestId),
+                "data" to data,
+                "meta" to meta,
+            ),
+        )
         return CommunityEnvelope(
             ok = true,
             code = "OK",
             requestId = requestId,
-            data = JsonValue.Arr(emptyList()),
-            meta = raw.obj("meta") as JsonValue.Obj,
+            data = data,
+            meta = meta,
             raw = raw,
         )
     }

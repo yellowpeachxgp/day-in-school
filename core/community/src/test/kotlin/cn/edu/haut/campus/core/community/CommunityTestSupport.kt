@@ -14,14 +14,45 @@ internal fun communityTestScope(): SchoolAccountScope = SchoolAccountScope(
     profileId = ProfileId("prof_community_test"),
 )
 
-internal fun successBody(dataJson: String, requestId: String = "req-test"): String =
-    "{"ok":true,"code":"OK","request_id":"" + requestId + "","data":" + dataJson +
-        ","meta":{"request_id":"" + requestId + "","api_version":"v1"}}"
+private fun responseMeta(requestId: String): JsonValue.Obj = JsonValue.Obj(
+    linkedMapOf(
+        "request_id" to JsonValue.Str(requestId),
+        "api_version" to JsonValue.Str("v1"),
+    ),
+)
 
-internal fun errorBody(code: String, retryable: Boolean, requestId: String = "req-error"): String =
-    "{"ok":false,"code":"" + code + "","request_id":"" + requestId + ""," +
-        ""error":{"code":"" + code + "","message":"synthetic contract error","retryable":" + retryable + "}," +
-        ""meta":{"request_id":"" + requestId + "","api_version":"v1"}}"
+internal fun successBody(dataJson: String, requestId: String = "req-test"): String {
+    val root = JsonValue.Obj(
+        linkedMapOf(
+            "ok" to JsonValue.Bool(true),
+            "code" to JsonValue.Str("OK"),
+            "request_id" to JsonValue.Str(requestId),
+            "data" to Json.parse(dataJson),
+            "meta" to responseMeta(requestId),
+        ),
+    )
+    return Json.canonical(root)
+}
+
+internal fun errorBody(code: String, retryable: Boolean, requestId: String = "req-error"): String {
+    val detail = JsonValue.Obj(
+        linkedMapOf(
+            "code" to JsonValue.Str(code),
+            "message" to JsonValue.Str("synthetic contract error"),
+            "retryable" to JsonValue.Bool(retryable),
+        ),
+    )
+    val root = JsonValue.Obj(
+        linkedMapOf(
+            "ok" to JsonValue.Bool(false),
+            "code" to JsonValue.Str(code),
+            "request_id" to JsonValue.Str(requestId),
+            "error" to detail,
+            "meta" to responseMeta(requestId),
+        ),
+    )
+    return Json.canonical(root)
+}
 
 internal fun envelopeFromBody(body: String): CommunityEnvelope =
     requireNotNull(parseCommunityEnvelope(requireNotNull(Json.parse(body).asObjOrNull)))

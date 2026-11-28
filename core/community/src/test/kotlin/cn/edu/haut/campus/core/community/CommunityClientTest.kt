@@ -33,7 +33,7 @@ class CommunityClientTest {
 
     @Test
     fun createGroupBuildsContractRequestWithBearerAndIdempotencyHeaders() = runTest {
-        val transport = RecordingCommunityTransport(jsonResponse(successBody("{"group_id":"g-1"}")))
+        val transport = RecordingCommunityTransport(jsonResponse(successBody("{}")))
         val result = client(transport).createGroup(
             CreateGroupRequest(
                 schoolId = "haut",
@@ -75,8 +75,8 @@ class CommunityClientTest {
     @Test
     fun updateAndRemoveMemberUseEncodedPathAndStableIdempotencyHeader() = runTest {
         val transport = RecordingCommunityTransport(
-            jsonResponse(successBody("{"member_id":"m-1"}")),
-            jsonResponse(successBody("{"acknowledged":true}")),
+            jsonResponse(successBody("{}")),
+            jsonResponse(successBody("{}")),
         )
         val subject = client(transport)
         val groupId = "group/with unicode 组"
@@ -108,7 +108,7 @@ class CommunityClientTest {
     @Test
     fun offlineListGroupsFallsBackToExplicitlyStaleCache() = runTest {
         val cache = InMemoryCommunityCacheStore()
-        val listBody = successBody("[{"group_id":"g-1","name":"学习小组"}]", requestId = "req-list-1")
+        val listBody = successBody("[1]", requestId = "req-list-1")
         val transport = RecordingCommunityTransport(jsonResponse(listBody), networkFailure())
         val subject = client(transport, cacheStore = cache)
 
@@ -158,7 +158,7 @@ class CommunityClientTest {
         val cache = InMemoryCommunityCacheStore()
         val transport = RecordingCommunityTransport(
             jsonResponse(successBody("[]", requestId = "req-list-3")),
-            jsonResponse(successBody("{"group_id":"g-2"}", requestId = "req-create-3"), status = 201),
+            jsonResponse(successBody("{}", requestId = "req-create-3"), status = 201),
         )
         val subject = client(transport, cacheStore = cache)
 
@@ -194,7 +194,7 @@ class CommunityClientTest {
     @Test
     fun malformedSuccessEnvelopeIsContractFailureAndNeverCached() = runTest {
         val cache = InMemoryCommunityCacheStore()
-        val transport = RecordingCommunityTransport(jsonResponse("{"ok":true,"code":"OK"}"))
+        val transport = RecordingCommunityTransport(jsonResponse("{}"))
         val result = client(transport, cacheStore = cache).listGroups("haut")
 
         assertTrue(result is CommunityResult.Failure)
