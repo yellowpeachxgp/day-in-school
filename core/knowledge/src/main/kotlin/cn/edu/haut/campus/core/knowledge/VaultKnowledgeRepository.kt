@@ -80,6 +80,9 @@ class VaultKnowledgeRepository internal constructor(
             var extractionSummary: MaterialExtraction? = null
             if (extraction != null) {
                 val extractionBytes = canonicalJson(encodeExtractionPayload(extraction.payload)).toByteArray(Charsets.UTF_8)
+                require(extractionBytes.size <= MAX_EXTRACTION_PAYLOAD_BYTES) {
+                    "抽取文本 payload 超过本地索引安全上限，请拆分资料后重试"
+                }
                 val extractionRef = blobStore.put(
                     content = extractionBytes,
                     mimeType = EXTRACTION_MIME,
@@ -263,20 +266,18 @@ class VaultKnowledgeRepository internal constructor(
             zip.closeEntry()
             materials.forEach { material ->
                 val content = blobStore.get(material.contentBlobId, scope)
-                if (content != null) {
-                    zip.putNextEntry(ZipEntry("materials/" + material.id + "/" + safeExportFileName(material.fileName, "material.bin")))
-                    zip.write(content.content())
-                    zip.closeEntry()
-                    fileCount++
-                }
+                    ?: throw IllegalStateException("导出中止：资料原文 blob 缺失: " + material.id)
+                zip.putNextEntry(ZipEntry("materials/" + material.id + "/" + safeExportFileName(material.fileName, "material.bin")))
+                zip.write(content.content())
+                zip.closeEntry()
+                fileCount++
                 material.extraction?.let { extraction ->
                     val extracted = blobStore.get(extraction.blobId, scope)
-                    if (extracted != null) {
-                        zip.putNextEntry(ZipEntry("extractions/" + material.id + ".json"))
-                        zip.write(extracted.content())
-                        zip.closeEntry()
-                        fileCount++
-                    }
+                        ?: throw IllegalStateException("导出中止：抽取 payload blob 缺失: " + material.id)
+                    zip.putNextEntry(ZipEntry("extractions/" + material.id + ".json"))
+                    zip.write(extracted.content())
+                    zip.closeEntry()
+                    fileCount++
                 }
             }
         }
@@ -346,6 +347,7 @@ class VaultKnowledgeRepository internal constructor(
 
     companion object {
         const val EXTRACTION_MIME = "application/vnd.dis.knowledge-extraction+json"
+        const val MAX_EXTRACTION_PAYLOAD_BYTES = 7 * 1024 * 1024
         const val EXPORT_FORMAT = "dis-course-knowledge/v1"
         fun assignmentEventId(materialId: String): TimelineEventId = TimelineEventId("personal:knowledge-assignment-" + materialId)
     }
