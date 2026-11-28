@@ -6,7 +6,6 @@ import cn.edu.haut.campus.core.model.json.JsonValue
 private val PACK_ID_PATTERN = Regex("^[a-z0-9][a-z0-9._-]{2,127}$")
 private val SCHOOL_ID_PATTERN = Regex("^[a-z0-9][a-z0-9_-]{1,63}$")
 private val VERSION_PATTERN = Regex("^(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})\\.(0|[1-9][0-9]{0,5})(-[0-9A-Za-z][0-9A-Za-z.-]{0,31})?$")
-private val MAINTAINER_PATTERN = Regex("^[a-z0-9-]+:[^\\s]+$")
 private val ITEM_ID_PATTERN = Regex("^[a-z0-9][a-z0-9._/-]{0,119}$")
 private val TIME_PATTERN = Regex("^([01][0-9]|2[0-3]):[0-5][0-9]$")
 
@@ -59,9 +58,32 @@ object DisDatapackValidator {
         return VerificationLevel.valueOf(raw)
     }
 
+
+    private fun validateMaintainer(value: JsonValue?, path: String): String {
+        val raw = expectStringValue(value, path, min = 2, max = 120)
+        val prefixMatch = Regex("^[a-z0-9-]+:").find(raw)
+        if (prefixMatch == null) schemaFail(path, "does not match required pattern ^[a-z0-9-]+:[^\\s]+$")
+        val suffix = raw.substring(prefixMatch!!.value.length)
+        if (suffix.isEmpty() || suffix.any(::isEcmaScriptWhitespace)) {
+            schemaFail(path, "does not match required pattern ^[a-z0-9-]+:[^\\s]+$")
+        }
+        return raw
+    }
+
+    /** ECMAScript \s；Java/Kotlin Regex \s 不覆盖 NBSP/Zs/FEFF，不能用于跨端契约 parity。 */
+    private fun isEcmaScriptWhitespace(ch: Char): Boolean {
+        val code = ch.code
+        return code == 0x0009 || code == 0x000A || code == 0x000B ||
+            code == 0x000C || code == 0x000D || code == 0x0020 ||
+            code == 0x00A0 || code == 0x1680 ||
+            code in 0x2000..0x200A ||
+            code == 0x2028 || code == 0x2029 || code == 0x202F ||
+            code == 0x205F || code == 0x3000 || code == 0xFEFF
+    }
+
     private fun validateMaintainers(value: JsonValue?, path: String): List<String> = expectUniqueStrings(
         mapArray(expectArrayValue(value, path, minItems = 1), path) { item, itemPath ->
-            expectStringValue(item, itemPath, min = 2, max = 120, pattern = MAINTAINER_PATTERN)
+            validateMaintainer(item, itemPath)
         },
         path
     )

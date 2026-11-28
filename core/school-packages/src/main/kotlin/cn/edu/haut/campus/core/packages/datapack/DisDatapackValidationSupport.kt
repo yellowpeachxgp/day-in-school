@@ -45,7 +45,7 @@ internal fun expectStringValue(
     val length = codePointLength(string)
     if (length < min) schemaFail(path, "length must be at least " + min)
     if (length > max) schemaFail(path, "length must be at most " + max)
-    if (pattern != null && !pattern.containsMatchIn(string)) schemaFail(path, "does not match required pattern " + pattern.pattern)
+    if (pattern != null && !pattern.matches(string)) schemaFail(path, "does not match required pattern " + pattern.pattern)
     return string
 }
 
@@ -126,8 +126,8 @@ internal fun expectDateTimeValue(value: JsonValue?, path: String): String {
 }
 
 internal fun expectHttpsUriValue(value: JsonValue?, path: String): String {
-    val raw = expectStringValue(value, path, pattern = Regex("^https://"))
-    val valid = try {
+    val raw = expectStringValue(value, path)
+    val valid = raw.startsWith("https://") && try {
         val uri = URI(raw)
         uri.isAbsolute && uri.scheme == "https" && !uri.host.isNullOrBlank()
     } catch (error: Exception) {

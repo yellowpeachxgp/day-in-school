@@ -111,6 +111,10 @@ class DisDatapackLoaderValidationTest {
             validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a","github:a"],"items":[]}""")
         }
         assertSchemaError {
+            val ecmaWhitespaceMaintainer = "github:a" + '\u00A0' + "x"
+            validateRootJson(rootJsonWithMaintainerJson("\"" + ecmaWhitespaceMaintainer + "\""))
+        }
+        assertSchemaError {
             validateRootJson("""{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":["github:a"],"items":[{"id":"x","title":"x","steps":[{"id":"s","title":"s","instruction":"i","estimatedMinutes":10081}],"unexpected":true}]}""")
         }
     }
@@ -137,6 +141,9 @@ class DisDatapackLoaderValidationTest {
     }
 
     private fun validateRootJson(text: String): DisDatapack = DisDatapackValidator.validate(Json.parse(text))
+
+    private fun rootJsonWithMaintainerJson(maintainerJson: String): String =
+        """{"format":"dis-datapack/v1","packId":"haut.procedures","schoolId":"haut","kind":"procedure-guide","version":"2026.11.1","sources":[{"url":"https://example.com","title":"x","retrievedAt":"2026-11-20"}],"verifiedAt":"2026-11-20","reviewBy":"2027-05-20","maintainers":[""" + maintainerJson + """],"items":[]}"""
 
     private fun rootObject() = cn.edu.haut.campus.core.model.json.Json.parse(String(fixtureBytes(), Charsets.UTF_8))
 
