@@ -170,7 +170,7 @@ private fun draftFromRule(rule: AutomationRule): AutomationEditorDraft {
         name = rule.name,
         enabled = rule.enabled
     )
-    return when (val trigger = rule.trigger) {
+    val triggered = when (val trigger = rule.trigger) {
         is cn.edu.haut.campus.core.automation.TriggerSpec.AtTime -> base.copy(
             triggerChoice = AutomationTriggerChoice.AT_TIME,
             atTime = trigger.local,
@@ -195,4 +195,36 @@ private fun draftFromRule(rule: AutomationRule): AutomationEditorDraft {
         )
         is cn.edu.haut.campus.core.automation.TriggerSpec.Plugin -> base
     }
+    val conditionTypes = rule.conditions.map { it.type }.toSet()
+    val onCampusSpec = rule.conditions.firstOrNull { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_ON_CAMPUS }
+    val commuteSpec = rule.conditions.firstOrNull { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_COMMUTE_TIME }
+    val freshnessSpec = rule.conditions.firstOrNull { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_DATA_FRESHNESS }
+    val notificationSpec = rule.actions.firstOrNull { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.ACTION_LOCAL_NOTIFICATION }
+    val createSpecs = rule.actions.filter { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.ACTION_CREATE_PERSONAL_EVENT }
+    val taskSpec = createSpecs.firstOrNull { it.config.str("kind") != "PERSONAL" }
+    val eventSpec = createSpecs.firstOrNull { it.config.str("kind") == "PERSONAL" }
+    return triggered.copy(
+        hasClassToday = cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_HAS_CLASS_TODAY in conditionTypes,
+        onCampus = onCampusSpec != null,
+        campusIdText = onCampusSpec?.config?.str("campusId")
+            ?: commuteSpec?.config?.str("toCampus")
+            ?: triggered.campusIdText,
+        focusPeriod = cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.CONDITION_FOCUS_PERIOD in conditionTypes,
+        commuteTime = commuteSpec != null,
+        commuteMaxMinutesText = commuteSpec?.config?.obj("maxMinutes")?.intOrNull()?.toString() ?: triggered.commuteMaxMinutesText,
+        dataFreshness = freshnessSpec != null,
+        freshnessMaxAgeHoursText = freshnessSpec?.config?.obj("maxAgeSeconds")?.intOrNull()?.let { (it / 3600).coerceAtLeast(1).toString() }
+            ?: triggered.freshnessMaxAgeHoursText,
+        notify = notificationSpec != null,
+        notificationTitle = notificationSpec?.config?.str("title") ?: triggered.notificationTitle,
+        notificationBody = notificationSpec?.config?.str("body") ?: triggered.notificationBody,
+        createTask = taskSpec != null,
+        taskTitle = taskSpec?.config?.str("title") ?: triggered.taskTitle,
+        taskDueMinutesText = taskSpec?.config?.obj("dueInMinutes")?.intOrNull()?.toString() ?: triggered.taskDueMinutesText,
+        createEvent = eventSpec != null,
+        eventTitle = eventSpec?.config?.str("title") ?: triggered.eventTitle,
+        eventStartMinutesText = eventSpec?.config?.obj("startInMinutes")?.intOrNull()?.toString() ?: triggered.eventStartMinutesText,
+        eventDurationMinutesText = eventSpec?.config?.obj("durationMinutes")?.intOrNull()?.toString() ?: triggered.eventDurationMinutesText,
+        refreshHome = rule.actions.any { it.type == cn.edu.haut.campus.core.automation.BuiltinAutomationTypes.ACTION_REFRESH_HOME }
+    )
 }

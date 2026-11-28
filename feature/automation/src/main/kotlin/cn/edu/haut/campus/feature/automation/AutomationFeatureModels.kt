@@ -52,6 +52,10 @@ data class AutomationEditorDraft(
     val createTask: Boolean = false,
     val taskTitle: String = "自动化待办",
     val taskDueMinutesText: String = "60",
+    val createEvent: Boolean = false,
+    val eventTitle: String = "自动化日程",
+    val eventStartMinutesText: String = "0",
+    val eventDurationMinutesText: String = "60",
     val refreshHome: Boolean = true,
     val error: String? = null
 ) {
@@ -72,7 +76,11 @@ data class AutomationEditorDraft(
         if (dataFreshness && (freshnessHours == null || freshnessHours !in 1..168)) return "新鲜度上限必须是 1..168 小时"
         val dueMinutes = taskDueMinutesText.toIntOrNull()
         if (createTask && (dueMinutes == null || dueMinutes !in 0..10080)) return "待办截止必须是 0..10080 分钟"
-        if (!notify && !createTask && !refreshHome) return "至少选择一个动作"
+        val eventStartMinutes = eventStartMinutesText.toIntOrNull()
+        if (createEvent && (eventStartMinutes == null || eventStartMinutes !in 0..10080)) return "日程开始必须是 0..10080 分钟"
+        val eventDurationMinutes = eventDurationMinutesText.toIntOrNull()
+        if (createEvent && (eventDurationMinutes == null || eventDurationMinutes !in 1..1440)) return "日程时长必须是 1..1440 分钟"
+        if (!notify && !createTask && !createEvent && !refreshHome) return "至少选择一个动作"
         return null
     }
 
@@ -169,6 +177,19 @@ data class AutomationEditorDraft(
                         "kind" to JsonValue.Str("TASK_DUE"),
                         "title" to JsonValue.Str(taskTitle.ifBlank { name }),
                         "dueInMinutes" to JsonValue.Num(taskDueMinutesText.toInt().toString())
+                    )
+                )
+            )
+        }
+        if (createEvent) {
+            add(
+                ActionSpec(
+                    BuiltinAutomationTypes.ACTION_CREATE_PERSONAL_EVENT,
+                    jsonObject(
+                        "kind" to JsonValue.Str("PERSONAL"),
+                        "title" to JsonValue.Str(eventTitle.ifBlank { name }),
+                        "startInMinutes" to JsonValue.Num(eventStartMinutesText.toInt().toString()),
+                        "durationMinutes" to JsonValue.Num(eventDurationMinutesText.toInt().toString())
                     )
                 )
             )

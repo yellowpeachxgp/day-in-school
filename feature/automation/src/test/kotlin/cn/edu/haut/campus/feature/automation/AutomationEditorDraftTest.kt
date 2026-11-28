@@ -34,8 +34,19 @@ class AutomationEditorDraftTest {
 
     @Test
     fun emptyActionSetIsRejected() {
-        val draft = AutomationEditorDraft(notify = false, createTask = false, refreshHome = false)
+        val draft = AutomationEditorDraft(notify = false, createTask = false, createEvent = false, refreshHome = false)
 
         assertEquals("至少选择一个动作", draft.validate())
+    }
+
+    @Test
+    fun personalEventActionIsAvailableAlongsideTask() {
+        val draft = AutomationEditorDraft(createEvent = true, eventDurationMinutesText = "45")
+
+        val actions = draft.toRule(AutomationPreviewFixtures.scope).actions
+        val createEvent = actions.first { it.type == BuiltinAutomationTypes.ACTION_CREATE_PERSONAL_EVENT }
+
+        assertEquals("PERSONAL", createEvent.config.str("kind"))
+        assertEquals("45", createEvent.config.obj("durationMinutes")?.intOrNull()?.toString())
     }
 }

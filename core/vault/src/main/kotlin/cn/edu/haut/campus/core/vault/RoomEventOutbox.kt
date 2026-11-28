@@ -16,6 +16,7 @@ import cn.edu.haut.campus.core.events.OutboxEventRecord
 import cn.edu.haut.campus.core.events.UnknownEventException
 import cn.edu.haut.campus.core.model.json.Json
 import cn.edu.haut.campus.core.model.json.JsonValue
+import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -46,7 +47,9 @@ class RoomEventOutbox(
 
     init {
         // WeakObserver 避免 outbox 门面比账号库生命周期更长；observer 本体仍由本对象强引用。
-        database.invalidationTracker.addWeakObserver(invalidationObserver)
+        database.invalidationTracker.addObserver(
+            WeakDomainOutboxInvalidationObserver(database.invalidationTracker, invalidationObserver)
+        )
     }
 
     override suspend fun append(envelope: EventEnvelope): EventAppendResult = appendDeferred(envelope)
@@ -178,6 +181,23 @@ class RoomEventOutbox(
 
     private fun requireValidConsumerGroup(consumerGroup: String) {
         require(consumerGroup.isNotBlank()) { "consumerGroup 不能为空" }
+    }
+}
+
+/** Room 2.6 的 addWeakObserver 是 RestrictedApi；用手写弱引用包装保留同一生命周期语义且只调用公开 API。 */
+private class WeakDomainOutboxInvalidationObserver(
+    private val tracker: InvalidationTracker,
+    delegate: InvalidationTracker.Observer
+) : InvalidationTracker.Observer("domain_outbox") {
+    private val delegateRef = WeakReference(delegate)
+
+    override fun onInvalidated(tables: Set<String>) {
+        val target = delegateRef.get()
+        if (target == null) {
+            tracker.removeObserver(this)
+        } else {
+            target.onInvalidated(tables)
+        }
     }
 }
 

@@ -298,6 +298,18 @@ private fun AutomationEditor(
                 onDraftChange { it.copy(taskDueMinutesText = value.filter(Char::isDigit).take(5)) }
             }
         }
+        ToggleRow("创建日程", draft.createEvent) { value -> onDraftChange { it.copy(createEvent = value) } }
+        if (draft.createEvent) {
+            AutomationTextField(draft.eventTitle, "日程标题") { value ->
+                onDraftChange { it.copy(eventTitle = value.take(120)) }
+            }
+            AutomationTextField(draft.eventStartMinutesText, "多少分钟后开始") { value ->
+                onDraftChange { it.copy(eventStartMinutesText = value.filter(Char::isDigit).take(5)) }
+            }
+            AutomationTextField(draft.eventDurationMinutesText, "时长（分钟）") { value ->
+                onDraftChange { it.copy(eventDurationMinutesText = value.filter(Char::isDigit).take(4)) }
+            }
+        }
         ToggleRow("刷新首页卡片和小组件", draft.refreshHome) { value -> onDraftChange { it.copy(refreshHome = value) } }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
