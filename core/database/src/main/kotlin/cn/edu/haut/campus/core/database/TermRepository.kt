@@ -159,7 +159,16 @@ class TermRepository internal constructor(
                     val rulesIn26 = allRules.filter { it.termId == "2026-2027-1" && it.id.startsWith("r_imp_") }
                     val rulesInExpected = allRules.filter { it.termId == expectedTermId }
                     if (expectedTermId != "2026-2027-1" && rulesIn26.isNotEmpty() && rulesInExpected.isEmpty()) {
-                        dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                        environment.academicEntityWritePort.writeMany(
+                            refsProvider = {
+                                rulesIn26.map { it.courseId }.distinct().map { environment.academicRef(EntityType.COURSE, it) }
+                            },
+                            actor = Actor.SYNC,
+                            actorDetail = "term-mismatch-course-repair",
+                            writeGroupId = "term-mismatch-course-repair:" + UUID.randomUUID().toString()
+                        ) {
+                            dao.upsertRules(rulesIn26.map { it.copy(termId = expectedTermId) })
+                        }
                         dao.setCurrentTerm(expectedTermId)
                     }
                 }

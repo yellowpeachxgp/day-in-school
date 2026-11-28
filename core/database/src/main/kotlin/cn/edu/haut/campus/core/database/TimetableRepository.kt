@@ -589,6 +589,7 @@ class TimetableRepository internal constructor(
         val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
         val now = Instant.now()
         val stablePracticalExternalId = "sjk:${unscheduled.termId}:${unscheduled.sourceKey}"
+        val fallbackCourseId = "c_prac_${UUID.randomUUID().toString().take(8)}"
 
         fun fingerprint(
             weekdayIso: Int,
@@ -608,13 +609,23 @@ class TimetableRepository internal constructor(
             customEndTimeIso.orEmpty()
         ).joinToString("|")
 
-        database.withTransaction {
+        writeCourseAggregates(
+            courseIdsProvider = {
+                val existingId = dao.getCoursesSnapshot().firstOrNull { row ->
+                    row.source == CourseSource.OFFICIAL_JW.name && row.externalId == stablePracticalExternalId
+                }?.id
+                setOf(existingId ?: fallbackCourseId)
+            },
+            actor = Actor.USER,
+            actorDetail = "practical-course-matrix-schedule"
+        ) {
+            database.withTransaction {
             val existingCourse = dao.getCoursesSnapshot()
                 .map { it.toDomain() }
                 .firstOrNull { c ->
                     c.source == CourseSource.OFFICIAL_JW && c.externalId == stablePracticalExternalId
                 }
-            val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
+            val courseId = existingCourse?.id ?: fallbackCourseId
             val course = existingCourse?.copy(
                 teacher = unscheduled.teacher?.takeIf { it.isNotBlank() } ?: existingCourse.teacher,
                 credit = unscheduled.creditPlain?.toBigDecimalOrNull() ?: existingCourse.credit,
@@ -712,6 +723,7 @@ class TimetableRepository internal constructor(
                 dao.upsertRule(rule.toEntity())
             }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
+            }
         }
         notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
     }
