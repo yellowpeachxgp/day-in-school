@@ -46,6 +46,7 @@ roborazzi {
 dependencies {
     api(project(":core:model"))
     api(project(":core:domain"))
+    api(project(":core:timeline"))
     api(project(":core:database"))
     api(project(":core:designsystem"))
     api(project(":widget:common"))
@@ -61,6 +62,7 @@ dependencies {
     testImplementation("androidx.compose.ui:ui-test-junit4")
     testImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.roborazzi.core)
     testImplementation(libs.roborazzi.compose)

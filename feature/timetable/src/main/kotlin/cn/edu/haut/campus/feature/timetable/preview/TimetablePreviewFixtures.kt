@@ -4,16 +4,25 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.tooling.preview.Preview
 import cn.edu.haut.campus.core.designsystem.HautCampusTheme
+import cn.edu.haut.campus.core.model.AccountId
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
+import cn.edu.haut.campus.core.model.DataProvenance
+import cn.edu.haut.campus.core.model.HAUT_ZONE_ID
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.PeriodTimeScheme
+import cn.edu.haut.campus.core.model.ProfileId
+import cn.edu.haut.campus.core.model.SchoolAccountScope
+import cn.edu.haut.campus.core.model.SchoolId
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.timeline.CourseScheduleTimelineSnapshot
+import cn.edu.haut.campus.core.timeline.CourseTimelineProjection
 import cn.edu.haut.campus.feature.timetable.state.TimetableScreenStatus
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
 import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import cn.edu.haut.campus.feature.timetable.ui.LocalTimetableClock
 import cn.edu.haut.campus.feature.timetable.ui.TimetableClock
+import cn.edu.haut.campus.feature.timetable.timetableTimelineWindow
 import cn.edu.haut.campus.feature.timetable.ui.TimetableScreen
 import java.time.DayOfWeek
 import java.time.LocalDate
@@ -104,6 +113,43 @@ object TimetablePreviewFixtures {
         syncedAtEpochMilli = 0L
     )
 
+    private val previewScope = SchoolAccountScope(
+        schoolId = SchoolId("preview-school"),
+        accountId = AccountId("preview-account"),
+        profileId = ProfileId("preview-profile")
+    )
+
+    /**
+     * 截图 fixture 与运行期同一路径：先投影 Timeline 事件，再由 UI 还原课程。
+     * periodTimes 为空的状态必须重新投影为 UNCERTAIN，不能复用精确时间事件。
+     */
+    private fun TimetableUiState.withPreviewTimelineEvents(): TimetableUiState {
+        val activeTerm = currentTerm ?: return copy(timelineEvents = emptyList())
+        val snapshot = CourseScheduleTimelineSnapshot(
+            zone = HAUT_ZONE_ID,
+            provenance = DataProvenance(
+                providerId = "preview.fixture",
+                schoolId = previewScope.schoolId,
+                accountId = previewScope.accountId,
+                sourceSystem = "screenshot-fixture"
+            ),
+            revision = 1L,
+            terms = listOf(activeTerm),
+            courses = courses,
+            rules = scheduleRules,
+            periodTimes = periodTimes,
+            calendarOverrides = calendarOverrides,
+            occurrenceOverrides = occurrenceOverrides
+        )
+        return copy(
+            timelineEvents = CourseTimelineProjection.projectAll(
+                snapshot = snapshot,
+                scope = previewScope,
+                window = timetableTimelineWindow(activeTerm, HAUT_ZONE_ID)
+            )
+        )
+    }
+
     private val contentState = TimetableUiState(
         status = TimetableScreenStatus.CONTENT,
         terms = listOf(previewTerm),
@@ -113,7 +159,7 @@ object TimetablePreviewFixtures {
         periodTimes = previewPeriodTimes,
         periodTimeSchemes = listOf(previewScheme),
         unscheduledCourses = listOf(previewUnscheduledPractical)
-    )
+    ).withPreviewTimelineEvents()
 
     private val emptyState = TimetableUiState(
         status = TimetableScreenStatus.EMPTY,
@@ -129,13 +175,13 @@ object TimetablePreviewFixtures {
         TimetableScreenStatus.PARTIAL to contentState.copy(
             status = TimetableScreenStatus.PARTIAL,
             periodTimes = emptyList()
-        ),
-        TimetableScreenStatus.STALE to contentState.copy(status = TimetableScreenStatus.STALE),
+        ).withPreviewTimelineEvents(),
+        TimetableScreenStatus.STALE to contentState.copy(status = TimetableScreenStatus.STALE).withPreviewTimelineEvents(),
         TimetableScreenStatus.ERROR_RETRYABLE to emptyState.copy(status = TimetableScreenStatus.ERROR_RETRYABLE),
         TimetableScreenStatus.ERROR_TERMINAL to emptyState.copy(status = TimetableScreenStatus.ERROR_TERMINAL),
         TimetableScreenStatus.NEEDS_PERMISSION to emptyState.copy(status = TimetableScreenStatus.NEEDS_PERMISSION),
         TimetableScreenStatus.NEEDS_LOGIN to emptyState.copy(status = TimetableScreenStatus.NEEDS_LOGIN),
-        TimetableScreenStatus.OFFLINE to contentState.copy(status = TimetableScreenStatus.OFFLINE),
+        TimetableScreenStatus.OFFLINE to contentState.copy(status = TimetableScreenStatus.OFFLINE).withPreviewTimelineEvents(),
         TimetableScreenStatus.UNSUPPORTED to emptyState.copy(status = TimetableScreenStatus.UNSUPPORTED)
     )
 

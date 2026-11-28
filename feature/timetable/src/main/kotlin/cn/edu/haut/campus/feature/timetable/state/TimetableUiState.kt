@@ -9,6 +9,7 @@ import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
 import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
+import cn.edu.haut.campus.core.timeline.TimelineEvent
 
 /** 统一状态矩阵。运行期沿袭旧课表页默认 CONTENT；其余状态由 fixtures/截图矩阵显式固定。 */
 enum class TimetableScreenStatus {
@@ -92,6 +93,8 @@ data class TimetableUiState(
     val periodTimeSchemes: List<PeriodTimeScheme> = emptyList(),
     val calendarOverrides: List<CalendarOverride> = emptyList(),
     val occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
+    /** 课程/实践课的统一 Timeline 投影；周网格与日清单只从该读取路径还原课程。 */
+    val timelineEvents: List<TimelineEvent> = emptyList(),
     val buildings: List<Building> = emptyList(),
     val unscheduledCourses: List<UnscheduledPracticalCourseUiModel> = emptyList(),
 

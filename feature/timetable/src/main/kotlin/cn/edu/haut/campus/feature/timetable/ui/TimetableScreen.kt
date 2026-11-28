@@ -63,6 +63,7 @@ import cn.edu.haut.campus.core.designsystem.XPeachWell
 import cn.edu.haut.campus.core.domain.ChineseLabel
 import cn.edu.haut.campus.core.domain.ScheduleEngine
 import cn.edu.haut.campus.core.domain.TeachingWeekCalculator
+import cn.edu.haut.campus.core.domain.TimelineScheduleAdapter
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import java.time.LocalDate
@@ -113,6 +114,7 @@ private fun TimetableLegacyContent(
     val periodTimeSchemes = state.periodTimeSchemes
     val calendarOverrides = state.calendarOverrides
     val occurrenceOverrides = state.occurrenceOverrides
+    val timelineEvents = state.timelineEvents
     val buildings = state.buildings
     val unscheduledCourses = state.unscheduledCourses
     val pendingLegacyReviewTargets = state.pendingLegacyReviewTargets
@@ -192,28 +194,6 @@ private fun TimetableLegacyContent(
         termCanceledGroups.map { it.first() }
     }
 
-    val weekOccurrencesMap = remember(
-        selectedWeek,
-        term,
-        courses,
-        rules,
-        periodTimes,
-        calendarOverrides,
-        occurrenceOverrides,
-        buildings
-    ) {
-        val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-        ScheduleEngine.resolveOccurrencesForTeachingWeek(
-            teachingWeek = selectedWeek,
-            term = activeTerm,
-            courses = courses,
-            rules = rules,
-            periodTimes = periodTimes,
-            calendarOverrides = calendarOverrides,
-            occurrenceOverrides = occurrenceOverrides,
-            buildings = buildings
-        )
-    }
 
     Column(
         modifier = modifier
@@ -760,6 +740,7 @@ private fun TimetableLegacyContent(
             val activeWeekOccurrencesMap = remember(
                 activeWeek,
                 term,
+                timelineEvents,
                 courses,
                 rules,
                 periodTimes,
@@ -768,16 +749,19 @@ private fun TimetableLegacyContent(
                 buildings
             ) {
                 val activeTerm = term ?: return@remember emptyMap<LocalDate, List<ClassOccurrence>>()
-                ScheduleEngine.resolveOccurrencesForTeachingWeek(
-                    teachingWeek = activeWeek,
-                    term = activeTerm,
-                    courses = courses,
-                    rules = rules,
-                    periodTimes = periodTimes,
-                    calendarOverrides = calendarOverrides,
-                    occurrenceOverrides = occurrenceOverrides,
-                    buildings = buildings
-                )
+                activeWeekDates.associateWith { date ->
+                    TimelineScheduleAdapter.resolveOccurrencesForDateFromEvents(
+                        date = date,
+                        events = timelineEvents,
+                        term = activeTerm,
+                        periodTimes = periodTimes,
+                        courses = courses,
+                        rules = rules,
+                        calendarOverrides = calendarOverrides,
+                        occurrenceOverrides = occurrenceOverrides,
+                        buildings = buildings
+                    )
+                }
             }
 
             when (activeMode) {

@@ -28,7 +28,10 @@ import kotlinx.coroutines.launch
 /** 聚合课表页 Repository Flow，并把全部仓库写操作集中在一个可测试边界。 */
 class TimetableViewModel internal constructor(
     private val repository: CampusRepository,
-    private val writeExecutor: TimetableWriteExecutor
+    private val writeExecutor: TimetableWriteExecutor,
+    timelineProjectionFactory: (CoroutineScope) -> TimetableTimelineProjection = { projectionScope ->
+        repositoryTimetableTimelineProjection(repository, projectionScope)
+    }
 ) : ViewModel() {
     private class SessionMismatchCancellationException :
         CancellationException("课表页 ViewModel 所属账号会话已不是当前会话")
@@ -45,16 +48,19 @@ class TimetableViewModel internal constructor(
     val effects = _effects.asSharedFlow()
 
     init {
-        collect(repository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
-        collect(repository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }
-        collect(repository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
-        collect(repository.rulesFlow) { value -> _uiState.update { it.copy(scheduleRules = value) } }
-        collect(repository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
+        collect(timelineProjectionFactory(scope).observeEvents()) { value ->
+            _uiState.update { it.copy(timelineEvents = value) }
+        }
+        collect(repository.termRepository.termsFlow) { value -> _uiState.update { it.copy(terms = value) } }
+        collect(repository.termRepository.currentTermFlow) { value -> _uiState.update { it.copy(currentTerm = value) } }
+        collect(repository.timetableRepository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
+        collect(repository.timetableRepository.rulesFlow) { value -> _uiState.update { it.copy(scheduleRules = value) } }
+        collect(repository.termRepository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
         collect(repository.termRepository.periodTimeSchemesFlow) { value -> _uiState.update { it.copy(periodTimeSchemes = value) } }
-        collect(repository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
-        collect(repository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
-        collect(repository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
-        collect(repository.unscheduledCoursesFlow) { value ->
+        collect(repository.termRepository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
+        collect(repository.timetableRepository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
+        collect(repository.timetableRepository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
+        collect(repository.timetableRepository.unscheduledCoursesFlow) { value ->
             val uiRows = value.map { row ->
                 cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel(
                     termId = row.termId,
