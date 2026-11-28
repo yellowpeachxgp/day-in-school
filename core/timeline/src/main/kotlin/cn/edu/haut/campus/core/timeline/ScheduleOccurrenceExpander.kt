@@ -11,7 +11,6 @@ import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.core.model.TermDateStatus
 import cn.edu.haut.campus.core.model.TimeEvidence
 import java.time.DayOfWeek
-import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.temporal.ChronoUnit
@@ -34,9 +33,10 @@ internal data class EffectiveScheduleDate(
 /**
  * 纯 JVM 课程 occurrence 展开器。
  *
- * 这里刻意复刻 W0/W0-04 已验证的课表语义：教学周对齐、calendar_overrides、按日期切换
- * 节次方案、单双周精确周集合、今日停课/仅改本次/跨日调入、同课相邻节次合并、非法时间
- * 证据不冒充可信时刻。Timeline 首批 Source 不重写一套口径，避免投影与既有课表分叉。
+ * 这里作为过渡期镜像实现 W0/W0-04 已验证的课表语义：教学周对齐、calendar_overrides、
+ * 按日期切换节次方案、单双周精确周集合、今日停课/仅改本次/跨日调入、同课相邻节次合并、
+ * 非法时间证据不冒充可信时刻。由于内核不能反向依赖 engine，本卡先保持纯 JVM 镜像；
+ * W1-05 切换调用方后应收敛旧 engine 展开路径，禁止两套语义长期漂移。
  */
 internal object ScheduleOccurrenceExpander {
 
