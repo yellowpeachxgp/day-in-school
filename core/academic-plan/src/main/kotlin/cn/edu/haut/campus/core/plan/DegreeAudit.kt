@@ -201,19 +201,52 @@ object DegreeAuditor {
             val logicalKey: String,
             val logicalName: String,
             val renamed: Boolean,
-            val rename: CourseRename?
+            val rename: CourseRename?,
+            val blankSourceKey: Boolean
         )
 
+        /**
+         * 改名规则的来源匹配。带显式 code 的 was 只接受相同 code：同名不同码是不同课程；
+         * name-only 规则才可按名称命中。若两类规则同时命中，显式 code 规则优先于方案书写顺序。
+         */
+        fun renameMatchScore(rule: CourseRename, attempt: GradeAttempt): Int {
+            val wasCode = normalizedNonBlank(rule.was.code)
+            val attemptCode = normalizedNonBlank(attempt.courseKey)
+            return if (wasCode != null) {
+                if (attemptCode != null && attemptCode == wasCode) 2 else 0
+            } else {
+                if (normalize(rule.was.name) == normalize(attempt.name)) 1 else 0
+            }
+        }
+
         fun identityFor(attempt: GradeAttempt): Identity {
-            val rename = plan.renames.firstOrNull { rule ->
-                matchesCourseRef(rule.was, attempt.courseKey, attempt.name)
+            var rename: CourseRename? = null
+            var bestScore = 0
+            plan.renames.forEach { rule ->
+                val score = renameMatchScore(rule, attempt)
+                if (score > bestScore) {
+                    bestScore = score
+                    rename = rule
+                }
             }
+            val blankSourceKey = attempt.courseKey.isBlank()
+            val rawKey = attempt.courseKey.trim()
+            val rawName = attempt.name.trim().ifBlank { "未命名课程 " + attempt.id }
             if (rename == null) {
-                return Identity(attempt.courseKey.trim(), attempt.name.trim(), renamed = false, rename = null)
+                val fallbackKey = rawKey.ifBlank { "blank-key:" + normalize(rawName) }
+                return Identity(fallbackKey, rawName, renamed = false, rename = null, blankSourceKey = blankSourceKey)
             }
-            val key = rename.now.code?.trim()?.takeIf { it.isNotEmpty() }
-                ?: "rename:" + normalize(rename.now.name)
-            return Identity(key, rename.now.name.trim(), renamed = true, rename = rename)
+            val matchedRename = rename!!
+            // 目标 code 缺失时保留原始 code 作为身份链；否则同名改名会把同一 raw code 拆成两组而重复入账。
+            val key = matchedRename.now.code?.trim()?.takeIf { it.isNotEmpty() }
+                ?: rawKey.ifBlank { "rename:" + normalize(matchedRename.now.name) }
+            return Identity(
+                logicalKey = key,
+                logicalName = matchedRename.now.name.trim(),
+                renamed = true,
+                rename = matchedRename,
+                blankSourceKey = blankSourceKey
+            )
         }
 
         val identityByAttemptId = attempts.associate { it.id to identityFor(it) }
@@ -329,7 +362,14 @@ object DegreeAuditor {
         val allGroups = plan.allGroups()
         val assignmentsByGroup = LinkedHashMap<String, MutableList<CourseAssignment>>()
         allGroups.forEach { assignmentsByGroup[it.id] = mutableListOf() }
-        val courseBearingGroups = allGroups.filter { it.courses.isNotEmpty() }
+        val depthById = plan.groupDepths()
+        val preorderIndexById = allGroups.mapIndexed { index, group -> group.id to index }.toMap()
+        val courseBearingGroups = allGroups
+            .filter { it.courses.isNotEmpty() }
+            .sortedWith(
+                compareByDescending<RequirementGroup> { depthById[it.id] ?: 0 }
+                    .thenBy { preorderIndexById[it.id] ?: Int.MAX_VALUE }
+            )
         val unclassified = mutableListOf<CompletedCourse>()
         val passedKeys = mutableSetOf<String>()
         val passedNames = mutableSetOf<String>()
@@ -425,6 +465,20 @@ object DegreeAuditor {
                 }
             }
 
+            if (decision.attempts.any { identityByAttemptId.getValue(it.id).blankSourceKey }) {
+                unclassified += course
+                step(
+                    rule = "blank-course-key",
+                    courseKey = decision.courseKey,
+                    courseName = decision.courseName,
+                    credits = course.credits,
+                    decision = "成绩缺少课程代码，保守列入未归类；可用人工认定归组或排除",
+                    basis = "原始成绩 courseKey 为空白；审计仅以名称生成内部 fallback 身份，不参与自动匹配",
+                    attempt = representativeAttempt
+                )
+                return@forEach
+            }
+
             val candidates = candidateGroups(decision.courseKey, decision.courseName, courseBearingGroups)
             if (candidates.isNotEmpty()) {
                 val chosen = candidates.first()
@@ -494,6 +548,10 @@ object DegreeAuditor {
         val totals = RequirementTreeMath.analyze(plan, directEarnedByGroup)
         val visibleGroups = allGroups.filter(RequirementTreeMath::isProgressVisible)
         val gaps = mutableListOf<RequirementGap>()
+        fun subtreeAssignments(group: RequirementGroup): List<CourseAssignment> = buildList {
+            addAll(assignmentsByGroup.getValue(group.id))
+            group.children.forEach { addAll(subtreeAssignments(it)) }
+        }
         val groups = visibleGroups.map { group ->
             val assignments = assignmentsByGroup.getValue(group.id)
             val groupTotals = totals.getValue(group.id)
@@ -532,7 +590,8 @@ object DegreeAuditor {
                 remainingCredits = remaining,
                 surplusCredits = surplus,
                 assignedCourses = assignments,
-                pendingCourses = pending
+                pendingCourses = pending,
+                subtreeAssignedCourses = subtreeAssignments(group)
             )
         }
         val totalRequired = plan.totalRequiredCredits
@@ -674,20 +733,28 @@ object DegreeAuditor {
         }
         if (byCode.isNotEmpty()) return byCode
         return groups.mapNotNull { group ->
-            val hit = group.courses.any { ref -> normalize(ref.name) == normalize(courseName) }
+            val hit = group.courses.any { ref -> matchesCourseRef(ref, courseKey, courseName) }
             if (hit) group to CourseMatchKind.NAME else null
         }
     }
 
     private fun matchesCourseRef(ref: PlanCourseRef, courseKey: String, courseName: String): Boolean {
-        val byCode = ref.code != null && normalize(ref.code) == normalize(courseKey)
-        return byCode || normalize(ref.name) == normalize(courseName)
+        val refCode = normalizedNonBlank(ref.code)
+        val key = normalizedNonBlank(courseKey)
+        if (refCode != null && key != null) {
+            // 同名不同码是不同课程；显式 code 冲突时不得退化为名称命中。
+            return refCode == key
+        }
+        return normalize(ref.name) == normalize(courseName)
     }
 
     private fun refsEqual(a: PlanCourseRef, b: PlanCourseRef): Boolean {
         if (a.code != null && b.code != null) return normalize(a.code) == normalize(b.code)
         return normalize(a.name) == normalize(b.name)
     }
+
+    private fun normalizedNonBlank(text: String?): String? =
+        text?.trim()?.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
 
     private fun normalize(text: String): String = text.trim().lowercase(Locale.ROOT)
 }

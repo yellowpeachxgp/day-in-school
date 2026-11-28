@@ -91,7 +91,7 @@ data class RequirementGroup(
 
     val isLeaf: Boolean get() = children.isEmpty()
 
-    /** 先序遍历本组及其全部子组；顺序即毕业进度的归组优先级。 */
+    /** 先序遍历本组及其全部子组；自动归组时更深后代优先，遍历时序只作同层稳定次序。 */
     fun traverse(): List<RequirementGroup> = buildList {
         add(this@RequirementGroup)
         children.forEach { addAll(it.traverse()) }
@@ -127,6 +127,17 @@ data class TrainingPlan(
     }
 
     fun allGroups(): List<RequirementGroup> = groups.flatMap { it.traverse() }
+
+    /** 每个要求组在方案树中的深度；根为 0。自动归组用它保证后代/更深组优先于先序父组。 */
+    fun groupDepths(): Map<String, Int> {
+        val depths = LinkedHashMap<String, Int>()
+        fun visit(group: RequirementGroup, depth: Int) {
+            depths[group.id] = depth
+            group.children.forEach { visit(it, depth + 1) }
+        }
+        groups.forEach { visit(it, 0) }
+        return depths
+    }
 
     /** 叶子组清单；混合父组的直接课程不在这里，但仍是本组自身的有效要求。 */
     fun leafGroups(): List<RequirementGroup> = allGroups().filter { it.isLeaf }

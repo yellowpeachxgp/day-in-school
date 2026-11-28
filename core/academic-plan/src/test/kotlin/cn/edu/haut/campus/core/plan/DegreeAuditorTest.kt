@@ -420,4 +420,149 @@ class DegreeAuditorTest {
         assertTrue(report.trace.any { it.rule == "override-plan-mismatch" })
     }
 
+    @Test
+    fun sameNameDifferentExplicitCodeIsNotMergedByRename() {
+        val shared = PlanCourseRef("ART101", "Survey")
+        val group = PlanFixtures.group(
+            id = "g-explicit",
+            credits = "6",
+            courses = listOf(PlanCourseRef("HIST201", "Survey"), shared),
+            title = "显式代码组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef("HIST101", "Survey"),
+                    now = PlanCourseRef("HIST201", "Survey")
+                )
+            )
+        )
+        val attempts = listOf(
+            PlanFixtures.attempt("HIST101", name = "Survey", credits = "3", id = "hist-old"),
+            PlanFixtures.attempt("ART101", name = "Survey", credits = "3", id = "art-same-name")
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        val progress = report.groupById("g-explicit")!!
+        PlanFixtures.assertAmount("6", progress.earnedCredits, "同名不同码是两门课程，不得被改名规则误并为重修")
+        assertEquals(2, progress.assignedCourses.size)
+        PlanFixtures.assertAmount("6", report.totalEarnedCredits)
+        assertEquals(1, report.trace.count { it.rule == "rename" }, "只有 HIST101 可命中显式代码改名规则")
+    }
+
+    @Test
+    fun exactCodedRenameRuleWinsOverEarlierNameOnlyRule() {
+        val group = PlanFixtures.group(
+            id = "g-rename-priority",
+            credits = "3",
+            courses = listOf(PlanCourseRef("HIST201", "Survey")),
+            title = "改名优先组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Survey"),
+                    now = PlanCourseRef("NAMEONLY", "Survey Renamed")
+                ),
+                CourseRename(
+                    was = PlanCourseRef("HIST101", "Survey"),
+                    now = PlanCourseRef("HIST201", "Survey")
+                )
+            )
+        )
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("HIST101", name = "Survey", credits = "3", id = "hist-exact")),
+            emptyList(),
+            now
+        )
+        PlanFixtures.assertAmount("3", report.groupById("g-rename-priority")!!.earnedCredits)
+        assertTrue(report.representativeAttemptIds.containsKey("HIST201"))
+    }
+
+    @Test
+    fun blankCourseKeyFailedAttemptDoesNotCrashWholeAudit() {
+        val plan = planFixture()
+        val attempts = listOf(
+            PlanFixtures.attempt("  ", name = "缺码失败课", credits = "2", passed = false, rawGrade = "55", numericScore = "55", gradePoint = "0", id = "blank-failed"),
+            PlanFixtures.attempt("MATH1", name = "高等数学A", credits = "5", id = "math-pass")
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        PlanFixtures.assertAmount("5", report.totalEarnedCredits, "一条缺码失败成绩不得拖垮整次审计")
+        assertTrue(report.trace.any { it.rule == "not-passed" && it.courseName == "缺码失败课" })
+    }
+
+    @Test
+    fun blankCourseKeyPassedAttemptIsConservativelyUnclassified() {
+        val plan = planFixture()
+        val attempts = listOf(
+            PlanFixtures.attempt("", name = "高等数学A", credits = "5", id = "blank-passed")
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        assertEquals(1, report.unclassified.size)
+        assertTrue(report.unclassified.first().courseKey.startsWith("blank-key:"))
+        PlanFixtures.assertAmount("0", report.groupById("basic")!!.earnedCredits, "缺码课程不得仅凭名称自动入账")
+        assertTrue(report.trace.any { it.rule == "blank-course-key" && it.attemptId == "blank-passed" })
+    }
+
+    @Test
+    fun childGroupWinsWhenMixedParentAndChildBothListSameCourse() {
+        val shared = PlanCourseRef("X", "共享课程")
+        val child = PlanFixtures.group(
+            id = "child",
+            credits = "4",
+            courses = listOf(shared),
+            title = "子要求"
+        )
+        val parent = PlanFixtures.group(
+            id = "parent",
+            credits = "6",
+            courses = listOf(shared),
+            children = listOf(child),
+            title = "父要求"
+        )
+        val plan = PlanFixtures.plan(listOf(parent))
+        val report = DegreeAuditor.audit(
+            plan,
+            listOf(PlanFixtures.attempt("X", name = "共享课程", credits = "3", id = "x-pass")),
+            emptyList(),
+            now
+        )
+        val childProgress = report.groupById("child")!!
+        val parentProgress = report.groupById("parent")!!
+        PlanFixtures.assertAmount("3", childProgress.earnedCredits)
+        PlanFixtures.assertAmount("1", childProgress.remainingCredits, "X 必须先抵扣更具体的 child 要求")
+        PlanFixtures.assertAmount("3", parentProgress.earnedCredits, "父组只聚合子组入账")
+        PlanFixtures.assertAmount("3", parentProgress.remainingCredits)
+        assertTrue(parentProgress.assignedCourses.isEmpty())
+        assertEquals("child", parentProgress.subtreeAssignedCourses.single().groupId)
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+    }
+
+    @Test
+    fun nameOnlyRenameKeepsSameRawCodeAsOneLogicalCourse() {
+        val group = PlanFixtures.group(
+            id = "g-rename-no-target-code",
+            credits = "3",
+            courses = listOf(PlanCourseRef("M101", "Engineering Math")),
+            title = "缺目标码改名组"
+        )
+        val plan = PlanFixtures.plan(listOf(group)).copy(
+            renames = listOf(
+                CourseRename(
+                    was = PlanCourseRef(null, "Applied Math"),
+                    now = PlanCourseRef(null, "Engineering Math")
+                )
+            )
+        )
+        val attempts = listOf(
+            PlanFixtures.attempt("M101", name = "Applied Math", credits = "3", id = "old-title", academicYear = "2023-2024"),
+            PlanFixtures.attempt("M101", name = "Engineering Math", credits = "3", id = "new-title", academicYear = "2024-2025", attemptType = AttemptType.RETAKE)
+        )
+        val report = DegreeAuditor.audit(plan, attempts, emptyList(), now)
+        val progress = report.groupById("g-rename-no-target-code")!!
+        PlanFixtures.assertAmount("3", progress.earnedCredits, "目标 code 缺失时同一 raw code 仍是一门逻辑课程")
+        assertEquals(1, progress.assignedCourses.size)
+        PlanFixtures.assertAmount("3", report.totalEarnedCredits)
+    }
+
 }

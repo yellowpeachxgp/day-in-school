@@ -45,7 +45,9 @@ data class GroupProgress(
     val remainingCredits: BigDecimal,
     val surplusCredits: BigDecimal,
     val assignedCourses: List<CourseAssignment>,
-    val pendingCourses: List<PlanCourseRef>
+    val pendingCourses: List<PlanCourseRef>,
+    /** 本组子树内逐条入账来源（含后代组）；父组展开依据时使用，direct assignedCourses 语义不变。 */
+    val subtreeAssignedCourses: List<CourseAssignment> = emptyList()
 )
 
 /**
@@ -78,7 +80,7 @@ data class DegreeProgress(
  * 按培养方案统计毕业进度。规则（本地推导，UNVERIFIED，不代表任何学校的真实认定口径）：
  *
  * 1. 每组的 requiredCredits 是对其子树的汇总约束；子组成绩计入父组，但总量按递归最少要求计算，不重复累加；
- * 2. 一门课程只归入一个最直接归属组：先按课程代码匹配，再按课程名称匹配，同级按方案先序取第一个；
+ * 2. 一门课程只归入一个最直接归属组：先按课程代码匹配，再按课程名称匹配；后代/更深组优先于先序父组，同层按方案先序；
  * 3. 同一课程出现多条已修记录时按课程去重，学分只算一次；混合父组的直接课程参与匹配；
  * 4. 未匹配到任何组的课程进入「未归类」，不计入学分与缺口，也不做估算补齐；
  * 5. 总缺口是满足整棵要求树还需的增量学分：子组缺口可计入父组汇总，某组超额不能抵扣其他组缺口。
@@ -89,7 +91,14 @@ object DegreeProgressCalculator {
         val notes = mutableListOf<String>()
         val deduped = dedupe(completed, notes)
         val allGroups = plan.allGroups()
-        val courseBearingGroups = allGroups.filter { it.courses.isNotEmpty() }
+        val depthById = plan.groupDepths()
+        val preorderIndexById = allGroups.mapIndexed { index, group -> group.id to index }.toMap()
+        val courseBearingGroups = allGroups
+            .filter { it.courses.isNotEmpty() }
+            .sortedWith(
+                compareByDescending<RequirementGroup> { depthById[it.id] ?: 0 }
+                    .thenBy { preorderIndexById[it.id] ?: Int.MAX_VALUE }
+            )
 
         val assignmentsByGroup = LinkedHashMap<String, MutableList<CourseAssignment>>()
         allGroups.forEach { assignmentsByGroup[it.id] = mutableListOf() }
@@ -104,7 +113,7 @@ object DegreeProgressCalculator {
                 val others = candidates.drop(1).map { it.first.id }
                 if (others.isNotEmpty()) {
                     notes += "课程「${course.courseName}」可归入 ${candidates.size} 个要求组，" +
-                        "按方案先序归入「${chosen.first.title}」，其他组不重复计分"
+                        "按更深组优先/同层先序归入「${chosen.first.title}」，其他组不重复计分"
                 }
                 assignmentsByGroup.getValue(chosen.first.id) += CourseAssignment(
                     course = course,
@@ -122,6 +131,10 @@ object DegreeProgressCalculator {
         }
         val totals = RequirementTreeMath.analyze(plan, directEarnedByGroup)
         val visibleGroups = allGroups.filter(RequirementTreeMath::isProgressVisible)
+        fun subtreeAssignments(group: RequirementGroup): List<CourseAssignment> = buildList {
+            addAll(assignmentsByGroup.getValue(group.id))
+            group.children.forEach { addAll(subtreeAssignments(it)) }
+        }
         val groups = visibleGroups.map { group ->
             val assignments = assignmentsByGroup.getValue(group.id)
             val groupTotals = totals.getValue(group.id)
@@ -141,7 +154,8 @@ object DegreeProgressCalculator {
                 remainingCredits = remaining,
                 surplusCredits = surplus,
                 assignedCourses = assignments,
-                pendingCourses = pending
+                pendingCourses = pending,
+                subtreeAssignedCourses = subtreeAssignments(group)
             )
         }
 
@@ -196,14 +210,19 @@ object DegreeProgressCalculator {
         }
         if (byCode.isNotEmpty()) return byCode
         return groups.mapNotNull { group ->
-            val hit = group.courses.any { ref -> normalize(ref.name) == normalize(course.courseName) }
+            val hit = group.courses.any { ref -> matchesRef(course, ref) }
             if (hit) group to CourseMatchKind.NAME else null
         }
     }
 
     private fun matchesRef(course: CompletedCourse, ref: PlanCourseRef): Boolean {
-        val byCode = ref.code != null && normalize(ref.code) == normalize(course.courseKey)
-        return byCode || normalize(ref.name) == normalize(course.courseName)
+        val refCode = normalizedNonBlank(ref.code)
+        val courseCode = normalizedNonBlank(course.courseKey)
+        if (refCode != null && courseCode != null) {
+            // 同名不同码是不同课程；显式 code 冲突时不得退化为名称命中。
+            return refCode == courseCode
+        }
+        return normalize(ref.name) == normalize(course.courseName)
     }
 
     /** 同一课程的多条记录按课程去重，保留学分最高的一条，保证学分只入账一次。 */
@@ -224,6 +243,9 @@ object DegreeProgressCalculator {
         }
         return byKey.values.toList()
     }
+
+    private fun normalizedNonBlank(text: String?): String? =
+        text?.trim()?.takeIf { it.isNotEmpty() }?.lowercase(Locale.ROOT)
 
     private fun normalize(text: String): String = text.trim().lowercase(Locale.ROOT)
 }
