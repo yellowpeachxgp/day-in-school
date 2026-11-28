@@ -404,28 +404,28 @@ class VaultKnowledgeRepository internal constructor(
         SearchTextNormalizer.normalizePlain(query).split(' ').filter { it.isNotBlank() }
 
     private fun unitMatchesNormalizedText(normalizedText: String, unit: String, isQueryTail: Boolean): Boolean {
-        if (unit.any(::isCjkCharacter)) return normalizedText.contains(unit)
-        var index = normalizedText.indexOf(unit)
-        while (index >= 0) {
-            val end = index + unit.length
-            val leftBoundary = index == 0 ||
-                normalizedText[index - 1].isWhitespace() ||
-                isCjkCharacter(normalizedText[index - 1])
-            val rightBoundary = end == normalizedText.length ||
-                normalizedText[end].isWhitespace() ||
-                isCjkCharacter(normalizedText[end])
-            val tailPrefixContinuation = isQueryTail &&
-                unit.length >= 3 &&
-                end < normalizedText.length &&
-                isAsciiWordCharacter(normalizedText[end])
-            if (leftBoundary && (rightBoundary || tailPrefixContinuation)) return true
-            index = normalizedText.indexOf(unit, index + 1)
+        val textTokens = SearchTextNormalizer.normalize(normalizedText).tokens
+        val unitTokens = SearchTextNormalizer.normalize(unit).tokens
+        if (unitTokens.isEmpty() || unitTokens.size > textTokens.size) return false
+        for (start in 0..(textTokens.size - unitTokens.size)) {
+            var matched = true
+            unitTokens.forEachIndexed { tokenIndex, expected ->
+                val candidate = textTokens[start + tokenIndex]
+                val isLastUnitToken = tokenIndex == unitTokens.lastIndex
+                val prefixAllowed = isQueryTail &&
+                    isLastUnitToken &&
+                    expected.length >= 3 &&
+                    expected.none(::isCjkCharacter)
+                val tokenMatches = candidate == expected || (prefixAllowed && candidate.startsWith(expected))
+                if (!tokenMatches) {
+                    matched = false
+                    return@forEachIndexed
+                }
+            }
+            if (matched) return true
         }
         return false
     }
-
-    private fun isAsciiWordCharacter(char: Char): Boolean =
-        char in 'a'..'z' || char in '0'..'9' || char == '_'
 
     private fun isCjkCharacter(char: Char): Boolean = when (Character.UnicodeScript.of(char.code)) {
         Character.UnicodeScript.HAN,
