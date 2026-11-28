@@ -2,6 +2,7 @@ package cn.edu.haut.campus.feature.timetable
 
 import androidx.lifecycle.ViewModel
 import cn.edu.haut.campus.core.database.CampusRepository
+import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiEffect
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
@@ -49,10 +50,26 @@ class TimetableViewModel internal constructor(
         collect(repository.coursesFlow) { value -> _uiState.update { it.copy(courses = value) } }
         collect(repository.rulesFlow) { value -> _uiState.update { it.copy(scheduleRules = value) } }
         collect(repository.periodTimesFlow) { value -> _uiState.update { it.copy(periodTimes = value) } }
+        collect(repository.termRepository.periodTimeSchemesFlow) { value -> _uiState.update { it.copy(periodTimeSchemes = value) } }
         collect(repository.calendarOverridesFlow) { value -> _uiState.update { it.copy(calendarOverrides = value) } }
         collect(repository.occurrenceOverridesFlow) { value -> _uiState.update { it.copy(occurrenceOverrides = value) } }
         collect(repository.buildingsFlow) { value -> _uiState.update { it.copy(buildings = value) } }
-        collect(repository.unscheduledCoursesFlow) { value -> _uiState.update { it.copy(unscheduledCourses = value) } }
+        collect(repository.unscheduledCoursesFlow) { value ->
+            val uiRows = value.map { row ->
+                cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel(
+                    termId = row.termId,
+                    sourceKey = row.sourceKey,
+                    sourceId = row.sourceId,
+                    name = row.name,
+                    teacher = row.teacher,
+                    creditPlain = row.creditPlain,
+                    rawWeeks = row.rawWeeks,
+                    category = row.category,
+                    syncedAtEpochMilli = row.syncedAtEpochMilli
+                )
+            }
+            _uiState.update { it.copy(unscheduledCourses = uiRows) }
+        }
     }
 
     fun onAction(action: TimetableUiAction) {
@@ -186,17 +203,39 @@ class TimetableViewModel internal constructor(
                 operationToken = action.writeToken,
                 write = { repository.deleteCourseScheduleRule(action.ruleId) }
             )
-            is TimetableUiAction.SchedulePracticalCourse -> launchDurableOperation(
-                kind = TimetableWriteKind.SchedulePracticalCourse,
+            is TimetableUiAction.SaveBasePeriodTimes -> launchDurableOperation(
+                kind = TimetableWriteKind.SaveBasePeriodTimes,
                 operationToken = action.writeToken,
                 write = {
-                    repository.scheduleUnscheduledPracticalCourse(
-                        unscheduled = action.unscheduled,
-                        rawRoom = action.rawRoom,
-                        weekday = DayOfWeek.of(action.weekday),
-                        startPeriod = action.startPeriod,
-                        endPeriod = action.endPeriod,
-                        weeks = action.weeks
+                    repository.termRepository.saveBasePeriodTimes(action.timeTableId, action.periods)
+                }
+            )
+            is TimetableUiAction.SavePeriodTimeScheme -> launchDurableOperation(
+                kind = TimetableWriteKind.SavePeriodTimeScheme,
+                operationToken = action.writeToken,
+                write = {
+                    repository.termRepository.savePeriodTimeScheme(
+                        term = action.term,
+                        name = action.name,
+                        startDate = action.startDate,
+                        endDate = action.endDate,
+                        periods = action.periods,
+                        schemeId = action.schemeId
+                    )
+                }
+            )
+            is TimetableUiAction.DeletePeriodTimeScheme -> launchDurableOperation(
+                kind = TimetableWriteKind.DeletePeriodTimeScheme,
+                operationToken = action.writeToken,
+                write = { repository.termRepository.deletePeriodTimeScheme(action.schemeId) }
+            )
+            is TimetableUiAction.SchedulePracticalCourseMatrix -> launchDurableOperation(
+                kind = TimetableWriteKind.SchedulePracticalCourseMatrix,
+                operationToken = action.writeToken,
+                write = {
+                    repository.timetableRepository.scheduleUnscheduledPracticalCourseWithOccurrences(
+                        unscheduled = action.unscheduled.toEntity(),
+                        occurrences = action.occurrences
                     )
                 }
             )
@@ -219,6 +258,19 @@ class TimetableViewModel internal constructor(
             )
         }
     }
+
+    private fun cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel.toEntity() =
+        UnscheduledAcademicCourseEntity(
+            termId = termId,
+            sourceKey = sourceKey,
+            sourceId = sourceId,
+            name = name,
+            teacher = teacher,
+            creditPlain = creditPlain,
+            rawWeeks = rawWeeks,
+            category = category,
+            syncedAtEpochMilli = syncedAtEpochMilli
+        )
 
     private fun restoreCanceledGroup(action: TimetableUiAction.RestoreCanceledGroup) {
         val clickTermId = action.termId

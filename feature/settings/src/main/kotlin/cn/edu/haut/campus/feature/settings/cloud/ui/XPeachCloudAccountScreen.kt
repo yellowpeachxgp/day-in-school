@@ -1,0 +1,942 @@
+package cn.edu.haut.campus.feature.settings.cloud.ui
+
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import org.json.JSONArray
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.Button
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import cn.edu.haut.campus.core.campusservices.CampusCloudOidcHelper
+import cn.edu.haut.campus.core.campusservices.MobileAuthTransactionStart
+import cn.edu.haut.campus.core.campusservices.NativeOidcLoginResult
+import cn.edu.haut.campus.core.campusservices.XpeachCloudAccountProfile
+import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiAction
+import cn.edu.haut.campus.feature.settings.cloud.state.XPeachCloudUiState
+import cn.edu.haut.campus.feature.settings.plugin.state.PluginManagementUiAction
+import cn.edu.haut.campus.feature.settings.plugin.state.PluginManagementUiState
+import cn.edu.haut.campus.feature.settings.plugin.ui.PluginManagementScreen
+import cn.edu.haut.campus.core.designsystem.XPeachAlertDialog
+import cn.edu.haut.campus.core.designsystem.XPeachCard
+import cn.edu.haut.campus.core.designsystem.XPeachGlassSurface
+import cn.edu.haut.campus.core.designsystem.XPeachIconButton
+import cn.edu.haut.campus.core.designsystem.XPeachInsetDivider
+import cn.edu.haut.campus.core.designsystem.XPeachSegmentedTabs
+import cn.edu.haut.campus.core.designsystem.XPeachStatusBadge
+import cn.edu.haut.campus.core.designsystem.XPeachStatusDotText
+import cn.edu.haut.campus.core.designsystem.XPeachTheme
+import cn.edu.haut.campus.core.designsystem.XPeachTopBar
+import cn.edu.haut.campus.core.designsystem.XPeachWell
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+@Composable
+internal fun XPeachCloudAccountScreenContent(
+    state: XPeachCloudUiState,
+    actions: XPeachCloudUiAction,
+    onBack: () -> Unit,
+    onNavigateToCloudSeatBooking: () -> Unit = {},
+    pluginManagementState: PluginManagementUiState = PluginManagementUiState(),
+    onPluginManagementAction: (PluginManagementUiAction) -> Unit = {}
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+    val cloudBinding = state.cloudBinding
+    val bookingPlans = state.bookingPlans
+    val plugins = state.plugins
+
+    var selectedTab by remember { mutableIntStateOf(0) }
+    var showBindDialog by remember { mutableStateOf(false) }
+    var isSyncingSnapshot by remember { mutableStateOf(false) }
+    var feedbackBanner by remember { mutableStateOf<String?>(null) }
+
+    DisposableEffect(lifecycleOwner, showBindDialog) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME && !showBindDialog) {
+                val txn = CampusCloudOidcHelper.getLatestBrowserTxn() ?: return@LifecycleEventObserver
+                if (System.currentTimeMillis() > txn.expiresAtEpochMillis) {
+                    CampusCloudOidcHelper.clearLatestBrowserTxn()
+                    return@LifecycleEventObserver
+                }
+                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback(txn.loginTxn)
+                scope.launch {
+                    val ticket = deepLinkPair?.first ?: withContext(Dispatchers.IO) {
+                        CampusCloudOidcHelper.pollMobileAuthTransactionTicket(txn.loginTxn)
+                    }
+                    if (!ticket.isNullOrBlank()) {
+                        CampusCloudOidcHelper.clearLatestBrowserTxn()
+                        val res = withContext(Dispatchers.IO) {
+                            runCatching {
+                                CampusCloudOidcHelper.exchangeMobileTicketForAccount(
+                                    loginTxn = txn.loginTxn,
+                                    appTicket = ticket,
+                                    codeVerifier = txn.pkce.codeVerifier
+                                )
+                            }
+                        }
+                        res.onSuccess { profile ->
+                            val saved = actions.saveVerifiedXpeachCloudAccount(profile)
+                            runCatching { actions.syncWithCampusCloud() }
+                            feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
+                                saved.peachBalanceMicropeach / 10_000.0
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    LaunchedEffect(actions) {
+        actions.ensureDefaultReferencePluginsInstalled()
+        runCatching { actions.syncWithCampusCloud() }
+        actions.refreshXpeachWalletBalance()
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        XPeachTopBar(
+            title = "云账号与扩展",
+            subtitle = "云端定时抢座与扩展管理",
+            navigationIcon = {
+                XPeachIconButton(
+                    icon = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    onClick = onBack
+                )
+            }
+        )
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            XPeachSegmentedTabs(
+                items = listOf("我的云账号", "扩展功能 (${plugins.size})"),
+                selectedIndex = selectedTab,
+                onSelect = { selectedTab = it }
+            )
+
+            feedbackBanner?.let { msg ->
+                XPeachCard(containerColor = XPeachTheme.secondaryAccentCardColor) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = msg,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(onClick = { feedbackBanner = null }) {
+                            Text("知道了")
+                        }
+                    }
+                }
+            }
+
+            if (selectedTab == 0) {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "服务说明",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "课表、成绩、电费、快递与本机抢座无需登录云账号。登录 XPeach 云账号后即可使用 07:00 云端离线准点自动抢座（手机关机断网亦可准点执行，仅学校确认预约成功后消耗 1 🍑，未抢中不扣费）。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                val binding = cloudBinding
+                if (binding == null) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "未登录云账号",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "登录 XPeach 云账号即可启用云端离线准点自动抢座（关机断网亦可准点执行）",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Button(
+                                onClick = { showBindDialog = true },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("登录账号")
+                            }
+                            FilledTonalButton(
+                                onClick = onNavigateToCloudSeatBooking,
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("云端抢座工作台")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedButton(
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
+                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        }
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("打开网页端云端抢座")
+                        }
+                    }
+                } else {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = binding.displayName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "ID: ${binding.ssoSubject}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            XPeachStatusDotText(
+                                text = "已登录",
+                                dotColor = XPeachTheme.readablePrimary
+                            )
+                        }
+
+                        XPeachInsetDivider(verticalPadding = 10.dp)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            Text(
+                                text = "XPeach 余额",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "%.2f 🍑".format(
+                                    binding.peachBalanceMicropeach / 10_000.0
+                                ),
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = XPeachTheme.readablePrimary
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "云端抢座成功并经学校确认后消耗 1 🍑，未抢中或取消不扣费。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Button(
+                            onClick = onNavigateToCloudSeatBooking,
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("进入云端抢座工作台")
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FilledTonalButton(
+                            enabled = !isSyncingSnapshot,
+                            onClick = {
+                                scope.launch {
+                                    isSyncingSnapshot = true
+                                    val snap = actions.syncWithCampusCloud().getOrNull()
+                                    val refreshed = actions.refreshXpeachWalletBalance()
+                                    isSyncingSnapshot = false
+                                    if (snap != null || refreshed != null) {
+                                        val bal = snap?.peachBalance ?: refreshed ?: (binding.peachBalanceMicropeach / 10_000.0)
+                                        val summary = snap?.syncSummaryMessage?.takeIf { it.isNotBlank() } ?: "已完成云端同步"
+                                        feedbackBanner = "$summary（当前余额 %.2f 🍑）".format(bal)
+                                    } else {
+                                        feedbackBanner = "云端繁忙，已保留本地数据（当前余额 %.2f 🍑）".format(
+                                            binding.peachBalanceMicropeach / 10_000.0
+                                        )
+                                    }
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (isSyncingSnapshot) "正在同步云端数据…" else "同步云端数据")
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = {
+                                    scope.launch {
+                                        val refreshed = actions.refreshXpeachWalletBalance()
+                                        if (refreshed != null) {
+                                            feedbackBanner = "已同步最新余额：%.2f 🍑".format(refreshed)
+                                        } else {
+                                            feedbackBanner = "当前余额：%.2f 🍑".format(
+                                                binding.peachBalanceMicropeach / 10_000.0
+                                            )
+                                        }
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("刷新余额")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse("https://campus.yellowpeachxgp.com/reservations")).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("网页端")
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        actions.unlinkXpeachCloudAccountAndRevokeCloudPlans()
+                                        feedbackBanner = "已退出账号，并停止未执行的云端抢座任务"
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("退出账号", color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+
+                val cloudPlans = bookingPlans.filter { it.executionMode == "CLOUD_HOSTED" }
+                val hasNeedsReconfirmation = cloudPlans.any { it.status == "NEEDS_RECONFIRMATION" }
+                if (cloudPlans.isNotEmpty()) {
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "云端抢座记录 (${cloudPlans.size})",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            TextButton(onClick = onNavigateToCloudSeatBooking) {
+                                Text("管理抢座 ›")
+                            }
+                        }
+                        if (hasNeedsReconfirmation) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            FilledTonalButton(
+                                enabled = !isSyncingSnapshot,
+                                onClick = {
+                                    scope.launch {
+                                        isSyncingSnapshot = true
+                                        val res = actions.reconfirmAndRestoreCloudBookingPlans()
+                                        isSyncingSnapshot = false
+                                        feedbackBanner = res.fold(
+                                            onSuccess = { snap ->
+                                                "已重新确认学校授权并恢复云端同步（当前余额 %.2f 🍑）".format(snap.peachBalance)
+                                            },
+                                            onFailure = { err ->
+                                                err.message ?: "重新确认授权失败，请稍后重试"
+                                            }
+                                        )
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("重新确认授权并恢复云端同步")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        cloudPlans.forEachIndexed { idx, plan ->
+                            if (idx > 0) {
+                                XPeachInsetDivider(verticalPadding = 8.dp)
+                            } else {
+                                Spacer(modifier = Modifier.height(4.dp))
+                            }
+                            val friendlyStatus = when (plan.status) {
+                                "CONFIRMED" -> "抢座成功"
+                                "DELEGATION_STOPPED_SCHOOL_CONFIRMED" -> "委托已停止，但学校预约已成功（请核对或按需退座）"
+                                "DELEGATION_STOPPED_RESULT_UNKNOWN" -> "委托已停止，结果待核对"
+                                "RESULT_UNKNOWN" -> "结果待核对（核实前不重试、不扣费）"
+                                "SCHOOL_CANCELLED" -> "学校端已确认取消预约"
+                                "CANCEL_RESULT_UNKNOWN" -> "退座结果待核对"
+                                "NEEDS_RECONFIRMATION" -> "需要重新确认授权（点击上方按钮恢复同步）"
+                                "FINAL_CHECK_OK" -> "就绪检查通过，等待准点抢座"
+                                "PRECHECK_OK" -> "已完成登录保活，等待开抢"
+                                "ARMED" -> "定时任务待命（未命中不消耗配额）"
+                                "CANCELLED" -> "已停止委托（未消耗配额）"
+                                else -> plan.lastDiagnosticMessage ?: "处理中"
+                            }
+                            val payLabel = when (plan.paymentState) {
+                                "PAID" -> "已结算 (${plan.priceMicropeach / 10_000.0} 🍑)"
+                                "HELD_PENDING_REVIEW" -> "未自动扣费（待核对）"
+                                "REFUNDED" -> "已退还 🍑"
+                                "DEBIT_PENDING" -> "成功后扣除 1 🍑"
+                                "PAYMENT_DUE" -> "余额不足待补齐"
+                                else -> "未扣费"
+                            }
+                            val areaText = plan.preferredAreaName.trim().takeIf {
+                                it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+                            } ?: "图书馆自习区"
+                            val seatText = plan.preferredSeatLabel.trim().takeIf {
+                                it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+                            } ?: "自动优选"
+                            val dotColor = when (plan.status) {
+                                "CONFIRMED" -> MaterialTheme.colorScheme.tertiary
+                                "DELEGATION_STOPPED_SCHOOL_CONFIRMED",
+                                "DELEGATION_STOPPED_RESULT_UNKNOWN",
+                                "RESULT_UNKNOWN",
+                                "CANCEL_RESULT_UNKNOWN",
+                                "NEEDS_RECONFIRMATION" -> MaterialTheme.colorScheme.error
+                                "CANCELLED", "SCHOOL_CANCELLED" -> MaterialTheme.colorScheme.outline
+                                else -> XPeachTheme.readablePrimary
+                            }
+
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val repeatTag = if (plan.repeatDays > 1) {
+                                        " · 连续${plan.repeatDays}天(剩${plan.remainingDays}天)"
+                                    } else {
+                                        ""
+                                    }
+                                    Text(
+                                        text = "${plan.targetLocalDate} ${plan.targetLocalTime}$repeatTag",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .padding(end = 8.dp)
+                                    )
+                                    Text(
+                                        text = payLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = XPeachTheme.readablePrimary,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                Text(
+                                    text = "$areaText · ${seatText}号座",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                XPeachStatusDotText(
+                                    text = friendlyStatus,
+                                    dotColor = dotColor
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "校园扩展功能",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(end = 10.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "按需开启或关闭驿站卡片、图书馆座位快捷提示等附加功能。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                PluginManagementScreen(
+                    state = pluginManagementState,
+                    onAction = onPluginManagementAction
+                )
+
+                val legacyUnverifiedPlugins = plugins.filter { it.status == "LEGACY_UNVERIFIED" }
+                legacyUnverifiedPlugins.forEach { legacy ->
+                    XPeachCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 10.dp)) {
+                                Text(
+                                    text = legacy.name,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "未验证遗留扩展 · 不会渲染；只能移除",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        actions.removeExtensionPlugin(legacy.pluginId)
+                                        feedbackBanner = "已移除未验证遗留扩展"
+                                    }
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("移除", color = MaterialTheme.colorScheme.error) }
+                        }
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(32.dp))
+        }
+    }
+
+    if (showBindDialog) {
+        XpeachNativeOidcLoginDialog(
+            installEphemeralId = "eph_${actions.profileId}",
+            onDismiss = { showBindDialog = false },
+            onBound = { profile ->
+                scope.launch {
+                    val saved = actions.saveVerifiedXpeachCloudAccount(profile)
+                    runCatching { actions.syncWithCampusCloud() }
+                    showBindDialog = false
+                    feedbackBanner = "已登录并同步 XPeach 账户：${saved.displayName}（余额 🍑 %.2f）".format(
+                        saved.peachBalanceMicropeach / 10_000.0
+                    )
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun XpeachNativeOidcLoginDialog(
+    installEphemeralId: String,
+    onDismiss: () -> Unit,
+    onBound: (XpeachCloudAccountProfile) -> Unit
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val scope = rememberCoroutineScope()
+
+    var identifierInput by remember { mutableStateOf("") }
+    var passwordInput by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var totpInput by remember { mutableStateOf("") }
+    var needsTotp by remember { mutableStateOf(false) }
+
+    var isSubmitting by remember { mutableStateOf(false) }
+    var statusHint by remember { mutableStateOf("输入 XPeach 账号密码登录后将自动同步 🍑 余额与云端抢座计划") }
+    var errorHint by remember { mutableStateOf<String?>(null) }
+
+    var activeBrowserTxn by remember { mutableStateOf<MobileAuthTransactionStart?>(null) }
+
+    fun exchangeTicketAndBind(ticket: String, txn: MobileAuthTransactionStart) {
+        if (isSubmitting) return
+        isSubmitting = true
+        errorHint = null
+        statusHint = "授权成功，正在同步您的昵称与 🍑 余额…"
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    CampusCloudOidcHelper.exchangeMobileTicketForAccount(
+                        loginTxn = txn.loginTxn,
+                        appTicket = ticket.trim(),
+                        codeVerifier = txn.pkce.codeVerifier
+                    )
+                }
+            }
+            isSubmitting = false
+            result.fold(
+                onSuccess = { profile ->
+                    CampusCloudOidcHelper.clearLatestBrowserTxn()
+                    onBound(profile)
+                },
+                onFailure = { err ->
+                    errorHint = "登录同步失败：${err.message}"
+                }
+            )
+        }
+    }
+
+    DisposableEffect(lifecycleOwner, activeBrowserTxn) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val deepLinkPair = CampusCloudOidcHelper.consumeDeepLinkCallback()
+                val currentTxn = activeBrowserTxn
+                if (deepLinkPair != null && currentTxn != null) {
+                    exchangeTicketAndBind(deepLinkPair.first, currentTxn)
+                } else if (currentTxn != null && !isSubmitting) {
+                    scope.launch {
+                        val polledTicket = withContext(Dispatchers.IO) {
+                            CampusCloudOidcHelper.pollMobileAuthTransactionTicket(currentTxn.loginTxn)
+                        }
+                        if (!polledTicket.isNullOrBlank()) {
+                            exchangeTicketAndBind(polledTicket, currentTxn)
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun submitNativeLogin() {
+        if (isSubmitting) return
+        if (identifierInput.isBlank() || passwordInput.isBlank()) {
+            errorHint = "请输入 XPeach 用户名（或邮箱）与登录密码"
+            return
+        }
+        if (needsTotp && totpInput.trim().length < 6) {
+            errorHint = "请输入 6 位两步验证码（或 2FA 恢复码）"
+            return
+        }
+        isSubmitting = true
+        errorHint = null
+        statusHint = "正在验证账号并同步 🍑 余额…"
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                CampusCloudOidcHelper.loginWithNativeOidcCredentials(
+                    identifier = identifierInput.trim(),
+                    password = passwordInput,
+                    totpCode = totpInput.trim().takeIf { it.isNotEmpty() },
+                    installEphemeralId = installEphemeralId
+                )
+            }
+            isSubmitting = false
+            when (res) {
+                is NativeOidcLoginResult.Success -> {
+                    onBound(res.profile)
+                }
+                is NativeOidcLoginResult.TotpRequired -> {
+                    needsTotp = true
+                    statusHint = "密码验证通过，请继续输入 6 位两步验证码"
+                    errorHint = res.message
+                }
+                is NativeOidcLoginResult.Failure -> {
+                    errorHint = res.message
+                    statusHint = "请核对账号信息后重试"
+                }
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        XPeachGlassSurface(
+            modifier = Modifier
+                .fillMaxWidth(0.92f),
+            shape = RoundedCornerShape(22.dp),
+            containerColor = XPeachTheme.dialogSurfaceColor
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Text(
+                            text = "登录云账号",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = statusHint,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(
+                        enabled = !isSubmitting,
+                        onClick = onDismiss,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text("关闭")
+                    }
+                }
+
+                if (isSubmitting) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+
+                errorHint?.let { err ->
+                    XPeachCard(containerColor = XPeachTheme.errorAccentCardColor) {
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = identifierInput,
+                    onValueChange = { identifierInput = it },
+                    label = { Text("用户名或邮箱") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isSubmitting,
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Email,
+                        imeAction = ImeAction.Next
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = passwordInput,
+                    onValueChange = { passwordInput = it },
+                    label = { Text("登录密码") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    enabled = !isSubmitting,
+                    visualTransformation = if (showPassword) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        TextButton(
+                            onClick = { showPassword = !showPassword },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(if (showPassword) "隐藏" else "显示")
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Password,
+                        imeAction = if (needsTotp) ImeAction.Next else ImeAction.Done
+                    ),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (needsTotp) {
+                    OutlinedTextField(
+                        value = totpInput,
+                        onValueChange = { totpInput = it.trim() },
+                        label = { Text("两步验证码 (6 位动态码或恢复码)") },
+                        placeholder = { Text("请输入身份验证器中的 6 位动态码") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isSubmitting,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.NumberPassword,
+                            imeAction = ImeAction.Done
+                        ),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(
+                            onClick = { needsTotp = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text("开启了两步验证？点击填写验证码")
+                        }
+                    }
+                }
+
+                Button(
+                    enabled = !isSubmitting && identifierInput.isNotBlank() && passwordInput.isNotBlank(),
+                    onClick = { submitNativeLogin() },
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(if (isSubmitting) "正在登录…" else "登录")
+                }
+
+                XPeachInsetDivider(verticalPadding = 4.dp)
+
+                OutlinedButton(
+                    enabled = !isSubmitting,
+                    onClick = {
+                        scope.launch {
+                            isSubmitting = true
+                            errorHint = null
+                            statusHint = "正在打开浏览器授权…"
+                            val res = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    CampusCloudOidcHelper.startRemoteMobileAuthTransaction(
+                                        installEphemeralId = installEphemeralId
+                                    )
+                                }
+                            }
+                            isSubmitting = false
+                            res.fold(
+                                onSuccess = { txn ->
+                                    activeBrowserTxn = txn
+                                    statusHint = "请在系统浏览器完成授权，完成后将自动跳回 App"
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(txn.authorizeUrl)).apply {
+                                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                        )
+                                    }
+                                },
+                                onFailure = { err ->
+                                    errorHint = "无法发起浏览器授权：${err.message}"
+                                }
+                            )
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("通行密钥 / 浏览器授权登录")
+                }
+            }
+        }
+    }
+}
+
+private fun parsePluginSlotSummary(uiSlotsJson: String): Pair<String, String>? {
+    return runCatching {
+        val arr = JSONArray(uiSlotsJson)
+        if (arr.length() == 0) return null
+        val obj = arr.optJSONObject(0) ?: return null
+        val title = obj.optString("title").trim()
+        val subtitle = obj.optString("subtitle").trim()
+        if (title.isEmpty() && subtitle.isEmpty()) null else (title to subtitle)
+    }.getOrNull()
+}

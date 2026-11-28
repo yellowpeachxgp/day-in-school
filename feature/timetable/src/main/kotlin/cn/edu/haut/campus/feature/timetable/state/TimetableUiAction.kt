@@ -1,10 +1,12 @@
 package cn.edu.haut.campus.feature.timetable.state
 
-import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.OccurrenceRule
+import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.Term
 import java.time.LocalDate
 
 /** 课表页用户意图。UI 只发送动作，不直接触碰 Repository、平台单例或导航回调。 */
@@ -93,13 +95,28 @@ sealed interface TimetableUiAction {
         val writeToken: String? = null
     ) : TimetableUiAction
 
-    data class SchedulePracticalCourse(
-        val unscheduled: UnscheduledAcademicCourseEntity,
-        val rawRoom: String,
-        val weekday: Int,
-        val startPeriod: Int,
-        val endPeriod: Int,
-        val weeks: Set<Int>,
+    data class SaveBasePeriodTimes(
+        val timeTableId: String,
+        val periods: List<PeriodTime>,
+        val writeToken: String? = null
+    ) : TimetableUiAction
+    data class SavePeriodTimeScheme(
+        val term: Term,
+        val schemeId: String?,
+        val name: String,
+        val startDate: LocalDate,
+        val endDate: LocalDate,
+        val periods: List<PeriodTime>,
+        val writeToken: String? = null
+    ) : TimetableUiAction
+    data class DeletePeriodTimeScheme(
+        val schemeId: String,
+        val writeToken: String? = null
+    ) : TimetableUiAction
+
+    data class SchedulePracticalCourseMatrix(
+        val unscheduled: UnscheduledPracticalCourseUiModel,
+        val occurrences: List<OccurrenceRule>,
         val writeToken: String? = null
     ) : TimetableUiAction
     data class AddManualCourse(

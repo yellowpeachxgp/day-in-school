@@ -491,124 +491,442 @@ endpoints:
     operationId: createGroup
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: GET
     path: /api/v1/groups
     operationId: listGroups
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: GET
     path: /api/v1/groups/{groupId}
     operationId: getGroup
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: PATCH
     path: /api/v1/groups/{groupId}
     operationId: updateGroup
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: DELETE
     path: /api/v1/groups/{groupId}
     operationId: deleteGroup
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: POST
     path: /api/v1/groups/{groupId}/invites
     operationId: createGroupInvite
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: POST
     path: /api/v1/group-invites/{code}/accept
     operationId: acceptGroupInvite
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: DELETE
     path: /api/v1/groups/{groupId}/invites/{inviteId}
     operationId: revokeGroupInvite
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: GET
     path: /api/v1/groups/{groupId}/members
     operationId: listGroupMembers
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: PATCH
     path: /api/v1/groups/{groupId}/members/{memberId}
     operationId: updateGroupMember
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: DELETE
     path: /api/v1/groups/{groupId}/members/{memberId}
     operationId: removeGroupMember
     auth: bearer
     owner: community
-    status: planned
-    contract_card: CT-01
+    status: active
   - method: PUT
     path: /api/v1/groups/{groupId}/availability/me
     operationId: replaceMyGroupAvailability
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: DELETE
     path: /api/v1/groups/{groupId}/availability/me
     operationId: deleteMyGroupAvailability
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: POST
     path: /api/v1/groups/{groupId}/availability/query
     operationId: queryGroupAvailability
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: POST
     path: /api/v1/groups/{groupId}/polls
     operationId: createGroupPoll
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: GET
     path: /api/v1/polls/{pollId}
     operationId: getGroupPoll
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: POST
     path: /api/v1/polls/{pollId}/votes
     operationId: upsertGroupPollVote
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
   - method: POST
     path: /api/v1/polls/{pollId}/confirm
     operationId: confirmGroupPoll
     auth: bearer
     owner: availability
-    status: planned
-    contract_card: CT-02
+    status: active
+  - method: POST
+    path: /api/v1/groups/{groupId}/ledger/entries
+    operationId: createLedgerEntry
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/ledger/entries
+    operationId: listLedgerEntries
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/groups/{groupId}/ledger/entries/{entryId}/amend
+    operationId: amendLedgerEntry
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/ledger/balances
+    operationId: getLedgerBalances
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/groups/{groupId}/settlements
+    operationId: createSettlement
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/settlements
+    operationId: listSettlements
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/settlements/{settlementId}
+    operationId: getSettlement
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/settlements/{settlementId}/confirm
+    operationId: confirmSettlement
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/settlements/{settlementId}/cancel
+    operationId: cancelSettlement
+    auth: bearer
+    owner: ledger
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/groups/{groupId}/rotas
+    operationId: createDutyRota
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/rotas
+    operationId: listDutyRotas
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/rotas/{rotaId}
+    operationId: getDutyRota
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: PATCH
+    path: /api/v1/rotas/{rotaId}
+    operationId: updateDutyRota
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/duty-tasks
+    operationId: listDutyTasks
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/duty-tasks/{taskId}/complete
+    operationId: completeDutyTask
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/duty-tasks/{taskId}/confirm
+    operationId: confirmDutyTaskCompletion
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/duty-tasks/{taskId}/skip
+    operationId: skipDutyTask
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/rotas/{rotaId}/swaps
+    operationId: requestDutySwap
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/rotas/{rotaId}/swaps
+    operationId: listDutySwaps
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/duty-swaps/{swapId}
+    operationId: getDutySwap
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/duty-swaps/{swapId}/resolve
+    operationId: resolveDutySwap
+    auth: bearer
+    owner: duty
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/groups/{groupId}/repairs
+    operationId: createRepairTicket
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/groups/{groupId}/repairs
+    operationId: listRepairTickets
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: GET
+    path: /api/v1/repairs/{repairId}
+    operationId: getRepairTicket
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: PATCH
+    path: /api/v1/repairs/{repairId}
+    operationId: updateRepairTicket
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/repairs/{repairId}/status
+    operationId: transitionRepairStatus
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/repairs/{repairId}/review
+    operationId: submitRepairReview
+    auth: bearer
+    owner: repair
+    status: active
+    contract_card: CT-03
+  - method: POST
+    path: /api/v1/places/{placeRef}/reports
+    operationId: createPlaceStatusReport
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: GET
+    path: /api/v1/places/{placeRef}/reports
+    operationId: listPlaceStatusReports
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: GET
+    path: /api/v1/places/status
+    operationId: queryPlaceStatus
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: POST
+    path: /api/v1/places/status/subscriptions
+    operationId: createPlaceStatusSubscription
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: GET
+    path: /api/v1/places/status/subscriptions
+    operationId: listPlaceStatusSubscriptions
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: DELETE
+    path: /api/v1/places/status/subscriptions/{subscriptionId}
+    operationId: deletePlaceStatusSubscription
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: POST
+    path: /api/v1/place-reports/{reportId}/flag
+    operationId: flagPlaceStatusReport
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: GET
+    path: /api/v1/admin/place-report-flags
+    operationId: listPlaceReportFlags
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: POST
+    path: /api/v1/admin/place-report-flags/{flagId}/review
+    operationId: reviewPlaceReportFlag
+    auth: bearer
+    owner: place-status
+    status: active
+    contract_card: CT-04
+  - method: GET
+    path: /api/v1/boards
+    operationId: listBoards
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: GET
+    path: /api/v1/boards/{boardId}/posts
+    operationId: listBoardPosts
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/posts
+    operationId: createPost
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: GET
+    path: /api/v1/posts/{postId}
+    operationId: getPost
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: DELETE
+    path: /api/v1/posts/{postId}
+    operationId: deletePost
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/posts/{postId}/replies
+    operationId: createPostReply
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: GET
+    path: /api/v1/search/posts
+    operationId: searchPosts
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/reports
+    operationId: createReport
+    auth: public
+    owner: ugc
+    status: reserved
+    contract_card: CT-05
+  - method: GET
+    path: /api/v1/admin/moderation/queue
+    operationId: listModerationQueue
+    auth: public
+    owner: moderation
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/admin/moderation/{itemId}/actions
+    operationId: createModerationAction
+    auth: public
+    owner: moderation
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/media/uploads
+    operationId: createMediaUpload
+    auth: public
+    owner: media
+    status: reserved
+    contract_card: CT-05
+  - method: POST
+    path: /api/v1/media/uploads/{uploadId}/complete
+    operationId: completeMediaUpload
+    auth: public
+    owner: media
+    status: reserved
+    contract_card: CT-05

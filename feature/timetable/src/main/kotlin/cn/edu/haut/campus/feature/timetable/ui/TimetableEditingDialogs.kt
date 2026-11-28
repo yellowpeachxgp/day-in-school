@@ -58,6 +58,7 @@ import java.time.LocalDate
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiAction
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteCompletion
 import cn.edu.haut.campus.feature.timetable.state.TimetableWriteKind
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 
 @Composable
 internal fun TimetableEditingDialogs(
@@ -67,7 +68,7 @@ internal fun TimetableEditingDialogs(
     onEditingMasterRuleDismiss: () -> Unit,
     confirmDeleteMasterRule: CourseScheduleRule?,
     onConfirmDeleteMasterRuleChange: (CourseScheduleRule?) -> Unit,
-    schedulingPracticalCourse: cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity?,
+    schedulingPracticalCourse: UnscheduledPracticalCourseUiModel?,
     onSchedulingPracticalCourseDismiss: () -> Unit,
     showAddCourseDialog: Boolean,
     onAddCourseDialogDismiss: () -> Unit,
@@ -772,205 +773,11 @@ internal fun TimetableEditingDialogs(
 
     val pracToSchedule = schedulingPracticalCourse
     if (pracToSchedule != null) {
-        var pracRoom by remember(pracToSchedule) { mutableStateOf("实践场地") }
-        var pracWeekday by remember(pracToSchedule) { mutableIntStateOf(today.dayOfWeek.value) }
-        var pracStartPeriod by remember(pracToSchedule) { mutableStateOf("1") }
-        var pracEndPeriod by remember(pracToSchedule) { mutableStateOf("2") }
-        var pracError by remember(pracToSchedule) { mutableStateOf<String?>(null) }
-        var pracWeeks by remember(pracToSchedule) {
-            mutableStateOf(
-                pracToSchedule.rawWeeks.takeIf { it.isNotBlank() && WeeksSetParser.parse(it).isNotEmpty() }
-                    ?: "1-16周"
-            )
-        }
-        val writeLifecycle = rememberTimetableWriteLifecycle(
-            key = pracToSchedule,
+        PracticeCourseScheduleMatrixDialog(
+            unscheduled = pracToSchedule,
             writeCompletions = writeCompletions,
-            onConsumeCompletion = { token ->
-                onAction(TimetableUiAction.ConsumeWriteCompletion(token))
-            },
-            onWriteSuccess = onSchedulingPracticalCourseDismiss
-        )
-        val writePending = writeLifecycle.pending
-        XPeachAlertDialog(
-            onDismissRequest = { if (!writePending) onSchedulingPracticalCourseDismiss() },
-            title = { Text("设置实践课时间") },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = pracToSchedule.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        color = XPeachTheme.readablePrimary
-                    )
-                    Text(
-                        text = listOfNotNull(
-                            pracToSchedule.teacher?.takeIf { it.isNotBlank() }?.let { "教师：$it" },
-                            pracToSchedule.creditPlain?.takeIf { it.isNotBlank() }?.let { "${it}学分" },
-                            pracToSchedule.rawWeeks.takeIf { it.isNotBlank() }?.let { "教务周次：$it" }
-                        ).joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = pracRoom,
-                        onValueChange = { pracRoom = it },
-                        label = { Text("上课教室 / 实践场地") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        text = "星期",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        val dayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-                        for (d in 1..7) {
-                            XPeachFilterPill(
-                                label = dayLabels[d - 1],
-                                selected = pracWeekday == d,
-                                onClick = { pracWeekday = d }
-                            )
-                        }
-                    }
-                    Text(
-                        text = "节次",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        for ((sp, ep) in listOf("1" to "2", "3" to "4", "5" to "6", "7" to "8", "9" to "10", "11" to "12", "1" to "4", "5" to "8")) {
-                            XPeachFilterPill(
-                                label = "${sp}-${ep}节",
-                                selected = pracStartPeriod == sp && pracEndPeriod == ep,
-                                onClick = {
-                                    pracStartPeriod = sp
-                                    pracEndPeriod = ep
-                                }
-                            )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedTextField(
-                            value = pracStartPeriod,
-                            onValueChange = { pracStartPeriod = it.filter(Char::isDigit).take(2) },
-                            label = { Text("起始节(1-12)") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        )
-                        OutlinedTextField(
-                            value = pracEndPeriod,
-                            onValueChange = { pracEndPeriod = it.filter(Char::isDigit).take(2) },
-                            label = { Text("结束节(1-12)") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Text(
-                        text = "周次",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        for ((label, expr) in listOf(
-                            "1-16周" to "1-16周",
-                            "单周" to "1,3,5,7,9,11,13,15周",
-                            "双周" to "2,4,6,8,10,12,14,16周",
-                            "前8周" to "1-8周",
-                            "后8周" to "9-16周"
-                        )) {
-                            XPeachFilterPill(
-                                label = label,
-                                selected = pracWeeks == expr,
-                                onClick = { pracWeeks = expr }
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        value = pracWeeks,
-                        onValueChange = { pracWeeks = it },
-                        label = { Text("周次范围（如 14-16周 或 10周）") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    (pracError ?: writeLifecycle.errorMessage)?.let {
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        // 输入校验：非法节次/空周次明确提示，不静默兜底保存错误排课
-                        val spRaw = pracStartPeriod.trim().toIntOrNull()
-                        val epRaw = pracEndPeriod.trim().toIntOrNull()
-                        val parsedWeeks = WeeksSetParser.parse(pracWeeks)
-                        pracError = when {
-                            spRaw == null || spRaw !in 1..12 -> "开始节次必须是 1-12 的数字"
-                            epRaw == null || epRaw !in 1..12 -> "结束节次必须是 1-12 的数字"
-                            epRaw < spRaw -> "结束节次不能小于开始节次"
-                            parsedWeeks.isEmpty() -> "请填写有效周次范围（如 14-16周 或 10周）"
-                            parsedWeeks.any { it !in 1..30 } -> "周次必须在 1-30 之间"
-                            else -> null
-                        }
-                        if (pracError != null) return@Button
-                        val writeToken = writeLifecycle.begin(TimetableWriteKind.SchedulePracticalCourse)
-                        onAction(
-                            TimetableUiAction.SchedulePracticalCourse(
-                                unscheduled = pracToSchedule,
-                                rawRoom = pracRoom.trim().ifBlank { "实践场地" },
-                                weekday = pracWeekday,
-                                startPeriod = checkNotNull(spRaw),
-                                endPeriod = checkNotNull(epRaw),
-                                weeks = parsedWeeks,
-                                writeToken = writeToken
-                            )
-                        )
-                    },
-                    enabled = !writePending,
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text(if (writePending) "写入中…" else "排入课表")
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { onSchedulingPracticalCourseDismiss() },
-                    enabled = !writePending
-                ) {
-                    Text("取消")
-                }
-            }
+            onDismiss = onSchedulingPracticalCourseDismiss,
+            onAction = onAction
         )
     }
 

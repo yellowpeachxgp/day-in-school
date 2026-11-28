@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.academic.HautAcademicEndpoints
 import cn.edu.haut.campus.core.domain.CampusDiningRecommender
 import cn.edu.haut.campus.core.domain.ClassroomBuildingResolver
 import cn.edu.haut.campus.core.domain.ImportDiffEngine
+import cn.edu.haut.campus.core.domain.PeriodTimeEditor
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.BuildingAlias
 import cn.edu.haut.campus.core.model.Course
@@ -16,6 +17,7 @@ import cn.edu.haut.campus.core.model.ImportChangeType
 import cn.edu.haut.campus.core.model.ImportCourseCandidate
 import cn.edu.haut.campus.core.model.ImportDiffPreview
 import cn.edu.haut.campus.core.model.OccurrenceOverride
+import cn.edu.haut.campus.core.model.OccurrenceRule
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
@@ -465,6 +467,151 @@ class TimetableRepository internal constructor(
                     r.weeksCsv == weeks.sorted().joinToString(",")
             }
             if (!identicalSlotExists) {
+                dao.upsertRule(rule.toEntity())
+            }
+            dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)
+        }
+        notifyScheduleOrPolicyChanged("PRACTICAL_COURSE_SCHEDULED")
+    }
+
+    /**
+     * 以「周次 × 星期 × 节次/自定义时间 × 地点」矩阵一次性设置实践课多日排课。
+     * 与 legacy 单条追加入口不同，本入口把该实践课视作一个完整用户编辑矩阵：
+     * 未变化的规则保留原 ruleId（保留单日覆盖关联），移除的规则连同其规则级覆盖删除，
+     * 全部校验、课程行、规则增删与待定项清除都在同一 Room 事务内完成。
+     */
+    suspend fun scheduleUnscheduledPracticalCourseWithOccurrences(
+        unscheduled: UnscheduledAcademicCourseEntity,
+        occurrences: List<OccurrenceRule>,
+        colorArgb: Long = 0xFF0D9488
+    ) {
+        require(unscheduled.termId.isNotBlank()) { "实践课学期不能为空" }
+        require(unscheduled.sourceKey.isNotBlank()) { "实践课来源标识不能为空" }
+        val validOccurrences = PeriodTimeEditor.requireValidOccurrenceRules(occurrences)
+        val buildings = dao.getBuildingsSnapshot().map { it.toDomain() }
+        val aliases = dao.getBuildingAliasesSnapshot().map { it.toDomain() }
+        val now = Instant.now()
+        val stablePracticalExternalId = "sjk:${unscheduled.termId}:${unscheduled.sourceKey}"
+
+        fun fingerprint(
+            weekdayIso: Int,
+            startPeriod: Int,
+            endPeriod: Int,
+            weeksCsv: String,
+            rawRoom: String,
+            customStartTimeIso: String?,
+            customEndTimeIso: String?
+        ): String = listOf(
+            weekdayIso,
+            startPeriod,
+            endPeriod,
+            weeksCsv,
+            rawRoom.trim(),
+            customStartTimeIso.orEmpty(),
+            customEndTimeIso.orEmpty()
+        ).joinToString("|")
+
+        database.withTransaction {
+            val existingCourse = dao.getCoursesSnapshot()
+                .map { it.toDomain() }
+                .firstOrNull { c ->
+                    c.source == CourseSource.OFFICIAL_JW && c.externalId == stablePracticalExternalId
+                }
+            val courseId = existingCourse?.id ?: "c_prac_${UUID.randomUUID().toString().take(8)}"
+            val course = existingCourse?.copy(
+                teacher = unscheduled.teacher?.takeIf { it.isNotBlank() } ?: existingCourse.teacher,
+                credit = unscheduled.creditPlain?.toBigDecimalOrNull() ?: existingCourse.credit,
+                userModified = true,
+                lastSyncAt = now
+            ) ?: Course(
+                id = courseId,
+                externalId = stablePracticalExternalId,
+                name = unscheduled.name,
+                teacher = unscheduled.teacher?.takeIf { it.isNotBlank() },
+                colorArgb = colorArgb,
+                credit = unscheduled.creditPlain?.toBigDecimalOrNull(),
+                source = CourseSource.OFFICIAL_JW,
+                userModified = true,
+                lastSyncAt = now
+            )
+
+            val existingRuleEntities = dao.getRulesSnapshot()
+                .filter { it.courseId == courseId && it.termId == unscheduled.termId }
+            val existingByFingerprint = existingRuleEntities.associateBy { entity ->
+                fingerprint(
+                    entity.weekdayIso,
+                    entity.startPeriod,
+                    entity.endPeriod,
+                    entity.weeksCsv,
+                    entity.rawRoom,
+                    entity.customStartTimeIso,
+                    entity.customEndTimeIso
+                )
+            }
+
+            val desired = validOccurrences.map { occurrence ->
+                val cleanRoom = occurrence.rawRoom.trim()
+                val resolved = ClassroomBuildingResolver.resolve(cleanRoom, buildings, aliases)
+                val weeksCsv = occurrence.weeks.sorted().joinToString(",")
+                val key = fingerprint(
+                    occurrence.weekday.value,
+                    occurrence.startPeriod,
+                    occurrence.endPeriod,
+                    weeksCsv,
+                    cleanRoom,
+                    occurrence.customStartTime?.toString(),
+                    occurrence.customEndTime?.toString()
+                )
+                val preservedId = existingByFingerprint[key]?.id
+                key to CourseScheduleRule(
+                    id = preservedId ?: "r_prac_${UUID.randomUUID().toString().take(8)}",
+                    courseId = courseId,
+                    termId = unscheduled.termId,
+                    weekday = occurrence.weekday,
+                    startPeriod = occurrence.startPeriod,
+                    endPeriod = occurrence.endPeriod,
+                    weeks = occurrence.weeks,
+                    rawRoom = cleanRoom,
+                    buildingId = resolved.building?.id,
+                    customStartTime = occurrence.customStartTime,
+                    customEndTime = occurrence.customEndTime,
+                    userModified = true
+                )
+            }
+            val desiredIds = desired.map { it.second.id }.toSet()
+            val removedRuleIds = existingRuleEntities.mapNotNull { old ->
+                old.id.takeIf { it !in desiredIds }
+            }.toSet()
+            val allOverrides = dao.getOccurrenceOverridesSnapshot()
+            // 与通用规则删除入口同一安全口径：若矩阵编辑移除调课 SOURCE 所属规则，
+            // 同事务清理失去全部 SOURCE 的 TARGET，避免旧调入课在新矩阵外凭空复活。
+            val moveIdsLosingSources = allOverrides
+                .filter { ov ->
+                    !ov.moveId.isNullOrBlank() &&
+                        ov.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE &&
+                        ov.courseRuleId != null && ov.courseRuleId in removedRuleIds
+                }
+                .associate { it.moveId!! to it.termId }
+            for (old in existingRuleEntities) {
+                if (old.id in removedRuleIds) {
+                    dao.deleteRuleById(old.id)
+                    dao.deleteOccurrenceOverridesByRuleId(old.id)
+                }
+            }
+            for ((moveId, termOfMove) in moveIdsLosingSources) {
+                val remaining = dao.getOccurrenceOverridesForMove(termOfMove, moveId)
+                val hasSurvivingSource = remaining.any {
+                    it.moveRole == OccurrenceOverride.MOVE_ROLE_SOURCE && it.courseRuleId != null
+                }
+                if (!hasSurvivingSource) {
+                    for (orphan in remaining) {
+                        dao.deleteOccurrenceOverrideById(orphan.id)
+                    }
+                }
+            }
+
+            dao.upsertCourse(course.toEntity())
+            for ((_, rule) in desired) {
                 dao.upsertRule(rule.toEntity())
             }
             dao.deleteUnscheduledCourseByKey(unscheduled.termId, unscheduled.sourceKey)

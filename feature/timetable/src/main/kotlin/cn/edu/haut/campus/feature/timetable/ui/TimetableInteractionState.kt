@@ -4,7 +4,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import cn.edu.haut.campus.core.model.ClassOccurrence
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 
@@ -18,10 +18,11 @@ internal class TimetableInteractionState(initialWeek: Int) {
     val selectedWeek = mutableIntStateOf(initialWeek)
     val editingOccurrence = mutableStateOf<ClassOccurrence?>(null)
     val editingMasterRule = mutableStateOf<CourseScheduleRule?>(null)
-    val schedulingPracticalCourse = mutableStateOf<UnscheduledAcademicCourseEntity?>(null)
+    val schedulingPracticalCourse = mutableStateOf<UnscheduledPracticalCourseUiModel?>(null)
     val showCanceledCoursesDialog = mutableStateOf(false)
     val showAddCourseDialog = mutableStateOf(false)
     val showTermSwitcherDialog = mutableStateOf(false)
+    val showPeriodScheduleEditor = mutableStateOf(false)
     val confirmDeleteMasterRule = mutableStateOf<CourseScheduleRule?>(null)
     val viewMode = mutableIntStateOf(0)
 }

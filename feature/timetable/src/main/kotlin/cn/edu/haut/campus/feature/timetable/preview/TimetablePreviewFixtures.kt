@@ -7,9 +7,11 @@ import cn.edu.haut.campus.core.designsystem.HautCampusTheme
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
 import cn.edu.haut.campus.feature.timetable.state.TimetableScreenStatus
 import cn.edu.haut.campus.feature.timetable.state.TimetableUiState
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import cn.edu.haut.campus.feature.timetable.ui.LocalTimetableClock
 import cn.edu.haut.campus.feature.timetable.ui.TimetableClock
 import cn.edu.haut.campus.feature.timetable.ui.TimetableScreen
@@ -81,13 +83,36 @@ object TimetablePreviewFixtures {
         )
     )
 
+    private val previewScheme = PeriodTimeScheme(
+        id = "preview-scheme-exam-week",
+        termId = previewTerm.id,
+        timeTableId = previewTerm.timeTableId,
+        name = "示例考试周作息",
+        startDate = LocalDate.of(2026, 1, 12),
+        endDate = LocalDate.of(2026, 1, 18)
+    )
+
+    private val previewUnscheduledPractical = UnscheduledPracticalCourseUiModel(
+        termId = previewTerm.id,
+        sourceKey = "preview-practical-key",
+        sourceId = "preview-practical-source",
+        name = "示例实践训练",
+        teacher = "示例教师",
+        creditPlain = "2.0",
+        rawWeeks = "14-16周",
+        category = "集中实践",
+        syncedAtEpochMilli = 0L
+    )
+
     private val contentState = TimetableUiState(
         status = TimetableScreenStatus.CONTENT,
         terms = listOf(previewTerm),
         currentTerm = previewTerm,
         courses = listOf(previewCourse),
         scheduleRules = previewRules,
-        periodTimes = previewPeriodTimes
+        periodTimes = previewPeriodTimes,
+        periodTimeSchemes = listOf(previewScheme),
+        unscheduledCourses = listOf(previewUnscheduledPractical)
     )
 
     private val emptyState = TimetableUiState(

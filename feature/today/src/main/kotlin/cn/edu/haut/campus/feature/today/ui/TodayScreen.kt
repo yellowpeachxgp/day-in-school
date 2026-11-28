@@ -76,7 +76,8 @@ fun TodayScreen(
     state: TodayUiState,
     onAction: (TodayUiAction) -> Unit,
     modifier: Modifier = Modifier,
-    resetTrigger: Int = 0
+    resetTrigger: Int = 0,
+    extensionSlot: @Composable () -> Unit = {}
 ) {
     when (state.status) {
         TodayScreenStatus.LOADING,
@@ -93,7 +94,8 @@ fun TodayScreen(
             state = state,
             onAction = onAction,
             modifier = modifier,
-            resetTrigger = resetTrigger
+            resetTrigger = resetTrigger,
+            extensionSlot = extensionSlot
         )
     }
 }
@@ -103,7 +105,8 @@ private fun TodayLegacyContent(
     state: TodayUiState,
     onAction: (TodayUiAction) -> Unit,
     modifier: Modifier = Modifier,
-    resetTrigger: Int = 0
+    resetTrigger: Int = 0,
+    extensionSlot: @Composable () -> Unit = {}
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
     val scrollState = rememberScrollState()
@@ -388,6 +391,9 @@ private fun TodayLegacyContent(
                     onOpenParcelHub = onNavigateToParcelHub
                 )
             }
+
+            // 1.55 已验签插件的 home.cards 贡献槽；宿主只提供公开命令路由， UI 层不接触 Repository/安装器。
+            extensionSlot()
 
             // 1.6 动态今日图书馆座位 / 自动抢座状态卡（有已约座位或待执行抢座计划时自动展示）
             val activeSeatPlans = remember(bookingPlans) {

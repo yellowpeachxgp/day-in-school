@@ -86,5 +86,19 @@ fun TodayRoute(
         }
     }
 
-    TodayUiScreen(state = state, onAction = viewModel::onAction, resetTrigger = resetTrigger)
+    TodayUiScreen(
+        state = state,
+        onAction = viewModel::onAction,
+        resetTrigger = resetTrigger,
+        extensionSlot = {
+            TodayExtensionSlot(
+                profileId = repository.profileId,
+                schoolId = repository.schoolId,
+                sessionGeneration = repository.sessionGeneration,
+                onNavigateToParcelHub = onNavigateToParcelHub,
+                onNavigateToLibrarySeats = onNavigateToLibrarySeats,
+                onNavigateToLibraryCatalog = onNavigateToLibraryCatalog
+            )
+        }
+    )
 }

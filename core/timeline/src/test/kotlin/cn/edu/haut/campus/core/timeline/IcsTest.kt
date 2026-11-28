@@ -86,12 +86,14 @@ class IcsTest {
 
     @Test
     fun `取消状态映射为标准 CANCELLED 且保留精确私有状态`() {
-        val cancelled = event(status = EventStatus.CANCELLED_TODAY)
+        val cancelled = event(status = EventStatus.CANCELLED_TODAY, busy = BusyLevel.FREE)
 
         val ics = StandardIcsExporter.export(listOf(cancelled), "课程日历")
         val snapshot = IcsParser.parseEvents(ics).single()
 
         assertTrue(ics.contains("STATUS:CANCELLED\r\n"))
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\r\n"))
+        assertFalse(ics.contains("TRANSP:OPAQUE\r\n"))
         assertTrue(ics.contains("X-DIS-EVENT-STATUS:CANCELLED_TODAY\r\n"))
         assertEquals(EventStatus.CANCELLED_TODAY, snapshot.status)
     }
@@ -124,7 +126,30 @@ class IcsTest {
         assertFalse(ics.contains("DTEND;"))
         assertTrue(ics.contains("X-DIS-DEADLINE:TRUE\r\n"))
         assertNull(snapshot.end)
+        assertEquals(TimelineTimeSemantics.DEADLINE, snapshot.timeSemantics)
         assertEquals(IcsEventSnapshot.from(deadline), snapshot)
+    }
+
+    @Test
+    fun `不确定时间不伪装截止点且按透明锚点往返`() {
+        val uncertain = event(
+            id = "course:uncertain",
+            end = null,
+            status = EventStatus.TENTATIVE,
+            busy = BusyLevel.FREE,
+            timeSemantics = TimelineTimeSemantics.UNCERTAIN
+        )
+
+        val ics = StandardIcsExporter.export(listOf(uncertain), "课程日历")
+        val snapshot = IcsParser.parseEvents(ics).single()
+
+        assertFalse(ics.contains("DTEND:"))
+        assertFalse(ics.contains("X-DIS-DEADLINE:TRUE"))
+        assertTrue(ics.contains("X-DIS-TIME-UNCERTAIN:TRUE\r\n"))
+        assertTrue(ics.contains("TRANSP:TRANSPARENT\r\n"))
+        assertNull(snapshot.end)
+        assertEquals(TimelineTimeSemantics.UNCERTAIN, snapshot.timeSemantics)
+        assertEquals(IcsEventSnapshot.from(uncertain), snapshot)
     }
 
     @Test
@@ -324,7 +349,8 @@ class IcsTest {
         kind: TimelineKind = TimelineKind.COURSE,
         status: EventStatus = EventStatus.SCHEDULED,
         busy: BusyLevel = BusyLevel.BUSY,
-        revision: Long = 1
+        revision: Long = 1,
+        timeSemantics: TimelineTimeSemantics? = null
     ): TimelineEvent {
         val entity = EntityRef(EntityType.COURSE, "course-1", scope)
         return TimelineEvent(
@@ -334,6 +360,7 @@ class IcsTest {
             title = title,
             start = Instant.parse(start),
             end = end?.let { Instant.parse(it) },
+            timeSemantics = timeSemantics ?: if (end == null) TimelineTimeSemantics.DEADLINE else TimelineTimeSemantics.TIMED,
             zone = zone,
             place = PlaceRef("haut/lianhuajie/room/5-111", SchoolId("haut"), CampusId("lianhuajie")),
             source = SourceRef(entity, provenance()),

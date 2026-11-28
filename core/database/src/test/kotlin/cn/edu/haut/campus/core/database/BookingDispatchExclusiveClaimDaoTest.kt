@@ -766,10 +766,10 @@ class BookingDispatchExclusiveClaimDaoTest {
         val nowCreateMs = java.time.ZonedDateTime.of(2026, 11, 24, 21, 0, 0, 0, java.time.ZoneId.of("Asia/Shanghai")).toInstant().toEpochMilli()
         val targetDate25 = java.time.LocalDate.of(2026, 11, 25)
 
-        // 5a: If local plan on 2026-11-25 is ALREADY EXECUTING / DISPATCH_INTENT, switching to Cloud MUST abort BEFORE making ANY cloud HTTP request!
+        // 5a: Local in-flight blocks any reservation-flow HTTP; unrelated login bootstrap sync noise is not counted.
         var cloudHttpCalls = 0
-        repo.cloudHttpTransportForTest = { _, _, _, _, _ ->
-            cloudHttpCalls += 1
+        repo.cloudHttpTransportForTest = { _, url, _, _, _ ->
+            if (!url.endsWith("/api/v1/sync/snapshot") && !url.endsWith("/api/v1/auth/refresh")) cloudHttpCalls += 1
             throw IllegalStateException("Should not call cloud when local is already dispatched")
         }
         dao.upsertLibraryBookingPlan(

@@ -34,6 +34,7 @@ class TimetableInteractionStateResetTest {
         mutated.showCanceledCoursesDialog.value = true
         mutated.showAddCourseDialog.value = true
         mutated.showTermSwitcherDialog.value = true
+        mutated.showPeriodScheduleEditor.value = true
         mutated.viewMode.intValue = 2
 
         harness.dispose()
@@ -53,6 +54,7 @@ class TimetableInteractionStateResetTest {
         assertFalse(reset.showCanceledCoursesDialog.value)
         assertFalse(reset.showAddCourseDialog.value)
         assertFalse(reset.showTermSwitcherDialog.value)
+        assertFalse(reset.showPeriodScheduleEditor.value)
         assertNull(reset.confirmDeleteMasterRule.value)
         assertEquals(0, reset.viewMode.intValue)
     }

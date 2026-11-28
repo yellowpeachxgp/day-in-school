@@ -33,6 +33,18 @@ android {
             it.systemProperty("robolectric.pixelCopyRenderMode", "hardware")
         }
     }
+
+    lint {
+        // 工具链规避，非代码问题（裁决 AUTO-031，证据见 PR 与 task-notes/campus/issue-replies.md）：
+        // lint 31.8.2（AGP 8.8.2 内置）在并发分析高峰加载 compose ui 1.7.8 lint.jar 中
+        // MultipleAwaitPointerEventScopesDetector 的匿名内部类时偶发 NoClassDefFoundError，
+        // 同一代码闲时 11 次构建零复现、同 SHA 重跑可红可绿，属 lint/compose 工具链竞态。
+        // 该检查是「同一 pointerInput 块内多次 awaitPointerEventScope」风格检查；
+        // 本模块 OutdoorMapCanvas.kt 每个 pointerInput 块均只含单个 awaitPointerEventScope，
+        // 用法合规、抑制无实际覆盖损失。disable 后 detector 不执行、内部类不加载，崩溃路径确定消除。
+        // 待 AGP/compose 升级后必须复评移除（跟踪草稿见 issue-replies.md）。
+        disable.add("MultipleAwaitPointerEventScopes")
+    }
 }
 
 roborazzi {

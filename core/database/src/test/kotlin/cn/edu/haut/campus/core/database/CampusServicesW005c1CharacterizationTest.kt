@@ -6,6 +6,7 @@ import cn.edu.haut.campus.core.model.ReminderEventOverride
 import cn.edu.haut.campus.core.model.ThemeVisualDefaults
 import cn.edu.haut.campus.core.model.WidgetInstanceConfig
 import cn.edu.haut.campus.core.model.WidgetType
+import cn.edu.haut.campus.core.packages.PackageException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -237,21 +238,36 @@ class CampusServicesW005c1CharacterizationTest {
     }
 
     @Test
-    fun w005c1_extension_plugin_registry_roundtrip() = runBlocking {
-        val plugin = InstalledExtensionPluginEntity(
-            pluginId = "org.example.test-plugin",
-            name = "测试插件",
+    fun w005c1_extension_plugin_unsigned_upsert_rejected_and_legacy_row_is_removal_only() = runBlocking {
+        val legacy = InstalledExtensionPluginEntity(
+            pluginId = "org.example.legacy-manual",
+            name = "遗留手工插件",
             activeVersion = "1.0.0",
             previousVersion = null,
-            schemaFormat = "dis-campus-plugin/v1",
+            schemaFormat = "dis-extension/v2",
             status = "ENABLED",
-            grantedPermissionsJson = "[]",
+            grantedPermissionsJson = "[\"ui.slot.render\"]",
             uiSlotsJson = "[]",
             updatedAtEpochMillis = 123L
         )
-        repo.upsertExtensionPlugin(plugin)
-        assertEquals(listOf(plugin), repo.installedExtensionPluginsFlow.first())
-        repo.removeExtensionPlugin(plugin.pluginId)
+        fixture.database.openHelper.writableDatabase.execSQL(
+            "INSERT INTO installed_extension_plugins (" +
+                "pluginId, name, activeVersion, previousVersion, schemaFormat, status, grantedPermissionsJson, uiSlotsJson, updatedAtEpochMillis" +
+                ") VALUES ('org.example.legacy-manual', '遗留手工插件', '1.0.0', NULL, 'dis-extension/v2', 'ENABLED', '[\"ui.slot.render\"]', '[]', 123)"
+        )
+
+        val projected = repo.installedExtensionPluginsFlow.first().single()
+        assertEquals("LEGACY_UNVERIFIED", projected.status)
+        assertEquals("[]", projected.grantedPermissionsJson)
+        assertEquals("[]", projected.uiSlotsJson)
+
+        val forgedWrite = runCatching { repo.upsertExtensionPlugin(legacy.copy(status = "DISABLED")) }
+        assertTrue(
+            "unsigned legacy rows must not re-enter the lifecycle through compatibility upsert",
+            forgedWrite.exceptionOrNull() is PackageException
+        )
+
+        repo.removeExtensionPlugin(legacy.pluginId)
         assertTrue(repo.installedExtensionPluginsFlow.first().isEmpty())
     }
 }

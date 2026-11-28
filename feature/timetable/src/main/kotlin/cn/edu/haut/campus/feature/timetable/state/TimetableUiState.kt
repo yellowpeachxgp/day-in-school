@@ -1,13 +1,13 @@
 package cn.edu.haut.campus.feature.timetable.state
 
 import androidx.compose.runtime.Immutable
-import cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity
 import cn.edu.haut.campus.core.model.Building
 import cn.edu.haut.campus.core.model.CalendarOverride
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.OccurrenceOverride
 import cn.edu.haut.campus.core.model.PeriodTime
+import cn.edu.haut.campus.core.model.PeriodTimeScheme
 import cn.edu.haut.campus.core.model.Term
 
 /** 统一状态矩阵。运行期沿袭旧课表页默认 CONTENT；其余状态由 fixtures/截图矩阵显式固定。 */
@@ -38,7 +38,10 @@ enum class TimetableWriteKind {
     SaveMergedCourseRuleEdit,
     SaveMasterCourseRuleEdit,
     DeleteCourseScheduleRule,
-    SchedulePracticalCourse,
+    SaveBasePeriodTimes,
+    SavePeriodTimeScheme,
+    DeletePeriodTimeScheme,
+    SchedulePracticalCourseMatrix,
     AddManualCourse
 }
 
@@ -60,6 +63,23 @@ data class TimetableWriteCompletion(
     val isSuccess: Boolean get() = errorMessage == null
 }
 
+/**
+ * 待排实践课的 UI 快照。字段与数据库行一一对应，但类型属于 feature 状态层：
+ * ui/ 不依赖 core.database Entity；写回 Repository 时由 ViewModel 在会话边界内重建持久化输入。
+ */
+@Immutable
+data class UnscheduledPracticalCourseUiModel(
+    val termId: String,
+    val sourceKey: String,
+    val sourceId: String?,
+    val name: String,
+    val teacher: String?,
+    val creditPlain: String?,
+    val rawWeeks: String,
+    val category: String,
+    val syncedAtEpochMilli: Long
+)
+
 /** 课表页不可变渲染快照；周次、编辑表单、展开与输入草稿等纯界面瞬态继续留在 ui/ 的 remember 中。 */
 @Immutable
 data class TimetableUiState(
@@ -69,10 +89,11 @@ data class TimetableUiState(
     val courses: List<Course> = emptyList(),
     val scheduleRules: List<CourseScheduleRule> = emptyList(),
     val periodTimes: List<PeriodTime> = emptyList(),
+    val periodTimeSchemes: List<PeriodTimeScheme> = emptyList(),
     val calendarOverrides: List<CalendarOverride> = emptyList(),
     val occurrenceOverrides: List<OccurrenceOverride> = emptyList(),
     val buildings: List<Building> = emptyList(),
-    val unscheduledCourses: List<UnscheduledAcademicCourseEntity> = emptyList(),
+    val unscheduledCourses: List<UnscheduledPracticalCourseUiModel> = emptyList(),
 
     // 恢复命令与本地写入的异步结果状态（不是纯界面输入/展开状态）。
     val restoreNotice: String? = null,

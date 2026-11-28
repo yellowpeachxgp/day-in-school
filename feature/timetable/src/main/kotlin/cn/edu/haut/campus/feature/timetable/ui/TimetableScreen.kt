@@ -110,6 +110,7 @@ private fun TimetableLegacyContent(
     val courses = state.courses
     val rules = state.scheduleRules
     val periodTimes = state.periodTimes
+    val periodTimeSchemes = state.periodTimeSchemes
     val calendarOverrides = state.calendarOverrides
     val occurrenceOverrides = state.occurrenceOverrides
     val buildings = state.buildings
@@ -146,6 +147,7 @@ private fun TimetableLegacyContent(
     var showCanceledCoursesDialog by interactionState.showCanceledCoursesDialog
     var showAddCourseDialog by interactionState.showAddCourseDialog
     var showTermSwitcherDialog by interactionState.showTermSwitcherDialog
+    var showPeriodScheduleEditor by interactionState.showPeriodScheduleEditor
     var confirmDeleteMasterRule by interactionState.confirmDeleteMasterRule
     var viewMode by interactionState.viewMode // 0: 周网格, 1: 周清单, 2: 总课表
     var manualSevenDayOverride by remember(selectedWeek) { mutableStateOf<Boolean?>(null) }
@@ -247,6 +249,12 @@ private fun TimetableLegacyContent(
                         }
                     )
                 }
+                XPeachFilterPill(
+                    label = "作息",
+                    selected = false,
+                    compact = true,
+                    onClick = { showPeriodScheduleEditor = true }
+                )
                 XPeachIconButton(
                     icon = Icons.Default.Add,
                     contentDescription = "添加课程",
@@ -408,6 +416,17 @@ private fun TimetableLegacyContent(
                         Text("关闭")
                     }
                 }
+            )
+        }
+        val periodEditorTerm = term
+        if (showPeriodScheduleEditor && periodEditorTerm != null) {
+            PeriodScheduleSchemeEditorDialog(
+                term = periodEditorTerm,
+                periodTimes = periodTimes,
+                schemes = periodTimeSchemes,
+                writeCompletions = state.writeCompletions,
+                onDismiss = { showPeriodScheduleEditor = false },
+                onAction = onAction
             )
         }
         if (showCanceledCoursesDialog) {
@@ -897,12 +916,21 @@ private fun TimetableLegacyContent(
                         val maxOccEndPeriod = remember(activeWeekOccurrencesMap) {
                             activeWeekOccurrencesMap.values.flatten().maxOfOrNull { it.endPeriod } ?: 10
                         }
+                        val displayedPeriodMap = remember(activeWeekDates, term, periodTimes) {
+                            val weekStart = activeWeekDates.firstOrNull()
+                            val activeTerm = term
+                            if (activeTerm == null || weekStart == null) {
+                                emptyMap()
+                            } else {
+                                ScheduleEngine.periodMapForDate(weekStart, activeTerm, periodTimes)
+                            }
+                        }
                         val maxPeriods = maxOf(
                             10,
-                            periodTimes.maxOfOrNull { it.periodNo } ?: 10,
+                            displayedPeriodMap.keys.maxOrNull() ?: 10,
                             maxOccEndPeriod
                         )
-                        val periodByNo = periodTimes.associateBy { it.periodNo }
+                        val periodByNo = displayedPeriodMap
 
                         Row(
                             modifier = Modifier

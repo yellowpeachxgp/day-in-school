@@ -43,6 +43,7 @@ import cn.edu.haut.campus.core.domain.WeeksSetParser
 import cn.edu.haut.campus.core.model.Course
 import cn.edu.haut.campus.core.model.CourseScheduleRule
 import cn.edu.haut.campus.core.model.CourseSource
+import cn.edu.haut.campus.feature.timetable.state.UnscheduledPracticalCourseUiModel
 import java.time.DayOfWeek
 
 @Composable
@@ -51,11 +52,11 @@ internal fun RawMasterTimetableView(
     termId: String?,
     courses: List<Course>,
     rules: List<CourseScheduleRule>,
-    unscheduledCourses: List<cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity> = emptyList(),
+    unscheduledCourses: List<UnscheduledPracticalCourseUiModel> = emptyList(),
     canceledOverridesCount: Int = 0,
     onAddManualCourse: () -> Unit = {},
     onEditRule: (CourseScheduleRule) -> Unit = {},
-    onScheduleUnscheduledCourse: (cn.edu.haut.campus.core.database.UnscheduledAcademicCourseEntity) -> Unit = {},
+    onScheduleUnscheduledCourse: (UnscheduledPracticalCourseUiModel) -> Unit = {},
     onOpenCanceledCourses: () -> Unit = {},
     onNavigateToImporter: () -> Unit,
     onNavigateToMapWithRoom: (String) -> Unit
